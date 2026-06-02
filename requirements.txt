@@ -9,7 +9,7 @@ SQLAlchemy==2.0.50
 APScheduler==3.11.2
 Pillow==12.2.0
 Jinja2==3.1.6
-python-multipart==0.0.29
+python-multipart==0.0.30
 anyio==4.13.0
 bcrypt==4.3.0
 slowapi==0.1.9
