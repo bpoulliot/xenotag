@@ -59,6 +59,7 @@ jobs:
           sbom: true
 
       - name: Notify publish success
+        continue-on-error: true
         run: |
           curl -s -X POST "https://ntfy.bitmapserv.org/ci" \
             -H "Authorization: Bearer ${{ secrets.NTFY_TOKEN }}" \

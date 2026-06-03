@@ -26,6 +26,7 @@ jobs:
 
     steps:
       - name: Build and send notification
+        continue-on-error: true
         env:
           NTFY_URL: https://ntfy.bitmapserv.org/ci
           NTFY_TOKEN: ${{ secrets.NTFY_TOKEN }}
