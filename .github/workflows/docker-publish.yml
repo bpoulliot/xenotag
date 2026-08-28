@@ -57,14 +57,3 @@ jobs:
           cache-to: type=gha,mode=max
           provenance: true
           sbom: true
-
-      - name: Notify publish success
-        continue-on-error: true
-        run: |
-          curl -s -X POST "https://ntfy.bitmapserv.org/ci" \
-            -H "Authorization: Bearer ${{ secrets.NTFY_TOKEN }}" \
-            -H "Title: Image published — xenotag" \
-            -H "Tags: whale,white_check_mark" \
-            -H "Priority: low" \
-            -H "Click: https://github.com/${{ github.repository }}/pkgs/container/xenotag" \
-            -d "ghcr.io/${{ github.repository }}:${{ steps.ver.outputs.version }} pushed by ${{ github.actor }}"
