@@ -12,5 +12,5 @@ Jinja2==3.1.6
 python-multipart==0.0.31
 anyio==4.13.0
 bcrypt==4.3.0
-slowapi==0.1.9
+slowapi==0.1.10
 orjson==3.11.9
