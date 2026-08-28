@@ -86,22 +86,3 @@ jobs:
           exit-code: "1"
           severity: CRITICAL,HIGH
           ignore-unfixed: true
-
-  # ── Notify on failure ───────────────────────────────────────────────────────
-  notify-failure:
-    name: Notify — failure
-    runs-on: ubuntu-latest
-    needs: [lint-and-security, docker-build]
-    if: failure()
-
-    steps:
-      - name: Send ntfy failure alert
-        continue-on-error: true
-        run: |
-          curl -s -X POST "https://ntfy.bitmapserv.org/ci" \
-            -H "Authorization: Bearer ${{ secrets.NTFY_TOKEN }}" \
-            -H "Title: CI Failed — xenotag" \
-            -H "Tags: x,rotating_light" \
-            -H "Priority: high" \
-            -H "Click: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-            -d "${{ github.workflow }} failed on ${{ github.ref_name }} (${{ github.actor }})"
