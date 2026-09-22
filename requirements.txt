@@ -10,7 +10,7 @@ APScheduler==3.11.2
 Pillow==12.3.0
 Jinja2==3.1.6
 python-multipart==0.0.31
-anyio==4.13.0
+anyio==4.14.2
 bcrypt==4.3.0
 slowapi==0.1.9
 orjson==3.11.9
