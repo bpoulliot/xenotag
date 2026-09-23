@@ -619,7 +619,7 @@ async def preview_image(
     subtitles: str = "",
     rating: str = "",
     position: str = "bottom-left",
-    opacity: float = 0.65,
+    opacity: float = 1.0,
     badge_size: str = "tv",
     text_color: str = "#ffffff",
     video_color: str = "#134e4a",

@@ -92,6 +92,21 @@ def _pill_tile(
     )
     glow = glow.filter(ImageFilter.GaussianBlur(radius=_GLOW_BLUR))
 
+    # Clear the glow out from under the pill footprint. Behind a translucent
+    # fill the glow is what the viewer sees THROUGH the badge, which pinned
+    # every badge's rendered contrast near white whatever the poster was
+    # (roadmap B1: 3.7-5.3:1 against text the config claimed was 9.4-11.0:1).
+    # Punched out, the glow is what it was meant to be -- a halo AROUND the
+    # pill -- and the rendered fill is the configured colour. Deflated by 1px
+    # so the pill's own antialiased edge still lands on glow, not a hard cut.
+    # NOTE: filter() returns a new image, so the Draw handle must be rebound.
+    gd = ImageDraw.Draw(glow)
+    gd.rounded_rectangle(
+        [(gm + 1, gm + 1), (gm + pill_w - 1, gm + pill_h - 1)],
+        radius=7,
+        fill=(0, 0, 0, 0),
+    )
+
     pill = Image.new("RGBA", tile.size, (0, 0, 0, 0))
     pd = ImageDraw.Draw(pill)
     pd.rounded_rectangle([(gm, gm), (gm + pill_w, gm + pill_h)], radius=8, fill=(*fill_rgb, alpha))

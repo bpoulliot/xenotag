@@ -186,7 +186,7 @@ radarr:
 | `image.targets` | list | `[poster.jpg, ...]` | Poster filenames to search for in each item folder |
 | `image.backup_suffix` | string | `".orig"` | Suffix appended to original poster backups |
 | `image.badge_position` | string | `"bottom-left"` | Main badge group position: `bottom-left`, `bottom-right`, `top-left`, `top-right`. Rating badge is always `top-right`. |
-| `image.badge_opacity` | float | `0.65` | Badge fill opacity (0.0–1.0) |
+| `image.badge_opacity` | float | `1.0` | Badge fill opacity (0.0–1.0). This is a contrast control: below `1.0` the poster shows through the badge and the label's rendered contrast drops below the figure quoted for each colour. With the shipped palette, `0.89` is the floor for WCAG AAA and `0.73` for AA — measure with `scripts/measure_badge_contrast.py`. |
 | `image.badge_size` | string | `"tv"` | Base font size tier: `desktop`, `tv`, `tv_plus` |
 | `image.normalize_portrait` | bool | `true` | Pad square/landscape images to 2:3 portrait ratio |
 | `image.show_video_badges` | bool | `true` | Render video group badge |

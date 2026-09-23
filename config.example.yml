@@ -41,7 +41,7 @@ image:
     - folder.png
   backup_suffix: ".orig"
   badge_position: bottom-left  # bottom-left | bottom-right | top-left | top-right
-  badge_opacity: 0.65
+  badge_opacity: 1.0         # contrast control: <1.0 lets the poster through the fill
   badge_size: tv               # desktop | tv | tv_plus (see README for guidance)
   badge_text_color: "#ffffff"
   video_badge_color:  "#134e4a"

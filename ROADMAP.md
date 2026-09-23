@@ -18,36 +18,135 @@ unassessed.
 
 | ID | Defect | Value | Complexity | Readiness | Issue |
 |----|--------|:-----:|:----------:|-----------|-------|
-| B1 | **Badge contrast is roughly half what the config claims.** `ImageConfig` annotates each badge colour "verified WCAG AAA ≥7:1 against white text" — true of the opaque hex, but not of what renders. | 5 | 2 | READY | — |
+| B1 | **Badge contrast is roughly half what the config claims.** `ImageConfig` annotates each badge colour "verified WCAG AAA ≥7:1 against white text" — true of the opaque hex, but not of what renders. | 5 | 2 | **FIXED 2026-09-22** | — |
+| B2 | **A configured badge colour is never checked for contrast.** Any hex the settings UI or `config.yml` supplies is used as-is; the live deployment's palette renders at 2.6:1. | 4 | 2 | READY | — |
+| B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | READY | — |
 
-**B1 detail — measured 2026-09-22**, by rendering real `_pill_tile()` output over flat
-backdrops and sampling the *modal* (flat-fill) interior pixel, not an antialiased edge:
+**B1 — FIXED 2026-09-22.** Measured, fixed and re-measured in one session. The measurement
+below was reproduced from scratch first and **agreed with the original to the decimal**, so the
+pre-fix table stands as recorded.
 
-| badge | claimed | on black | on white | on grey |
+Method: render real `_pill_tile()` output over flat backdrops, then take the **modal pixel of
+the pill interior, inset 5px** from the pill rectangle. The inset is the trap — `_GLOW_MARGIN`
+is 14, so x=14 is the pill's antialiased left *edge*: sampling there reports 4.4:1 on white for
+a badge that renders 3.7:1, and 7.2:1 on black for one that renders 4.6:1.
+
+Now a committed, re-runnable probe: **`scripts/measure_badge_contrast.py`** (`--self-test`,
+`--config FILE`, `--opacity`, `--show-edge`). The self-test fails in both directions — it
+checks that an opaque render *equals* the hex ratio and that a translucent one does *not*.
+
+### Before → after, shipped defaults, white text
+
+| badge | opaque hex | on black | on white | on grey |
 |---|---:|---:|---:|---:|
-| video `#134e4a` | 9.5:1 | 4.6:1 | **3.7:1** | 4.1:1 |
-| audio `#1e3a8a` | 10.4:1 | 4.9:1 | 3.9:1 | 4.3:1 |
-| sub `#7c2d12` | 9.4:1 | 4.7:1 | 3.8:1 | 4.2:1 |
-| rating `#4c1d95` | 11.0:1 | 5.3:1 | 4.2:1 | 4.7:1 |
+| video `#134e4a` | 9.5:1 | 4.6 → **9.5** | **3.7** → **9.5** | 4.1 → **9.5** |
+| audio `#1e3a8a` | 10.4:1 | 4.9 → **10.4** | 3.9 → **10.4** | 4.3 → **10.4** |
+| sub `#7c2d12` | 9.4:1 | 4.7 → **9.4** | 3.8 → **9.4** | 4.2 → **9.4** |
+| rating `#4c1d95` | 11.0:1 | 5.3 → **11.0** | 4.2 → **11.0** | 4.7 → **11.0** |
 
-**Every badge on every backdrop fails AAA (7:1). Nine of twelve fail AA (4.5:1).**
+Before: every badge failed AAA (7:1) and nine of twelve failed AA (4.5:1). After: **all twelve
+clear AAA**, and the rendered figure now equals the opaque-hex figure exactly — which is the
+point, because the hex figure is what the config comment quotes.
 
-Two compounding causes, and the second is the bigger one:
+### The two causes, and which lever fixed which
 
- 1. `badge_opacity: 0.65` → the pill is drawn at `alpha=165`, so the poster shows through the
-    fill. The contrast figures in the comment were computed at `alpha=255`.
- 2. **The white glow is the dominant term.** `_pill_tile()` unconditionally draws
-    `fill=(255,255,255,210)` *behind* the pill (`_GLOW_EXPAND=4`, `_GLOW_BLUR=6`), then
-    composites the translucent pill on top. So the backdrop under the fill is mostly white
-    regardless of the poster — which is why the numbers barely move between black and white,
-    and why they are low everywhere. The glow was presumably added to separate the badge from
-    dark posters; it is instead washing out every badge on every poster.
+ 1. `badge_opacity: 0.65` → `alpha=165`, so the poster showed through the fill while the
+    comment's figures assumed `alpha=255`.
+ 2. **The white glow was the dominant term.** `_pill_tile()` drew `fill=(255,255,255,210)`
+    *behind* the pill, then composited the translucent pill over it — so the surface under the
+    fill was near-white whatever the poster was, which is why the numbers barely moved between
+    a black and a white backdrop.
 
-A backup palette (P6) will not fix this on its own — the glow has to become conditional, or
-the opacity raised, or both. **Do B1 before P6**; P6's whole premise is that the palette is
-what determines contrast, and right now it is not.
+Both were needed, and measuring them separately is what showed why:
 
-Reproduce: `/tmp/xt-contrast/measure.py` (throwaway; re-create from this table if gone).
+| lever | black | white | grey |
+|---|---:|---:|---:|
+| before (glow behind fill, opacity 0.65) | 4.6 | 3.7 | 4.1 |
+| glow punched out, opacity still 0.65 | 13.9 | **3.7** | 7.0 |
+| glow punched out + opacity 1.0 | **9.5** | **9.5** | **9.5** |
+
+Punching the glow out alone does **nothing** on a white poster — obvious in hindsight, since
+removing white from in front of white changes nothing — and it makes the result swing wildly
+with the poster (13.9 on black, 3.7 on white). Raising the opacity is what makes the badge
+independent of the poster at all. The punch-out is still worth having: it is what stops the
+glow washing the fill at *any* opacity below 1.0 the operator picks.
+
+**Fix shipped:** `_pill_tile()` clears the glow from under the pill footprint (deflated 1px, so
+the pill's own antialiased edge still lands on glow), and `badge_opacity` defaults to `1.0`.
+The glow survives as what it was meant to be — a halo *around* the pill.
+
+`badge_opacity` is still a knob, and it is still a contrast control. Measured floors for the
+shipped palette: **0.89 for AAA, 0.73 for AA**; the old 0.65 default rendered 3.7:1.
+
+### Consequences worth knowing
+
+ - **Nothing re-renders on its own.** `apply_overlay()` always composites from the `.orig`
+   backup, never from the current poster, so a re-render is idempotent and badges never stack.
+ - **An existing deployment does not change until its config does.** `save_config_from_dict()`
+   dumps the whole model, so any operator who has ever saved settings has `badge_opacity: 0.65`
+   written in `config.yml` and keeps it. The new default only reaches them if they reset it.
+ - `_PILL_CACHE`'s key is untouched — the fix adds no input outside `(text, fill_hex,
+   text_hex, alpha, font_size)`.
+
+Guarded by `tests/test_badge_contrast.py`, which asserts on **rendered pixels**: asserting on
+the hex constants is exactly the check that would have passed throughout this defect's life.
+Both halves of the fix were verified to fail the suite when reverted — opacity back to 0.65
+fails 10 cases, restoring the glow behind the pill fails 4.
+
+**P6 is now answerable.** The rendered ratio is finally a function of the configured colour, so
+a background-aware palette can be evaluated on its own merits.
+
+**B2 — filed 2026-09-22, found while fixing B1. Not fixed; evidence only.**
+
+The four colours in `ImageConfig` are only defaults. The settings UI and `config.yml` accept
+any hex and **nothing checks it**. The live deployment at `~/docker/xenotag/config/config.yml`
+has replaced all four, and it keeps `badge_opacity: 0.65`, so B1's new default does not reach
+it. Measured with the same probe (`--config FILE`), before and after B1:
+
+| badge | configured | opaque hex | black | white | grey |
+|---|---|---:|---:|---:|---:|
+| video | `#1a7a6e` | 5.2:1 | 3.3 → 9.4 | 2.7 → **2.7** | 3.0 → 4.8 |
+| audio | `#6b3a9e` | 7.7:1 | 4.1 → 12.2 | 3.3 → **3.3** | 3.7 → 6.2 |
+| sub | `#a86200` | 4.8:1 | 3.1 → 8.9 | 2.6 → **2.6** | 2.8 → 4.6 |
+| rating | `#2d2d2d` | 13.8:1 | 5.7 → 16.9 | 4.5 → **4.5** | 5.0 → 8.9 |
+
+B1 fixes the dark-poster case for this palette and **does nothing for the light-poster case**,
+exactly as its own lever table predicts: at 0.65 the thing showing through the fill is no
+longer the glow, it is the poster. All four still fail AA on white.
+
+Two separate things are wrong here, and only the second is B2:
+
+ - **The opacity.** If this deployment sets `badge_opacity: 1.0` it renders
+   5.2 / 7.7 / 4.8 / 13.8 on every backdrop. That is the operator's to change and needs no
+   code.
+ - **The palette, which no amount of opacity rescues.** Even fully opaque, `#1a7a6e` is 5.2:1
+   and `#a86200` is 4.8:1 against white text — AA, never AAA. Those two hexes never had the
+   headroom, and nothing in the app ever said so.
+
+The work is a contrast check on the colour inputs — the ratio is ~15 lines and already exists
+in the probe. Open question for the operator, which is why this is B2 and not part of B1:
+**warn or refuse?** A hard refusal rejects a palette someone deliberately chose; a warning next
+to the colour picker (and next to the opacity slider, whose range still reaches 10%) informs
+without overriding. The UI already renders a live preview, so the number has somewhere to go.
+
+Reproduce either table: `python3 scripts/measure_badge_contrast.py [--config FILE] [--opacity X]`.
+
+**B3 — filed 2026-09-22, found while fixing B1. Not fixed; evidence only.**
+
+`_PILL_CACHE` is keyed `(text, fill_hex, text_hex, alpha, font_size)`, but `_pill_tile()` also
+takes `pad_h` and `pad_v`, and those change the tile. `_compute_layout_params()` derives all
+three from the poster width by separate roundings, so they can disagree: sweeping widths
+200–4000px at the default `badge_size` finds **121 collisions**, the first being **494px and
+501px — both `font_size` 36, `pad_v` 2 vs 3**. Same key, different correct tile; whichever
+poster is processed first supplies the tile for every later one in that process.
+
+Consequence is small but real: the row layout in `_render_group()` computes `pill_h` from *its*
+`pad_v`, so a mis-served tile is a ~2px vertical mismatch between where the row expects the pill
+and how tall the pill actually is. Nothing is unreadable; it is wrong, cheap to fix, and it is
+the same class of defect P6 is warned about — adding padding to the key is a one-line change.
+
+Recorded executably as a `strict=True` xfail in `tests/test_badge_contrast.py`
+(`test_cache_key_covers_padding`); remove the marker when it is fixed.
 
 ---
 
@@ -129,17 +228,22 @@ benefit; the mtime problem is the residue for files that change without an event
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
 | P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
 
-**P6 note — gated on B1.** Today there is **no palette detection anywhere**: `_pill_tile()`
+**P6 note — was gated on B1, which shipped 2026-09-22.** Today there is still **no palette
+detection anywhere**: `_pill_tile()`
 takes `fill_hex` from config and calls `_parse_color()`, and it never receives the base image.
 The colours are four fixed constants. So "main + backup palette" is new construction.
 
-**Do B1 first.** As measured above, the thing destroying contrast right now is the
-unconditional white glow, not the palette choice — a backup palette layered on top of the
-current glow would inherit the same 3.7–5.3:1 ceiling and the work would read as ineffective.
+**B1 has shipped, so this is now answerable.** Before it, a backup palette would have
+inherited the glow's 3.7–5.3:1 ceiling and read as ineffective no matter which colours it
+picked; the rendered ratio is now a function of the configured colour, which is what P6 needs
+to be worth measuring. Note B1's finding that the poster barely mattered: once the pill is
+opaque the backdrop is invisible *under* the badge, so P6 buys legibility of the badge against
+its surroundings, not of the text against the fill. Be clear which of the two it is selling.
 
 Two implementation traps worth recording before anyone starts:
 
- - **The pill cache is keyed on appearance only.** `_PILL_CACHE` key is
+ - **The pill cache is keyed on appearance only** (`tests/test_badge_contrast.py` has a test
+   that fails when this stops being true). `_PILL_CACHE` key is
    `(text, fill_hex, text_hex, alpha, font_size)` — no position, no background. A
    background-aware palette makes the *same* text render differently per poster, so the key
    must gain a palette-selection term or every poster after the first gets the first one's
@@ -151,7 +255,8 @@ Two implementation traps worth recording before anyone starts:
 
 Open decisions: main+backup (pick one of two by luminance threshold) or continuous selection?
 Does the operator get to see/override the choice, per the constrained-controls philosophy used
-elsewhere? Is the glow retained as a third option for busy backgrounds?
+elsewhere? The glow question is now answered: B1 kept it, as a halo *around* the pill rather
+than a wash behind it, so P6 does not have to decide its fate.
 
 **P7 note.** With `show_video_badges` / `show_audio_badges` / `show_sub_badges` /
 `show_rating_badge` all defaulting `True`, plus U4 adding per-language subtitle badges and U7
