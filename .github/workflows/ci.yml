@@ -41,6 +41,25 @@ jobs:
       - name: Security scan — dependencies (pip-audit)
         run: pip-audit -r requirements.txt
 
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install project dependencies
+        run: pip install -r requirements.txt pytest
+
+      - name: Tests (pytest)
+        run: pytest tests/ -q
+
+      - name: Badge contrast probe self-test
+        run: python scripts/measure_badge_contrast.py --self-test
+
   codeql:
     runs-on: ubuntu-latest
     permissions:

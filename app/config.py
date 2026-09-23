@@ -69,7 +69,14 @@ class ImageConfig(BaseModel):
     targets: list[str] = Field(default_factory=lambda: ["poster.jpg", "poster.png", "folder.jpg", "folder.png"])
     backup_suffix: str = ".orig"
     badge_position: str = "bottom-left"
-    badge_opacity: float = 0.65
+    # Badge fill opacity. This is a CONTRAST control, not just a cosmetic one:
+    # the pill is filled at this alpha, so anything below 1.0 lets the poster
+    # show through and drops the rendered contrast of the label against the
+    # fill. Measured over black/white/grey backdrops with the palette below
+    # (scripts/measure_badge_contrast.py): 1.0 -> 9.4:1 worst case, 0.89 is the
+    # floor for AAA, 0.73 the floor for AA, and 0.65 -- the default until
+    # roadmap B1 -- rendered 3.7:1 and failed both.
+    badge_opacity: float = 1.0
     badge_size: Literal["desktop", "tv", "tv_plus"] = "tv"
 
     @field_validator("badge_size", mode="before")
@@ -79,11 +86,18 @@ class ImageConfig(BaseModel):
 
     badge_text_color: str = "#ffffff"
 
-    # Per-category badge colors (all verified WCAG AAA ≥7:1 against white text)
-    video_badge_color: str = "#134e4a"  # dark teal  9.3:1
-    audio_badge_color: str = "#1e3a8a"  # deep navy 10.4:1
-    sub_badge_color: str = "#7c2d12"  # deep rust  9.5:1
-    rating_badge_color: str = "#4c1d95"  # deep violet 10.9:1
+    # Per-category badge colors. Each ratio below is the OPAQUE hex against
+    # white text (WCAG 2.x; AAA is ≥7:1). That equals what actually renders
+    # only while badge_opacity is 1.0 -- at a lower opacity the pill is
+    # translucent and the rendered ratio is lower than the figure quoted here.
+    # Re-measure with scripts/measure_badge_contrast.py; do not trust the
+    # comment. (Roadmap B1: these were annotated "verified WCAG AAA ≥7:1"
+    # while the shipped default rendered 3.7-5.3:1 -- true of the hex, false of
+    # the render, and that is why it went unnoticed for so long.)
+    video_badge_color: str = "#134e4a"  # dark teal    opaque  9.5:1
+    audio_badge_color: str = "#1e3a8a"  # deep navy    opaque 10.4:1
+    sub_badge_color: str = "#7c2d12"  # deep rust      opaque  9.4:1
+    rating_badge_color: str = "#4c1d95"  # deep violet opaque 11.0:1
 
     # Show/hide categories on poster
     show_video_badges: bool = True

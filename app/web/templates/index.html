@@ -301,8 +301,8 @@
       </div>
 
       <div class="prev-ctrl-group">
-        <span class="prev-ctrl-label">Opacity — <span id="prev-opacity-val">65%</span></span>
-        <input type="range" id="prev-opacity" min="10" max="100" value="65"
+        <span class="prev-ctrl-label">Opacity — <span id="prev-opacity-val">100%</span></span>
+        <input type="range" id="prev-opacity" min="10" max="100" value="100"
           oninput="document.getElementById('prev-opacity-val').textContent=this.value+'%'; onPreviewChange()">
       </div>
 
@@ -1122,7 +1122,7 @@ function populateForm(s) {
 
   // Populate preview controls from saved settings
   setSelectVal('prev-position', s.image?.badge_position ?? 'bottom-left');
-  const opacityPct = Math.round((s.image?.badge_opacity ?? 0.65) * 100);
+  const opacityPct = Math.round((s.image?.badge_opacity ?? 1.0) * 100);
   document.getElementById('prev-opacity').value = opacityPct;
   document.getElementById('prev-opacity-val').textContent = opacityPct + '%';
   setBadgeSize(s.image?.badge_size ?? 'tv');
@@ -1198,7 +1198,7 @@ function collectForm() {
     image: {
       ...(settings.image || {}),
       badge_position:     document.getElementById('prev-position')?.value ?? 'bottom-left',
-      badge_opacity:      (parseInt(document.getElementById('prev-opacity')?.value) || 65) / 100,
+      badge_opacity:      (parseInt(document.getElementById('prev-opacity')?.value) || 100) / 100,
       badge_size:         document.querySelector('#prev-badge-size .size-btn.active')?.dataset.size ?? 'tv',
       badge_text_color:   document.getElementById('prev-text-color')?.value  || '#ffffff',
       video_badge_color:  document.getElementById('prev-video-color')?.value  || '#134e4a',
