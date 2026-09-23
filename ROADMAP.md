@@ -98,21 +98,30 @@ a background-aware palette can be evaluated on its own merits.
 
 **B2 — filed 2026-09-22, found while fixing B1. Not fixed; evidence only.**
 
-The four colours in `ImageConfig` are defaults. The settings UI and `config.yml` accept any hex
-and nothing checks it. The live deployment at `~/docker/xenotag/config/config.yml` has replaced
-all four, and measured with the same probe (`--config`) at its own `badge_opacity: 0.65`:
+The four colours in `ImageConfig` are only defaults. The settings UI and `config.yml` accept
+any hex and **nothing checks it**. The live deployment at `~/docker/xenotag/config/config.yml`
+has replaced all four, and it keeps `badge_opacity: 0.65`, so B1's new default does not reach
+it. Measured with the same probe (`--config FILE`), before and after B1:
 
-| badge | configured | opaque hex | on black | on white | on grey |
+| badge | configured | opaque hex | black | white | grey |
 |---|---|---:|---:|---:|---:|
-| video | `#1a7a6e` | 5.2:1 | 3.3:1 | 2.7:1 | 3.0:1 |
-| audio | `#6b3a9e` | 7.7:1 | 4.1:1 | 3.3:1 | 3.7:1 |
-| sub | `#a86200` | 4.8:1 | 3.1:1 | 2.6:1 | 2.8:1 |
-| rating | `#2d2d2d` | 13.8:1 | 5.7:1 | 4.5:1 | 5.0:1 |
+| video | `#1a7a6e` | 5.2:1 | 3.3 → 9.4 | 2.7 → **2.7** | 3.0 → 4.8 |
+| audio | `#6b3a9e` | 7.7:1 | 4.1 → 12.2 | 3.3 → **3.3** | 3.7 → 6.2 |
+| sub | `#a86200` | 4.8:1 | 3.1 → 8.9 | 2.6 → **2.6** | 2.8 → 4.6 |
+| rating | `#2d2d2d` | 13.8:1 | 5.7 → 16.9 | 4.5 → **4.5** | 5.0 → 8.9 |
 
-B1's fix does not rescue this palette. Made fully opaque it renders 5.2 / 7.7 / 4.8 / 13.8 —
-all four clear AA, but **two of the four still fail AAA**, because those two hexes never had
-the headroom. The sub badge's amber `#a86200` is 4.8:1 against white text at its very best.
-At the deployment's own `badge_opacity: 0.65`, all four fail AA.
+B1 fixes the dark-poster case for this palette and **does nothing for the light-poster case**,
+exactly as its own lever table predicts: at 0.65 the thing showing through the fill is no
+longer the glow, it is the poster. All four still fail AA on white.
+
+Two separate things are wrong here, and only the second is B2:
+
+ - **The opacity.** If this deployment sets `badge_opacity: 1.0` it renders
+   5.2 / 7.7 / 4.8 / 13.8 on every backdrop. That is the operator's to change and needs no
+   code.
+ - **The palette, which no amount of opacity rescues.** Even fully opaque, `#1a7a6e` is 5.2:1
+   and `#a86200` is 4.8:1 against white text — AA, never AAA. Those two hexes never had the
+   headroom, and nothing in the app ever said so.
 
 The work is a contrast check on the colour inputs — the ratio is ~15 lines and already exists
 in the probe. Open question for the operator, which is why this is B2 and not part of B1:
@@ -120,7 +129,7 @@ in the probe. Open question for the operator, which is why this is B2 and not pa
 to the colour picker (and next to the opacity slider, whose range still reaches 10%) informs
 without overriding. The UI already renders a live preview, so the number has somewhere to go.
 
-Reproduce either table: `python3 scripts/measure_badge_contrast.py [--config FILE]`.
+Reproduce either table: `python3 scripts/measure_badge_contrast.py [--config FILE] [--opacity X]`.
 
 **B3 — filed 2026-09-22, found while fixing B1. Not fixed; evidence only.**
 
@@ -219,7 +228,8 @@ benefit; the mtime problem is the residue for files that change without an event
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
 | P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
 
-**P6 note — gated on B1.** Today there is **no palette detection anywhere**: `_pill_tile()`
+**P6 note — was gated on B1, which shipped 2026-09-22.** Today there is still **no palette
+detection anywhere**: `_pill_tile()`
 takes `fill_hex` from config and calls `_parse_color()`, and it never receives the base image.
 The colours are four fixed constants. So "main + backup palette" is new construction.
 
@@ -245,7 +255,8 @@ Two implementation traps worth recording before anyone starts:
 
 Open decisions: main+backup (pick one of two by luminance threshold) or continuous selection?
 Does the operator get to see/override the choice, per the constrained-controls philosophy used
-elsewhere? Is the glow retained as a third option for busy backgrounds?
+elsewhere? The glow question is now answered: B1 kept it, as a halo *around* the pill rather
+than a wash behind it, so P6 does not have to decide its fate.
 
 **P7 note.** With `show_video_badges` / `show_audio_badges` / `show_sub_badges` /
 `show_rating_badge` all defaulting `True`, plus U4 adding per-language subtitle badges and U7
