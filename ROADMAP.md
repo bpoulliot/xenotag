@@ -171,7 +171,7 @@ Recorded executably as a `strict=True` xfail in `tests/test_badge_contrast.py`
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | — | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | — | [#11](https://github.com/bpoulliot/xenotag/issues/11) |
 | U7 | **Ratings ingest** — pull the rating from Jellyfin/\*arr and emit it as a tag + badge. Split out of U6 (see note). | 4 | 2 | NEEDS DECISION | — |
-| U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted against the library and collapse what is redundant or never queried. | 4 | 3 | NEEDS MEASUREMENT | — |
+| U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted and collapse what is redundant or never queried. | 4 | 3 | **MEASURED 2026-09-22 → READY** | — |
 | U9 | **Tag queries** — filter/search the media browser by tag (`xt-*` and legacy), combinable, from the web UI. | 4 | 3 | NEEDS DECISION | — |
 
 **U7 note — why this is split out of U6.** U6 ("Extended metadata tags") is Complexity 5 because
@@ -188,6 +188,57 @@ question is which rating, and that is the decision blocking it:
 
 Decide the source and U7 becomes READY. **Leave the rest of U6 alone** — the other six are a
 genuinely separate, genuinely complexity-5 piece of work.
+
+**U8 — MEASURED 2026-09-22, in an interactive session. Two of the three hypotheses are FALSE.**
+
+Source: `~/docker/xenotag/config/state.db`, `media_state.tags_applied`, copied and opened
+`mode=ro`. **10,480 items, 258 distinct tags.**
+
+The original note proposed looking for (a) tags on ~100% of items, (b) tags on <1%, and
+(c) near-perfectly correlated pairs. Measured:
+
+| hypothesis | result |
+|---|---|
+| (a) tags on ~100%, carrying no information | **NONE.** The most common tag is `xt-1080p` at **76.3%** |
+| (b) tags on <1% | **221 of 258 — 86% of the vocabulary** |
+| (c) near-perfect correlations | **NONE** at Jaccard ≥ 0.90 among tags on ≥2% of items |
+
+So there is nothing to cut for being universal, and nothing to merge for being redundant.
+**The entire finding is the long tail**, and the distribution is the deliverable:
+
+    >=50%     4 tags        1-10%    21 tags       <0.1%   154 tags
+    10-50%   12 tags        0.1-1%   67 tags
+
+**Correction to the headline, and it matters: 67 of those 258 tags are legacy `mf-*`, not
+`xt-*` at all.** The live vocabulary is **191 `xt-*` tags**, of which **154 (81%) are on under
+1% of items**. Still dramatic — but quote 191, not 258.
+
+What the tail is made of (of the 221 rare tags): **105 codec/HDR/misc, 72 subtitle-language,
+37 audio-language, 6 rating, 1 resolution.**
+
+**Two consequences worth acting on:**
+
+1. **This is live evidence that [U1] has not happened.** 67 distinct `mf-*` tags remain, 247
+   applications, on **32 of 10,480 items (0.31%)** — `mf-1080p` (26), `mf-EN` (22),
+   `mf-sub-EN` (21), `mf-AV1` (15), down to singletons like `mf-re-encode`. Small footprint,
+   but they inflate the apparent vocabulary by 26% and they are exactly what U1 exists to
+   remove. **Do U1 first**; it makes this item's numbers honest.
+
+2. **[U4] makes this worse, and should be weighed against it.** U4 adds `xt-sub-*` subtitle
+   language tags to more destinations — and **72 of the 83 subtitle-language tags already
+   emitted are below 1%**. Shipping U4 as specified widens the tail it is reasonable to want
+   narrowed. That is not an argument against U4; it is an argument that U4 and U8 are one
+   decision, not two.
+
+**What remains for U8 to decide (why it is READY, not DONE):** whether a tag on <1% of items is
+noise or precision. A `xt-sub-HU` on 100 items is useless as a *badge* and may be valuable as a
+*query* — which is [U9]. So the cut is not "delete the tail"; it is **per-destination**: the
+poster overlay takes the head, the tag destinations can take the tail. `TagDestinations`
+already models exactly that, per category — the mechanism exists and is unused for this.
+
+**Method note for whoever implements it:** the histogram is ~20 lines against a copy of
+`state.db` and needs no Jellyfin call. Re-run it rather than trusting these numbers; they were
+true on 2026-09-22 at 10,480 items.
 
 **U8 note.** "Simplify the tags" needs to start from what is actually there, not from taste.
 The measurement: dump the distinct `xt-*` tags across the library with a count for each, then
