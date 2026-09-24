@@ -13,8 +13,8 @@ Two things here are deliberate and are easy to undo by accident:
    browser picks the background for a favicon. On Charcoal the bone arc carries
    it (12.82:1) while the green fades (1.42:1); on light chrome that inverts.
    The tile puts both halves on their intended background whatever the chrome
-   does. `logo.png` renders inside the app, where we control the background, so
-   it stays transparent.
+   does. `logo-mark.png` and `logo-wordmark.png` render inside the app, where we
+   control the background, so they stay transparent.
 
 2. **The icon source is not centred in its canvas** (padding L122 T189 R228
    B159). Everything is squared on the *solid* bounding box first; generating
@@ -44,7 +44,9 @@ SS = 4  # supersampling factor for tile rendering
 
 ICO_SIZES = (16, 32, 48)
 LOGO_PX = 512
-WORDMARK_PX = 1600
+# 960 is ~3x the widest the header ever renders it; the full-resolution
+# original stays in assets/brand/ for anything that needs more.
+WORDMARK_PX = 960
 
 
 def solid_bbox(im: Image.Image, threshold: int = 128) -> tuple[int, int, int, int]:
@@ -87,7 +89,7 @@ def tile(mark: Image.Image, px: int, rounded: bool = True) -> Image.Image:
 
 def build() -> dict[str, bytes]:
     """Render every asset to bytes, keyed by filename under app/static."""
-    mark = squared_mark(Image.open(SRC / "icon.png"))
+    mark = squared_mark(Image.open(SRC / "mark.png"))
     word = Image.open(SRC / "wordmark.png").convert("RGBA")
     word = word.crop(solid_bbox(word))
 
@@ -98,8 +100,9 @@ def build() -> dict[str, bytes]:
         im.save(buf, "PNG", optimize=True)
         out[name] = buf.getvalue()
 
-    # In-app logo: transparent, we own the background it sits on.
-    png("logo.png", mark.resize((LOGO_PX, LOGO_PX), Image.LANCZOS))
+    # In-app art: transparent, we own the background it sits on. Named after
+    # van1sh's convention -- "-mark" is the glyph alone, "-wordmark" the lockup.
+    png("logo-mark.png", mark.resize((LOGO_PX, LOGO_PX), Image.LANCZOS))
 
     # Browser and OS icons: Charcoal tile, because we do not own the background.
     png("favicon.png", tile(mark, 256))
@@ -112,7 +115,7 @@ def build() -> dict[str, bytes]:
     out["favicon.ico"] = buf.getvalue()
 
     wm_h = round(word.height * WORDMARK_PX / word.width)
-    png("wordmark.png", word.resize((WORDMARK_PX, wm_h), Image.LANCZOS))
+    png("logo-wordmark.png", word.resize((WORDMARK_PX, wm_h), Image.LANCZOS))
 
     return out
 
