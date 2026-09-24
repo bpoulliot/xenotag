@@ -4,14 +4,20 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Xenotag — Sign in</title>
+<link rel="icon" href="/static/favicon.ico?v={{ v }}" sizes="any">
 <link rel="icon" href="/static/favicon.png?v={{ v }}" type="image/png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v={{ v }}">
+<link rel="manifest" href="/static/site.webmanifest?v={{ v }}">
+<meta name="theme-color" content="#060d1a">
 <style>
   :root { --bg: #060d1a; --surface: #0c1828; --border: #1a3554; --text: #ddeeff; --muted: #6ba3c8; --accent: #22d3ee; --red: #f87171; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px 40px; width: 340px; }
   .logo-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 24px; }
-  .logo-row img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; }
+  /* No border-radius/cover here: the mark's swirl runs to the edge of its own
+     bounding box, so a circular crop clips the tips off it. */
+  .logo-row img { width: 56px; height: 56px; object-fit: contain; }
   .logo-row h1 { font-size: 22px; font-weight: 700; }
   label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; margin-top: 14px; text-transform: uppercase; letter-spacing: .4px; }
   input[type=text], input[type=password] {
