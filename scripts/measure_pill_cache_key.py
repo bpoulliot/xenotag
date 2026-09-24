@@ -36,8 +36,8 @@ from PIL import Image  # noqa: E402
 from app import overlay  # noqa: E402
 from app.config import ImageConfig  # noqa: E402
 
-# Captured at import so a monkeypatched `overlay._pill_tile` (the self-test
-# installs two) can still be compared against the genuine renderer.
+# Captured at import so a substitute `_pill_tile` (the self-test passes several
+# to `sweep()`) can still be compared against the genuine renderer.
 _REAL_PILL_TILE = overlay._pill_tile
 
 PillArgs = tuple[str, str, str, int, int, int, int]
@@ -60,7 +60,12 @@ def pill_args(width: int, cfg: ImageConfig, text: str, fill: str, text_color: st
 
 
 def render_uncached(args: PillArgs) -> Image.Image:
-    """Ground truth: the real renderer with a cache that cannot hit."""
+    """Ground truth: the real renderer with a cache that cannot hit.
+
+    Swaps the module global rather than calling `clear_pill_cache()`, so the
+    sweep's own cache survives. Single-threaded by consequence — nothing here
+    runs concurrently, and `pytest tests/ -q` is serial.
+    """
     saved = overlay._PILL_CACHE
     overlay._PILL_CACHE = {}
     try:
