@@ -67,7 +67,13 @@ def _pill_tile(
     pad_h: int,
     pad_v: int,
 ) -> Image.Image:
-    key = (text, fill_hex, text_hex, alpha, font_size)
+    # Every argument, not just the ones that looked like "appearance". The
+    # padding changes the tile's size, and _compute_layout_params() rounds
+    # font_size and padding out of the poster width independently -- 494px and
+    # 501px both give font_size 36 with pad_v 2 and 3 (roadmap B3). A key that
+    # is not a superset of the renderer's inputs serves the first poster's tile
+    # to every later one that hashes to it.
+    key = (text, fill_hex, text_hex, alpha, font_size, pad_h, pad_v)
     if key in _PILL_CACHE:
         return _PILL_CACHE[key]
 

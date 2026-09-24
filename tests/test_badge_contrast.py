@@ -26,6 +26,8 @@ from scripts.measure_badge_contrast import (
     sample_interior,
     self_test,
 )
+from scripts.measure_pill_cache_key import self_test as cache_key_self_test
+from scripts.measure_pill_cache_key import sweep as cache_key_sweep
 
 AA = 4.5
 AAA = 7.0
@@ -156,13 +158,14 @@ def test_probe_self_test_passes(font_env):
 
 # ── Cache key ────────────────────────────────────────────────────────────────
 def test_pill_tile_takes_no_background_or_position_argument(font_env):
-    """_PILL_CACHE is keyed on appearance only — no position, no background.
+    """The tile depends on no poster — no position, no background.
 
-    That is sound only while the tile depends on nothing else. P6 (a
+    That is what lets one entry serve many posters at all. P6 (a
     background-aware palette) is the obvious way to break it: the same text
     would render differently per poster while the key stayed equal, and every
     poster after the first would get the first one's colours. Failing here is
-    the cue to add a palette-selection term to the key.
+    the cue to add a palette-selection term to the key, the way B3 added the
+    padding.
     """
     params = list(inspect.signature(overlay._pill_tile).parameters)
     assert params == ["text", "fill_hex", "text_hex", "alpha", "font_size", "pad_h", "pad_v"]
@@ -176,17 +179,84 @@ def test_pill_tile_is_deterministic_for_identical_arguments(font_env):
     assert first == second
 
 
-@pytest.mark.xfail(reason="roadmap B3: pad_h/pad_v change the tile but are not in the cache key", strict=True)
-def test_cache_key_covers_padding(font_env):
-    """B3, recorded executably. Remove the xfail when B3 is fixed.
+@pytest.mark.parametrize(
+    ("term", "first", "second"),
+    [
+        ("pad_v", (36, 4, 2), (36, 4, 3)),
+        ("pad_h", (36, 4, 2), (36, 5, 2)),
+    ],
+)
+def test_cache_key_covers_padding(font_env, term, first, second):
+    """B3, fixed. Two calls differing only in padding must not share an entry.
 
     `_compute_layout_params()` derives font_size and padding from the poster
-    width independently, so two widths can agree on font_size and disagree on
-    padding — e.g. 494px and 501px both give font_size 36, with pad_v 2 and 3.
-    The key omits padding, so whichever poster is rendered first supplies the
-    tile for both.
+    width by independent roundings, so two widths can agree on font_size and
+    disagree on padding — 494px and 501px both give font_size 36, with pad_v 2
+    and 3. While the key omitted padding, whichever poster was rendered first
+    supplied the tile for both, 121 times over a 200-4000px sweep.
+
+    `pad_h` is here by hand rather than by width. No poster width can produce a
+    pad_h collision today, because every `_BADGE_SIZE_PX` value is an exact
+    multiple of 8 and so every `round(8 * scale)` step lands on a
+    `round(base * scale)` step as well. That is arithmetic luck in the layout
+    constants, not a property of the cache, and a badge size that is not a
+    multiple of 8 would spend it — so the key carries pad_h and this asserts it.
     """
     overlay.clear_pill_cache()
-    a = overlay._pill_tile("1080p", "#134e4a", "#ffffff", 255, 36, 4, 2)
-    b = overlay._pill_tile("1080p", "#134e4a", "#ffffff", 255, 36, 4, 3)
-    assert a.size != b.size, "same cache key served a tile built with the other poster's padding"
+    a = overlay._pill_tile("1080p", "#134e4a", "#ffffff", 255, *first)
+    b = overlay._pill_tile("1080p", "#134e4a", "#ffffff", 255, *second)
+    assert a.size != b.size, f"same cache key served a tile built with another poster's {term}"
+    assert a.tobytes() != b.tobytes()
+    assert len(overlay._PILL_CACHE) == 2, f"{term} did not produce a distinct cache entry"
+
+
+def test_cache_key_is_every_pill_tile_argument(font_env):
+    """The defect class is "the key is not a superset of the renderer's inputs".
+
+    Asserted structurally so a new argument cannot be added to `_pill_tile()`
+    without either landing in the key or failing here. Everything else the body
+    reads — `_GLOW_MARGIN`, `_GLOW_EXPAND`, `_GLOW_BLUR`, the corner radii, the
+    glow's own colour — is a module constant, fixed for the life of a process;
+    `_FONT_PATHS`/`_font_cache` are too, and `clear_pill_cache()` is the escape
+    hatch the config-save routes already call when anything else moves.
+    """
+    params = list(inspect.signature(overlay._pill_tile).parameters)
+    overlay.clear_pill_cache()
+    overlay._pill_tile("1080p", "#134e4a", "#ffffff", 255, 36, 4, 2)
+    key = next(iter(overlay._PILL_CACHE))
+    assert len(key) == len(params), f"key covers {len(key)} of {len(params)} arguments"
+
+
+def test_cache_key_probe_self_test_passes(font_env):
+    """`scripts/measure_pill_cache_key.py --self-test` must stay green in CI."""
+    assert cache_key_self_test() == 0
+
+
+def test_no_poster_width_is_served_another_width_s_tile(font_env):
+    """The acceptance criterion for B3, narrowed to the band that used to fail.
+
+    494px and 501px were the first of 121 colliding widths over 200-4000px;
+    the full sweep is `scripts/measure_pill_cache_key.py`, which exits non-zero
+    on any collision. This keeps the cheap part of it in the suite.
+    """
+    r = cache_key_sweep(ImageConfig(), 480, 520)
+    assert r["collisions"] == []
+    assert r["cache_entries"] == r["ideal_entries"] == 4
+
+
+def test_widening_the_key_costs_only_the_entries_it_was_stealing():
+    """B3's trap: a wider key buys correctness with cache hits. Quantify it.
+
+    Over 200-4000px the fix adds 18 entries to 275 and moves the hit rate
+    92.77% -> 92.29%. Those 18 are exactly the tiles the narrow key was serving
+    wrong, so the fix costs nothing it was not already getting by cheating.
+    """
+    cfg = ImageConfig()
+    seen: dict[tuple, set[tuple]] = {}
+    for width in range(200, 4001):
+        p = overlay._compute_layout_params(width, cfg)
+        seen.setdefault((p["font_size"],), set()).add((p["pad_h"], p["pad_v"]))
+    narrow = len(seen)
+    wide = sum(len(v) for v in seen.values())
+    assert (narrow, wide) == (275, 293)
+    assert wide - narrow == sum(1 for v in seen.values() if len(v) > 1) == 18
