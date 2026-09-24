@@ -63,6 +63,15 @@ jobs:
       - name: Legacy tag audit probe self-test
         run: python scripts/audit_legacy_tags.py --self-test
 
+      # Two steps: --self-test proves the probe can still see a planted
+      # collision, and the bare run is the B3 acceptance criterion itself --
+      # it exits non-zero if any poster width is served another width's tile.
+      - name: Pill cache key probe self-test
+        run: python scripts/measure_pill_cache_key.py --self-test
+
+      - name: Pill cache key sweep (B3 — must find zero collisions)
+        run: python scripts/measure_pill_cache_key.py
+
   codeql:
     runs-on: ubuntu-latest
     permissions:
