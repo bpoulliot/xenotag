@@ -96,7 +96,26 @@ fails 10 cases, restoring the glow behind the pill fails 4.
 **P6 is now answerable.** The rendered ratio is finally a function of the configured colour, so
 a background-aware palette can be evaluated on its own merits.
 
-**B2 — filed 2026-09-22, found while fixing B1. Not fixed; evidence only.**
+**B2 — DECIDED 2026-09-23: WARN, do not prevent.** The operator: *"B2 should warn, not
+prevent."*
+
+So a configured colour that fails contrast is **rendered as asked** and reported — never
+refused. The reasoning that follows from it: a refusal would make xenotag override a deliberate
+aesthetic choice, and a badge that silently does not appear is a worse failure than a badge that
+is hard to read. The operator owns the trade; the tool's job is to make sure they are making it
+knowingly.
+
+**What "warn" should mean, and it is not a log line nobody reads:** surface the measured ratio
+**in the Settings UI, beside the colour picker, at the moment of choosing** — with the AA/AAA
+thresholds named. A warning emitted at scan time is a warning delivered to nobody.
+
+**Note the measurements below are STALE as of 2026-09-23.** The live config was reset to
+defaults that day (`badge_opacity` override removed, all four custom colours removed), so the
+"configured" column no longer describes the deployment. **Re-measure with `--config FILE` before
+using any of these numbers.** The defect itself is unchanged: nothing checks a configured
+colour.
+
+*(original filing follows)*
 
 The four colours in `ImageConfig` are only defaults. The settings UI and `config.yml` accept
 any hex and **nothing checks it**. The live deployment at `~/docker/xenotag/config/config.yml`
@@ -170,11 +189,33 @@ Recorded executably as a `strict=True` xfail in `tests/test_badge_contrast.py`
 | U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | — | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | — | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | — | [#11](https://github.com/bpoulliot/xenotag/issues/11) |
-| U7 | **Ratings ingest** — pull the rating from Jellyfin/\*arr and emit it as a tag + badge. Split out of U6 (see note). | 4 | 2 | NEEDS DECISION | — |
+| U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
 | U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted and collapse what is redundant or never queried. | 4 | 3 | **MEASURED 2026-09-22 → READY** | — |
-| U9 | **Tag queries** — filter/search the media browser by tag (`xt-*` and legacy), combinable, from the web UI. | 4 | 3 | NEEDS DECISION | — |
+| U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | NEEDS DECISION | — |
 
-**U7 note — why this is split out of U6.** U6 ("Extended metadata tags") is Complexity 5 because
+**U7 — CLOSED 2026-09-23. The item rested on a misreading, and the misreading was the
+assistant's.** The operator: *"rating is the MPAA, TV, government or rating board rating (e.g.,
+TV-MA, R, 16, 18) and not the star or numerical review rating."*
+
+That is correct, and it is already what xenotag does. Verified in code: `app/pipeline.py:144`
+reads `item.get("OfficialRating")`, `app/clients/jellyfin.py` requests `OfficialRating` in its
+`Fields` list and writes it back with an **\*arr certification fallback** when Jellyfin's own
+field is blank (`fallback_rating`, `jellyfin.py:159-173`). **`CommunityRating` and
+`CriticRating` appear nowhere in the codebase.**
+
+U8's histogram is the independent confirmation — the rating tags in the live library are all
+certifications: `xt-R` (2,963), `xt-PG-13` (1,363), `xt-TV-MA` (1,012), `xt-PG` (969),
+`xt-TV-14` (740), `xt-NR` (430), `xt-TV-PG` (263), `xt-G` (199), `xt-Not Rated` (187). Not a
+single numeric score.
+
+So the "which rating source?" question this item was filed to answer **does not exist**. The
+render path it described as ready-and-waiting is not waiting — it is in production.
+
+**What remains of U6's "ratings", if anything, is a numeric-score feature nobody asked for.**
+The operator's framing says that is not what "rating" means here. Do not re-file it without a
+request.
+
+~~**U7 note — why this is split out of U6.**~~ *(superseded, kept for provenance)* U6 ("Extended metadata tags") is Complexity 5 because
 it bundles seven unrelated sources: genres, original language, runtime bands, series status,
 ratings, custom formats. Ratings alone is ~2: the value is already on the Jellyfin item payload
 and `rating_badge_color` / `show_rating_badge` / the `rating` destination and `rating_group`
@@ -247,7 +288,39 @@ tags on <1%, which are noise, (c) pairs that are near-perfectly correlated. `_ta
 already exists to force a re-tag when the taxonomy changes, so the migration path is in place.
 This is a measurement, not an opinion — take the histogram first, re-label, then cut.
 
-**U9 note.** There is currently **no tag query surface at all** — no `def` in `state.py`,
+**U9 — RESCOPED 2026-09-23 by the operator.** *"Not sure u9 is required. Tags can already be
+queried in Jellyfin. Should this take the shape of being able to edit existing tags instead if
+the labeling is wrong?"*
+
+**The query half is dropped.** Jellyfin already indexes and searches tags; building a second
+query surface in xenotag duplicates it for no gain. U8 wanted a query to learn which tags are
+used — Jellyfin can answer that.
+
+**What replaced it is a real defect, found while checking the reframe.**
+`JellyfinClient.set_managed_tags()` does:
+
+    user_tags = [t for t in existing if not any(t.startswith(p) for p in all_prefixes)]
+    merged = user_tags + new_tags
+
+So tags **without** the `xt-`/`mf-` prefix survive a rescan — but **every `xt-*` tag is replaced
+wholesale**. A human who corrects a wrong `xt-*` tag in Jellyfin has their edit **silently
+reverted on the next scan**, with nothing logged and nothing to notice.
+
+**The open decision is which of two this becomes:**
+
+ 1. **Fix the derivation.** If an `xt-*` tag is wrong, the ffprobe/metadata logic that produced
+    it is wrong, and the correct fix is upstream — a manual edit would only paper over it. This
+    treats clobbering as correct behaviour and the wrong tag as the bug.
+ 2. **An override mechanism.** Some corrections a human can make and a probe cannot (a
+    mislabelled audio track, a container lying about its language). Those need somewhere to
+    live that a rescan respects — and per-item, not global.
+
+**These are not exclusive**, but 1 is much cheaper and may cover most real cases. **Before
+choosing, measure how often an `xt-*` tag is actually wrong** — that is the evidence, and
+nobody has it. The operator also raised whether this is really Jellyfin metadata editing rather
+than xenotag's job; if the answer is (1), it is neither — it is a xenotag derivation bug.
+
+~~**U9 note.** There is currently **no tag query surface at all**~~ *(superseded)* — no `def` in `state.py`,
 `pipeline.py` or `web/routes.py` searches or filters by tag. Tags are written outward to
 Jellyfin/\*arr and never read back for browsing. So this is new construction, not an
 improvement, and it interacts with U8: deciding which tags are worth keeping is much easier
@@ -331,7 +404,21 @@ overridden at startup**, by name, never by value.
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
 | P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
 
-**P6 note — was gated on B1, which shipped 2026-09-22.** Today there is still **no palette
+**P6 — KEPT 2026-09-23, explicitly as polish.** The operator: *"I still like the p6 idea and
+think there's value to ensuring accessibility while allowing things like opacity and glow.
+Definitely polish."*
+
+That settles the question B1 raised. B1 found the poster barely matters once the pill is opaque
+— the backdrop is invisible *under* the badge — which looked like it removed P6's reason to
+exist. **It does not, because opacity and glow stay configurable.** The moment an operator turns
+opacity down or the glow back on, the poster underneath becomes visible through the badge and
+the contrast question returns. **P6 is what makes those knobs safe to use**, rather than
+options that quietly break legibility.
+
+So the framing is: not "pick colours per poster because contrast demands it", but **"keep the
+configurable knobs accessible"**. That is polish, and it is worth doing.
+
+~~**P6 note — was gated on B1, which shipped 2026-09-22.**~~ Today there is still **no palette
 detection anywhere**: `_pill_tile()`
 takes `fill_hex` from config and calls `_parse_color()`, and it never receives the base image.
 The colours are four fixed constants. So "main + backup palette" is new construction.
@@ -361,7 +448,39 @@ Does the operator get to see/override the choice, per the constrained-controls p
 elsewhere? The glow question is now answered: B1 kept it, as a halo *around* the pill rather
 than a wash behind it, so P6 does not have to decide its fate.
 
-**P7 note.** With `show_video_badges` / `show_audio_badges` / `show_sub_badges` /
+**P7 + U8 — REDIRECTED 2026-09-23. Hiding metadata is the wrong route.** The operator:
+*"Seems like u8 should not be an app choice. Why hide this for even a poster oversaturated with
+pills? All pills should be limited by poster margins. Maybe choosing the order of pills (e.g.
+en, ja, de listed before anything else) by setting a 'prefer languages' or similar is useful but
+I'm not sure hiding metadata is the correct route."*
+
+**This rejects the premise both items were built on.** U8's measurement found 81% of the live
+`xt-*` vocabulary sits on under 1% of items, and both U8 and P7 assumed the answer was to *cut*
+the tail. It is not. A tag that is rare is not a tag that is worthless — it is often the most
+informative one on that particular poster. `xt-sub-HU` on 100 items tells you something about
+exactly those 100.
+
+**The two real requirements that replace "cut the tail":**
+
+1. **Pills are bounded by the poster margins, always.** Overflow is a layout defect, not a
+   reason to drop information. `_truncate_label()` and `_measure_group_height()` already exist;
+   the question is whether the layout *guarantees* containment at every `badge_size` and poster
+   aspect, or merely usually achieves it. **Measure that** — it is answerable and nobody has.
+2. **Order, not omission.** A `prefer_languages` setting (e.g. `en, ja, de` first, everything
+   else after) puts the pills a given operator cares about where they are read first, without
+   discarding the rest. This generalises beyond language — any category could carry a
+   precedence list.
+
+**What this means for the two items:**
+
+ - **U8 is no longer "collapse the taxonomy".** Its histogram stands as evidence and its U1
+   finding stands as a defect, but *"which tags should we stop emitting"* is answered: **none,
+   on these grounds.** Re-label accordingly.
+ - **P7 is no longer a density budget.** It becomes layout containment plus ordering — and the
+   `show_*` booleans stay as the operator's own switch, since turning a category off is a
+   choice they make knowingly rather than one the app makes for them.
+
+~~**P7 note.** With `show_video_badges`~~ / `show_audio_badges` / `show_sub_badges` /
 `show_rating_badge` all defaulting `True`, plus U4 adding per-language subtitle badges and U7
 adding a rating, the default poster gains badges faster than anything removes them —
 `_truncate_label()` already exists because labels outgrow the space. The likely shape is a
