@@ -20,6 +20,8 @@ from ..clients.jellyfin import JellyfinClient
 from ..clients.radarr import RadarrClient
 from ..clients.sonarr import SonarrClient
 from ..config import (
+    BADGE_PALETTE_VERSION,
+    ImageConfig,
     config_as_dict_safe,
     config_as_yaml,
     get_config,
@@ -141,7 +143,12 @@ async def logout(request: Request):
 async def dashboard(request: Request):
     if not _current_user(request):
         return RedirectResponse("/login", status_code=302)
-    return templates.TemplateResponse(request, "index.html", context={"v": _APP_VERSION})
+    # The colour inputs' initial values and JS fallbacks come from the model, so
+    # the template can never drift from the shipped defaults again (roadmap B4:
+    # the README had).
+    return templates.TemplateResponse(
+        request, "index.html", context={"v": _APP_VERSION, "badge_defaults": ImageConfig()}
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -659,10 +666,10 @@ async def preview_image(
     opacity: float = 1.0,
     badge_size: str = "tv",
     text_color: str = "#ffffff",
-    video_color: str = "#134e4a",
-    audio_color: str = "#1e3a8a",
-    sub_color: str = "#7c2d12",
-    rating_color: str = "#4c1d95",
+    video_color: str = "",
+    audio_color: str = "",
+    sub_color: str = "",
+    rating_color: str = "",
     show_video: str = "true",
     show_audio: str = "true",
     show_subs: str = "true",
@@ -671,17 +678,20 @@ async def preview_image(
     sample: str = "",
 ):
     _require_user(request)
-    from ..config import ImageConfig
-
+    default = ImageConfig()
     cfg_img = ImageConfig(
+        # These colours are what the operator is previewing right now, not a
+        # legacy config: without the version, the palette migration would read
+        # a deliberately chosen old default as unmigrated and swap it out.
+        badge_palette_version=BADGE_PALETTE_VERSION,
         badge_position=position,
         badge_opacity=max(0.1, min(1.0, opacity)),
         badge_size=badge_size if badge_size in ("desktop", "tv", "tv_plus") else "tv",
         badge_text_color=text_color or "#ffffff",
-        video_badge_color=video_color or "#134e4a",
-        audio_badge_color=audio_color or "#1e3a8a",
-        sub_badge_color=sub_color or "#7c2d12",
-        rating_badge_color=rating_color or "#4c1d95",
+        video_badge_color=video_color or default.video_badge_color,
+        audio_badge_color=audio_color or default.audio_badge_color,
+        sub_badge_color=sub_color or default.sub_badge_color,
+        rating_badge_color=rating_color or default.rating_badge_color,
         show_video_badges=show_video.lower() not in ("false", "0"),
         show_audio_badges=show_audio.lower() not in ("false", "0"),
         show_sub_badges=show_subs.lower() not in ("false", "0"),

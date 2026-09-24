@@ -72,8 +72,15 @@ jobs:
       - name: Pill cache key sweep (B3 — must find zero collisions)
         run: python scripts/measure_pill_cache_key.py
 
+      # Same two-step shape as B3: the self-test proves the probe still sees
+      # the known navy/violet collapse, and the bare run is B4's acceptance
+      # criterion -- it exits non-zero if any two default badge colours fall
+      # below dE 5 under normal or simulated colour-blind vision.
       - name: Palette separation probe self-test
         run: python scripts/measure_palette_separation.py --self-test
+
+      - name: Palette separation sweep (B4 — defaults must stay tellable apart)
+        run: python scripts/measure_palette_separation.py
 
       # Catches a hand-edited app/static/ drifting from assets/brand/.
       - name: Brand assets match their sources

@@ -26,7 +26,7 @@ to do is go work on that one.
 | B1 | **Badge contrast is roughly half what the config claims.** `ImageConfig` annotates each badge colour "verified WCAG AAA ≥7:1 against white text" — true of the opaque hex, but not of what renders. | 5 | 2 | **FIXED 2026-09-22** | — |
 | B2 | **A configured badge colour is never checked for contrast.** Any hex the settings UI or `config.yml` supplies is used as-is; the live deployment's palette renders at 2.6:1. | 4 | 2 | READY | — |
 | B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | **FIXED 2026-09-24** | — |
-| B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | READY | — |
+| B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | **FIXED 2026-09-24** | — |
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | READY | — |
 
 **B5 — FILED 2026-09-24, found while auditing U1's outward destinations. Not fixed here.**
@@ -260,6 +260,14 @@ which renders a whole 494px and 501px poster through `render_badge_groups()` in 
 compares the bytes. That one guards the defect *class* rather than B3's instance of it: P6 would
 fail it too, which is the cue to add a palette term to the key. Reverting the key alone fails 12
 tests.
+
+**B4 — FIXED 2026-09-24, together with [P10].** The operator chose **palette B** and **defaults
+plus a migration**. Worst pair across normal, protan, deutan and tritan vision went from **dE 1.9
+to dE 12.3**, and CI now runs the separation probe bare as the acceptance criterion — the same
+shape as B3's sweep — so a future default that collapses fails the build. The details of what
+shipped are under P10.
+
+*(original filing follows)*
 
 **B4 — found 2026-09-23 while speccing the rebrand, and it is not a rebrand problem.**
 
@@ -690,7 +698,7 @@ overridden at startup**, by name, never by value.
 | P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | READY | — |
-| P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **DECIDED 2026-09-23 → READY** | — |
+| P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
 | P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | NEEDS DECISION | — |
 
 **P6 — KEPT 2026-09-23, explicitly as polish.** The operator: *"I still like the p6 idea and
@@ -953,6 +961,53 @@ The problem is not contrast, it is **counting**: the overlay encodes four catego
 3. **Deep Forest fill plus a per-category Sage/Bone keyline.** Keeps one fill colour and moves
    the cue to an accent. Most work, and it touches `_pill_tile()`'s glow geometry, which B1 just
    settled — weigh that before choosing it.
+
+**SHIPPED 2026-09-24 — palette B, defaults plus migration.** The operator: *"I like option b,
+defaults plus migration."*
+
+| category | old | new | opaque vs white |
+|---|---|---|---:|
+| video | `#134e4a` | `#203a30` Deep Forest | 12.3:1 |
+| audio | `#1e3a8a` | `#312c4c` | 13.2:1 |
+| sub | `#7c2d12` | `#50532f` | 8.0:1 |
+| rating | `#4c1d95` | `#73485b` | 7.5:1 |
+
+**The migration is one-shot, and that is the whole design.** A validator keyed only on "value
+equals the old default" re-fires on every load, so an operator who *later* picks the old navy on
+purpose would have it swapped back on each restart, silently and forever. So `ImageConfig` gains
+`badge_palette_version` (default `2`). A config with no version is palette 1: each colour still
+**exactly equal to its own field's** old default moves to the new one, anything else is left
+alone, and the version is set to 2. It persists on the next save, and from then on nothing is
+touched. The Settings UI spreads the loaded `image` dict back into both of its PUT bodies, so the
+marker survives UI saves without any change to the frontend.
+
+Three consequences worth knowing:
+
+ - **Posters do not repaint on their own.** Nothing hashes image settings the way
+   `_tag_config_hash()` hashes tag settings, so existing overlays keep their old colours until the
+   next **full** scan re-renders them. This was already true of any colour change made in Settings;
+   the migration inherits it rather than causing it. A fix would be an image-config hash that
+   forces a re-render, which is a separate item if wanted.
+ - **The opacity floors moved, and there is now little room below 1.0.** Separation was bought
+   partly with lightness, which put `rating` at 7.48:1 — just over AAA. Re-measured: **0.98 is the
+   AAA floor and 0.80 the AA floor** (they were 0.89 and 0.73). Palette A had the same ~7.5 worst
+   case, so this is the price of colour-blind separation, not of B specifically. `config.py` and the
+   README quote the new floors.
+ - **The preview route had to opt out.** It builds `ImageConfig` from query parameters, which to
+   the migration looks exactly like an unversioned legacy config, so previewing the old navy would
+   have rendered indigo. It now passes the current version explicitly. A test pins this, and
+   removing the one line fails it.
+
+Also closed from the trap list below: the README's nonexistent `#1e3a5f` defaults are replaced
+with the real ones, `config.example.yml` ships palette 2 with its version, and the template and
+preview route now read their defaults from `ImageConfig` instead of repeating hex literals — which
+is how the README drifted in the first place. `tests/test_badge_contrast.py` still uses `#134e4a`,
+correctly: there it is an arbitrary fill for cache tests, not a claim about the defaults.
+
+Guarded by `tests/test_badge_palette.py` (14 tests), mutation-checked: dropping the preview
+route's version fails 1, and a naive every-load migration fails 3.
+
+*(decision record follows)*
 
 **DECIDED 2026-09-23 — the colour coding stays.** The operator: *"colour coding the types of
 pills was intentional so all green somewhat reverts that call."* So **(1) monochrome is out**,

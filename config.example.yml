@@ -48,10 +48,14 @@ image:
   badge_opacity: 1.0         # contrast control: <1.0 lets the poster through the fill
   badge_size: tv               # desktop | tv | tv_plus (see README for guidance)
   badge_text_color: "#ffffff"
-  video_badge_color:  "#134e4a"
-  audio_badge_color:  "#1e3a8a"
-  sub_badge_color:    "#7c2d12"
-  rating_badge_color: "#4c1d95"
+  # Categories differ in lightness as well as hue so they stay distinct for
+  # colour-blind viewers. Check a palette of your own with
+  # scripts/measure_palette_separation.py --config FILE
+  video_badge_color:  "#203a30"
+  audio_badge_color:  "#312c4c"
+  sub_badge_color:    "#50532f"
+  rating_badge_color: "#73485b"
+  badge_palette_version: 2   # leave as-is; marks the default-palette migration done
   show_video_badges:  true
   show_audio_badges:  true
   show_sub_badges:    true
