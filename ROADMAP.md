@@ -21,6 +21,7 @@ unassessed.
 | B1 | **Badge contrast is roughly half what the config claims.** `ImageConfig` annotates each badge colour "verified WCAG AAA ≥7:1 against white text" — true of the opaque hex, but not of what renders. | 5 | 2 | **FIXED 2026-09-22** | — |
 | B2 | **A configured badge colour is never checked for contrast.** Any hex the settings UI or `config.yml` supplies is used as-is; the live deployment's palette renders at 2.6:1. | 4 | 2 | READY | — |
 | B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | READY | — |
+| B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | READY | — |
 
 **B1 — FIXED 2026-09-22.** Measured, fixed and re-measured in one session. The measurement
 below was reproduced from scratch first and **agreed with the original to the decimal**, so the
@@ -166,6 +167,43 @@ the same class of defect P6 is warned about — adding padding to the key is a o
 
 Recorded executably as a `strict=True` xfail in `tests/test_badge_contrast.py`
 (`test_cache_key_covers_padding`); remove the marker when it is fixed.
+
+**B4 — found 2026-09-23 while speccing the rebrand, and it is not a rebrand problem.**
+
+B1 established that every badge is readable *against its own fill*. Nobody checked the other
+half: **whether a video badge is tellable from an audio badge**, which is the entire reason the
+four categories carry different colours. They are not, for a substantial minority of viewers.
+
+New probe: **`scripts/measure_palette_separation.py`** (`--config FILE`, `--self-test`). It
+reports CIEDE2000 between every pair under normal vision and under simulated protanopia,
+deuteranopia and tritanopia (Machado 2009, severity 1.0), and **exits non-zero** when any pair
+falls below dE 5 — the point at which two badges are not reliably different colours in situ.
+Shipped defaults:
+
+| pair | normal | protanopia | deuteranopia | tritanopia |
+|---|---:|---:|---:|---:|
+| video/audio | 28.7 | 22.7 | 19.1 | 8.8 |
+| video/sub | 40.4 | 18.7 | 26.1 | 47.5 |
+| video/rating | 32.2 | 24.8 | 20.1 | 22.6 |
+| audio/sub | 39.9 | 44.4 | 49.7 | 48.8 |
+| **audio/rating** | 12.1 | **3.6** | **1.9** | 17.7 |
+| sub/rating | 40.1 | 48.0 | 52.0 | 30.9 |
+
+`audio` `#1e3a8a` (navy) and `rating` `#4c1d95` (violet) are adjacent hues at nearly the same
+lightness. Normal vision separates them on hue alone (12.1 — already the weakest pair). Remove
+the red-green axis and there is nothing left: **1.9 under deuteranopia**, which affects roughly
+6% of men. Those two badges are the same colour to them.
+
+**Why it went unnoticed:** the rating badge renders top-right and the audio badge bottom-left, so
+they rarely sit side by side — the failure is "I cannot tell what kind of badge this is", not
+"these two look alike". And every existing check is a *contrast* check, which this palette passes
+at AAA across the board.
+
+**The fix is a colour constant, not code.** The `--config` flag measures any candidate before it
+ships. Two measured replacements, both AAA and both clearing dE 12 in the worst case, are
+recorded under [P10]; the cheapest is to change `rating_badge_color` alone. **B1's
+config-persistence caveat applies** — an operator who has saved Settings keeps the old hexes, so
+decide whether this is a default change or a migration.
 
 ---
 
@@ -405,7 +443,7 @@ overridden at startup**, by name, never by value.
 | P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | NEEDS DECISION | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | READY | — |
-| P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 3 | NEEDS DECISION | — |
+| P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **DECIDED 2026-09-23 → READY** | — |
 
 **P6 — KEPT 2026-09-23, explicitly as polish.** The operator: *"I still like the p6 idea and
 think there's value to ensuring accessibility while allowing things like opacity and glow.
@@ -539,6 +577,21 @@ Four traps, each of which surfaces as "the rebrand didn't work" rather than as a
    wordmark to a disc; the sheet's usage examples are rounded squares.
 4. **There is no `apple-touch-icon`, no web manifest, and no `theme-color`.** None exist today.
    The rebrand is the moment to add them; `theme-color` should be Charcoal `#171B19`.
+5. **The full mark does not survive favicon size, and the sheet asks it to.** Rendered at 32px
+   and 16px on Charcoal, the green swirl — Deep Forest against a near-black background — drops
+   out entirely, leaving the bone arcs and the centre dot floating. The brand sheet specifies
+   32×32 as the favicon, but that size needs its **own** artwork: either lift the swirl to Sage
+   `#708675` or drop it and keep the bone counter-swirl plus dot. This is a separate file, not a
+   downscale, and it is the kind of thing only discovered by actually rasterising to 16px.
+
+**Reconstruction status, 2026-09-23.** The operator's SVGs are described as rough and are **not
+in this repo** — nothing under `~/dev`, `~/.claude` or `/tmp` matches. Pending those files, the
+mark was rebuilt parametrically from the brand sheet: it is a **C2-symmetric two-blade
+pinwheel** — an outer sage-green spiral blade tapering from a blunt thick end to a needle tip,
+an inner bone counter-blade of constant width with square-cut caps, and a sage centre dot, each
+blade duplicated at 180°. Generating rather than tracing means the proportions stay tunable by
+number. **Prefer the operator's own SVGs if they can be placed on disk** — a reconstruction is
+a fallback, not the source of truth.
 
 **P9 — UI theme retoken. READY, with one substitution that is not optional.**
 
@@ -606,14 +659,46 @@ The problem is not contrast, it is **counting**: the overlay encodes four catego
 1. **Monochrome.** All four fills Deep Forest; the label text already names the category.
    Maximally on-brand, and it discards the at-a-glance cue that hue currently carries.
 2. **Four brand-adjacent hues.** Anchor on Deep Forest, rotate hue, hold the dark desaturated
-   character. Measured, all AAA on white: `#203A30` forest 12.29 · `#1C3A42` teal-blue 12.12 ·
-   `#33401F` olive 11.09 · `#2B3540` slate-green 12.46.
+   character.
 3. **Deep Forest fill plus a per-category Sage/Bone keyline.** Keeps one fill colour and moves
    the cue to an accent. Most work, and it touches `_pill_tile()`'s glow geometry, which B1 just
    settled — weigh that before choosing it.
 
-**Recommend (2):** it is the only option that changes no rendering code, and B1's guarantee — the
-rendered ratio equals the opaque-hex ratio — holds for all four.
+**DECIDED 2026-09-23 — the colour coding stays.** The operator: *"colour coding the types of
+pills was intentional so all green somewhat reverts that call."* So **(1) monochrome is out**,
+and the badges are not obliged to adopt brand colours at all — *"the badges don't necessarily
+need to recolour. Those are mostly user preference anyway."*
+
+**Correction: my first proposal for (2) was wrong, and measuring it is what showed that.** I
+proposed `#203A30` / `#1C3A42` / `#33401F` / `#2B3540` because all four clear AAA against white
+text (12.29 / 12.12 / 11.09 / 12.46). Contrast was the wrong axis. Those four are dark,
+desaturated and **at nearly identical lightness**, so they are separated by hue alone — and they
+measure a worst-case **dE 0.6** across simulated vision types. **That is worse than the shipped
+palette's 1.9**, which [B4] files as a defect. Hue-only separation in a near-monochrome palette
+does not survive colour blindness.
+
+**What actually works is staggering lightness, not rotating hue.** Both palettes below were found
+by search under the constraints "AAA against white text" and "maximise the worst pairwise
+CIEDE2000 across normal, protanopic, deuteranopic and tritanopic vision", and both were then
+verified through `scripts/measure_palette_separation.py --config`:
+
+| palette | video | audio | sub | rating | worst dE | worst contrast |
+|---|---|---|---|---|---:|---:|
+| shipped today | `#134e4a` | `#1e3a8a` | `#7c2d12` | `#4c1d95` | **1.9** | 9.37:1 |
+| my first (2), withdrawn | `#203A30` | `#1C3A42` | `#33401F` | `#2B3540` | **0.6** | 11.09:1 |
+| **A — hue-preserving** | `#245d59` | `#4e517e` | `#452a20` | `#382b47` | **12.1** | 7.49:1 |
+| **B — brand-anchored** | `#203A30` | `#312c4c` | `#50532f` | `#73485b` | **12.3** | 7.48:1 |
+
+**Recommend A.** It keeps the four hue families the operator deliberately chose — teal video,
+indigo audio, brown subtitle, violet rating — and only desaturates them toward the brand's muted
+character while staggering L\* so the difference survives without the red-green axis. It reads as
+the same colour coding, six times further from collapse than what ships today. **B** anchors
+`video` on true Deep Forest and reads more strongly as the brand, at the cost of shifting every
+category's hue.
+
+**Either is fine; doing nothing is also defensible** — the operator's framing makes these a
+default, not a rule. But *doing nothing leaves [B4] in place*, so if the badges keep their
+current colours, change `rating_badge_color` at minimum.
 
 Traps, and the first is the one that will actually bite:
 
