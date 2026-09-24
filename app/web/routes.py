@@ -23,6 +23,7 @@ from ..config import (
     config_as_dict_safe,
     config_as_yaml,
     get_config,
+    overridden_fields,
     save_auth,
     save_config,
     save_config_from_dict,
@@ -513,8 +514,14 @@ class _ArrTestReq(BaseModel):
 async def jellyfin_test(request: Request, body: _ConnTestReq):
     """Test Jellyfin connectivity with provided credentials — does not save config."""
     _require_user(request)
+    api_key = body.api_key
+    if "jellyfin.api_key" in overridden_fields():
+        # The field is read-only in the UI and a submitted value can never
+        # become the active one, so test what will actually be used. Testing a
+        # typed-in key here would report success for a key nothing ever sends.
+        api_key = get_config().jellyfin.api_key
     libraries: list[dict] = []
-    with JellyfinClient(body.url.rstrip("/"), body.api_key) as jf:
+    with JellyfinClient(body.url.rstrip("/"), api_key) as jf:
         h = jf.health()
         if h["ok"]:
             try:

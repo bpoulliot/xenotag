@@ -1,6 +1,9 @@
+# Secrets can be supplied by the environment instead of this file — see
+# "Externally managed secrets" in the README. A field the environment supplies
+# is never written back here, so a Settings save cannot clobber it.
 jellyfin:
   url: http://jellyfin:8096
-  api_key: ""
+  api_key: ""  # or set JELLYFIN_API_KEY / JELLYFIN_API_KEY_FILE
   library_ids: []  # empty = all libraries
 
 # Sonarr integration is optional. Remove or leave empty to use Jellyfin only.
@@ -57,6 +60,7 @@ image:
 
 auth:
   username: admin
-  password_hash: ""  # auto-generated on first run; set via XENOTAG_USERNAME/XENOTAG_PASSWORD env vars
+  password_hash: ""  # auto-generated on first run; seed via XENOTAG_USERNAME/XENOTAG_PASSWORD env vars
+  # secret_key: ""   # auto-generated on first run; or set XENOTAG_SECRET_KEY / XENOTAG_SECRET_KEY_FILE
 
 log_level: INFO

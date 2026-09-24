@@ -13,7 +13,7 @@ from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
 
 from . import auth as _auth
-from .config import AppConfig, get_config, load_config, save_auth
+from .config import AppConfig, get_config, load_config, log_env_overrides, save_auth
 from .pipeline import run_incremental_scan
 from .scheduler import start, stop
 from .state import get_session, init_db, purge_legacy_tags
@@ -72,11 +72,16 @@ class _SecurityHeaders(BaseHTTPMiddleware):
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    cfg = load_config()
+    # Configure logging BEFORE loading config: load_config() warns about an
+    # environment override it had to ignore, and that warning is worthless if
+    # it lands before there is a handler to emit it.
     logging.basicConfig(
-        level=getattr(logging, cfg.log_level.upper(), logging.INFO),
+        level=logging.INFO,
         format="%(asctime)s %(levelname)s %(name)s — %(message)s",
     )
+    cfg = load_config()
+    logging.getLogger().setLevel(getattr(logging, cfg.log_level.upper(), logging.INFO))
+    log_env_overrides()
     init_db()
     _purge_legacy_tags(cfg)
     _auth.bootstrap(cfg.auth, save_auth)

@@ -512,9 +512,75 @@ benefit; the mtime problem is the residue for files that change without an event
 | I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | — | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
 | I5 | Prometheus metrics endpoint | 3 | 2 | — | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
 | I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | — | — |
-| I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | READY | — |
+| I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
+| I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | NEEDS DECISION | — |
 
-**I8 note — measured 2026-09-23, after a credential leak made it concrete.**
+**I8 — SHIPPED 2026-09-24.** `jellyfin.api_key`, `auth.secret_key` and `webhooks.secret` can now
+be supplied by `JELLYFIN_API_KEY` / `XENOTAG_SECRET_KEY` / `XENOTAG_WEBHOOK_SECRET`, or by the
+`_FILE` twin of any of them, and a field the environment supplies is **never written back** to
+`config.yml` — not by the Settings page, not by
+the raw YAML editor, not by the first-run bootstrap. 27 tests in `tests/test_env_overrides.py`;
+the five that matter were confirmed to fail with the strip removed. See "Externally managed
+secrets" in the README.
+
+Three decisions the implementation had to make that the note below did not settle:
+
+* **`_FILE` beats the bare variable** when both are set. The file form is what a secrets pipeline
+  writes on purpose; a bare variable is the form that arrives by accident, out of a shared compose
+  `env_file` or an inherited shell environment. The deliberate source wins.
+* **Failure is asymmetric.** A `_FILE` that is unreadable or names an empty file is **fatal at
+  startup**: naming a file is unambiguous intent, and continuing with the stale value in
+  `config.yml` is precisely the silent failure the trap below warns about. A bare variable set to
+  the **empty string** is ignored with a WARNING instead — empty is the signature of an
+  unpopulated `${VAR}` interpolation, not of intent, and blanking a working key on that basis
+  would take the deployment down for a typo in an unrelated file.
+* **Loading never writes.** Enabling an override does not purge the value already sitting in
+  `config.yml`; the next save does, and the README says so. A load that rewrote the file would be
+  a surprising side effect on a read path, and would fire on every container start.
+
+**The I2 question this note asked, answered: no, `config.yml` should not be in I2's backup.**
+Not as a blanket rule — a backup that captures a rendered secret is a leak with a much longer
+half-life than the original, because backups are copied, mailed and kept. I8 makes the good
+version possible: with the secrets externally managed, what is left in `config.yml` is settings,
+and settings are worth backing up. So I2 should back up `config.yml` **through the same strip**
+`_persistable()` applies on save — never the raw file — and should say in the UI that restoring it
+will not restore secrets. If I2 ships before an operator moves their secrets out, the strip is a
+no-op and the backup does contain them; I2 should warn on that case rather than silently including
+them.
+
+`webhooks.secret` went in too, past the two fields the item named. It is a fixed dotted path with
+no Settings field to make read-only, so it is one table entry and one test on an already-tested
+code path — and leaving a plainly-shaped secret out would have been a half-job. `auth.password_hash`
+stayed out on purpose: it is a verifier rather than a secret, and the first-run bootstrap has to be
+able to write it.
+
+**I9 note — filed 2026-09-24 while implementing I8.**
+
+I8 gave `config.yml` three fields the environment can own, keyed by dotted path in
+`ENV_OVERRIDABLE` (`app/config.py`). Every remaining secret in the file is a Sonarr or Radarr
+instance key, and those are **not addressable that way**: `sonarr.instances` and `radarr.instances`
+are lists of `ArrInstance`, so there is no stable dotted path to a given key. Evidence —
+`config.example.yml` shows two `sonarr.instances` entries, each with its own `api_key`, and the
+Settings UI (`renderInstances()` in `index.html`) lets an operator add and reorder them freely.
+
+This is NEEDS DECISION rather than READY because the addressing scheme is a real choice with no
+obviously right answer, and it is the operator's to make:
+
+* **By index** — `SONARR_0_API_KEY`. Trivial to implement; breaks silently the moment someone
+  reorders or deletes an instance in the UI, which is exactly the silent-rotation-failure mode I8
+  exists to prevent. Probably disqualifying on its own terms.
+* **By instance name** — `SONARR_API_KEY_<NAME>`, e.g. `SONARR_API_KEY_SONARR_4K`. Stable across
+  reordering, but `ArrInstance.name` is a free-text field the UI lets you edit, so renaming an
+  instance silently detaches its secret. Needs a rule for what happens on a rename, and needs a
+  name→variable mangling (case, spaces, hyphens) that is documented rather than guessed.
+* **Don't** — leave the `*arr` keys in `config.yml` and say so. They are lower-value than the
+  Jellyfin key: they grant access to an already-internal service, and I8's leak was the Jellyfin
+  key specifically.
+
+Whichever is chosen, the read-only Settings treatment has to extend to a per-row field in the
+instance table, which is more UI work than I8's single input needed — hence complexity 3.
+
+**Original note — measured 2026-09-23, after a credential leak made it concrete.**
 
 `config.yml` holds `jellyfin.api_key`, `auth.secret_key` and the bcrypt `auth.password_hash`.
 An assistant session `cat`-ed the file to check badge settings and printed all three into a
