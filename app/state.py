@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import json
 import os
+from collections import Counter
+from collections.abc import Iterable, Sequence
 from datetime import datetime
 from pathlib import Path
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, event, text
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, event, or_, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 _engine = None
@@ -141,6 +143,98 @@ def upsert_media_state(
     row.content_rating = content_rating
     session.commit()
     return row
+
+
+def partition_legacy_tags(
+    tags: Iterable[str],
+    legacy_prefixes: Sequence[str],
+    managed_prefix: str,
+) -> tuple[list[str], list[str]]:
+    """Split ``tags`` into (kept, removed) for a legacy-prefix sweep.
+
+    A tag carrying ``managed_prefix`` is kept unconditionally, even when a legacy
+    prefix also matches it. ``legacy_prefixes`` is operator-supplied config, so
+    nothing stops it holding ``"x"`` — and without this rule that single character
+    would take every ``xt-*`` tag in the index with it. The managed prefix wins.
+
+    Order is preserved and duplicates are handled independently, so ``removed``
+    counts applications rather than distinct tags.
+    """
+    prefixes = tuple(p for p in legacy_prefixes if p)
+    if not prefixes:
+        return list(tags), []
+    kept: list[str] = []
+    removed: list[str] = []
+    for tag in tags:
+        if managed_prefix and tag.startswith(managed_prefix):
+            kept.append(tag)
+        elif tag.startswith(prefixes):
+            removed.append(tag)
+        else:
+            kept.append(tag)
+    return kept, removed
+
+
+def purge_legacy_tags(
+    session: Session,
+    legacy_prefixes: Sequence[str],
+    managed_prefix: str,
+    *,
+    dry_run: bool = False,
+) -> dict:
+    """Remove legacy-prefixed tags from ``media_state.tags_applied``.
+
+    This is the *local index* half of the legacy migration. The outward half —
+    stripping the same prefixes from Jellyfin/Sonarr/Radarr — already happens in
+    ``set_managed_tags()`` on every item a scan processes. Rows the scan never
+    reaches keep their pre-migration record forever: an item whose file vanished,
+    or whose ffprobe fails, is skipped before ``_process_one_item()`` and so is
+    never re-written. That residue is what this clears.
+
+    Returns a report dict; with ``dry_run`` nothing is committed.
+    """
+    prefixes = [p for p in legacy_prefixes if p]
+    report: dict = {
+        "prefixes": prefixes,
+        "managed_prefix": managed_prefix,
+        "rows_examined": 0,
+        "rows_changed": 0,
+        "tags_removed": 0,
+        "by_tag": {},
+        "dry_run": dry_run,
+    }
+    if not prefixes:
+        return report
+
+    # Superset prefilter so a clean index costs one indexless LIKE scan instead of
+    # materialising every row. A prefix holding a LIKE wildcard only over-selects;
+    # partition_legacy_tags() is the authority on what is actually removed.
+    rows = session.query(MediaState).filter(or_(*[MediaState.tags_applied.like(f'%"{p}%') for p in prefixes])).all()
+    report["rows_examined"] = len(rows)
+
+    counter: Counter[str] = Counter()
+    for row in rows:
+        try:
+            tags = json.loads(row.tags_applied or "[]")
+        except (TypeError, ValueError):
+            continue
+        if not isinstance(tags, list):
+            continue
+        kept, removed = partition_legacy_tags((t for t in tags if isinstance(t, str)), prefixes, managed_prefix)
+        if not removed:
+            continue
+        counter.update(removed)
+        report["rows_changed"] += 1
+        if not dry_run:
+            row.tags_applied = json.dumps(kept)
+
+    report["tags_removed"] = sum(counter.values())
+    report["by_tag"] = dict(counter.most_common())
+    if dry_run:
+        session.rollback()
+    elif report["rows_changed"]:
+        session.commit()
+    return report
 
 
 def get_all_media(session: Session) -> list[dict]:

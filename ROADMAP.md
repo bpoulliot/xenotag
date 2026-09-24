@@ -27,6 +27,43 @@ to do is go work on that one.
 | B2 | **A configured badge colour is never checked for contrast.** Any hex the settings UI or `config.yml` supplies is used as-is; the live deployment's palette renders at 2.6:1. | 4 | 2 | READY | — |
 | B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | READY | — |
 | B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | READY | — |
+| B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | READY | — |
+
+**B5 — FILED 2026-09-24, found while auditing U1's outward destinations. Not fixed here.**
+
+`pipeline._process_one_item()` builds `sonarr_tags` and `radarr_tags`, then gates the write on
+`_find_arr_id(item, "Sonarr")` / `("Radarr")`, which is:
+
+    provider_ids: dict = item.get("ProviderIds") or {}
+    raw = provider_ids.get(provider)
+
+**Jellyfin never sets those keys.** Swept across all 9,414 items in the 17 configured libraries
+on 2026-09-24, the `ProviderIds` keys present are: `Tmdb` (9,381), `Imdb` (9,328), `Tvdb`
+(2,458), `TvMaze` (2,149), `TmdbCollection` (1,546), `AniDB` (582), `TvRage` (480). **`Sonarr`:
+0. `Radarr`: 0.** So `sonarr_id`/`radarr_id` is always `None` and
+`client.set_managed_tags(...)` is never reached — for any item, ever.
+
+**Corroborated independently and from the other end.** `SonarrClient._get_or_create_tag()`
+creates a label on first use, so a single successful write would leave a permanent `xt-*` tag
+behind. A read-only `GET /api/v3/tag` on all five instances returns **zero** `xt-*` labels:
+sonarr/general 12 labels, sonarr/anime 10, sonarr/4k 0, radarr/general 20, radarr/4k 3 — none
+managed. Meanwhile `tags.destinations` has `video` and `audio` both set to
+`[poster, jellyfin, sonarr, radarr]`, so the settings UI reports a destination that has never
+received anything.
+
+**The same key kills a second feature.** `_get_arr_certification()` reads the identical
+`ProviderIds["Sonarr"]`/`["Radarr"]`, so the "Jellyfin has no `OfficialRating`, fall back to the
+\*arr certification" path never fires either. **1,497 of 10,575 indexed items (14.2%) have a
+blank `content_rating`** — an upper bound on what that fallback could be recovering and is not.
+
+**The fix is not to invent the key.** `SonarrClient.preload()` already builds an id→series cache
+and `RadarrClient` the same for movies; both carry `tvdbId`/`tmdbId`, which Jellyfin *does*
+supply. Matching on those turns two dead branches into working ones without a Jellyfin plugin.
+
+**Complexity 3 rather than 1 because this item starts writing to live \*arr instances**, and all
+five run with `recycleBin` empty. Tag writes do not displace files, but the `_put("/series/{id}",
+series)` round-trips the whole series object — so this needs a dry-run/count mode and a
+read-back check before it is let near production, and it should say so in its own spec.
 
 **B1 — FIXED 2026-09-22.** Measured, fixed and re-measured in one session. The measurement
 below was reproduced from scratch first and **agreed with the original to the decimal**, so the
@@ -228,13 +265,87 @@ decide whether this is a default change or a migration.
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | — | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
+| U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
 | U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | — | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | — | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | — | [#11](https://github.com/bpoulliot/xenotag/issues/11) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
 | U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted and collapse what is redundant or never queried. | 4 | 3 | **MEASURED 2026-09-22 → READY** | — |
 | U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | NEEDS DECISION | — |
+
+**U1 — FIXED 2026-09-24, and the premise was half wrong in a way worth recording.**
+
+U8 read 67 distinct `mf-*` tags / 247 applications / 32 items out of `state.db` and concluded
+"U1 has not happened." Reproduced exactly on 2026-09-24 against a copy of the live
+`state.db` — same 67 / 247 / 32, now over 10,575 rows. **But the conclusion did not follow.**
+
+**Where the legacy tags were is not where anyone was looking.** `state.db` is xenotag's record
+of what it last *wrote*; it is not the library. Swept read-only on the same day:
+
+| where | items looked at | distinct `mf-*` | applications |
+|---|---:|---:|---:|
+| `media_state.tags_applied` | 10,575 | **67** | **247** |
+| live Jellyfin, 17 configured libraries | 9,414 | **0** | **0** |
+| live Jellyfin, every item type, no `ParentId` | 83,238 | **0** | **0** |
+| all five Sonarr/Radarr instances (`/api/v3/tag`) | — | **0** | **0** |
+
+**So `set_managed_tags()` was right all along, and its legacy strip had already run to
+completion.** Not one legacy tag survived anywhere outward. The migration this item was filed
+to perform was, on the media server, already done.
+
+**Why the 32 rows survived — two mechanisms, both evidenced, neither of them the one the item
+guessed at.** The candidate list proposed "`set_managed_tags` strips only when also writing"
+and "the destination matters"; both are false. The real answer is that neither row was *ever
+revisited*:
+
+ - **31 of 32 are orphans.** A `/Items?Ids=…` lookup of all 32 IDs returns **one** item. The
+   other 31 no longer exist in Jellyfin and their files are gone from disk — displaced
+   re-encodes, mostly (`Iron Lung (2026)` appears twice, once as x264 and once as AV1). `state.db`
+   has no reconciliation pass, so a row outlives the item it describes. **That is [U2]'s job**,
+   not this one's — and measured the same way, **1,162 of the 10,575 rows (11.0%) describe a
+   Jellyfin item that no longer exists.** (Not 10,575 − 9,414 = 1,161: one live item has no row
+   at all, so the two errors nearly cancel. Count the set difference, not the totals.)
+ - **1 of 32 is `probe_failed`.** `Frontier War (2024)` is still in Jellyfin and its file is
+   still on disk, but ffprobe failed on it during the 2026-09-23 full scan (`scan_errors` row,
+   `error_type='probe_failed'`). `_run_scan()` `continue`s on a `None` probe result
+   (`pipeline.py:526-530`) **before** `_process_one_item()`, so the item is never tagged and its
+   row is never rewritten. Its Jellyfin item carries zero tags of either prefix.
+
+Every one of the 32 rows held **only** `mf-*` tags and nothing else, with `last_scanned` between
+2026-05-06 and 2026-06-01 — i.e. every one was last written by Metafin, before the rename.
+
+**What shipped, therefore, is not an outward migration.** There was nothing outward left to
+migrate, and building a forced Jellyfin re-tag would have been building for a problem that does
+not exist. What shipped is the *local* half nobody had written:
+
+ - `state.purge_legacy_tags()` — strips `tags.legacy_prefixes` from `media_state.tags_applied`,
+   with a dry-run mode, called once at app startup (`main.lifespan`). Startup is the right
+   trigger precisely because the rows that hold the residue are the ones no scan ever reaches.
+ - `GET /api/legacy-tags` (dry run, reports counts) and `DELETE /api/legacy-tags` (apply).
+ - `scripts/audit_legacy_tags.py` — the re-runnable measurement, read-only, with a `--self-test`
+   that CI runs. `--live` repeats the Jellyfin and \*arr sweeps above.
+
+**The guard that matters more than the sweep:** `partition_legacy_tags()` keeps any tag carrying
+`managed_prefix` **unconditionally**, even when a legacy prefix also matches it.
+`legacy_prefixes` is operator-supplied config and nothing stops it holding `"x"` — which
+prefix-matches every `xt-` tag in the index. A legacy sweep that eats managed tags is far worse
+than the legacy tags, so the managed prefix wins by construction rather than by luck. Pinned in
+`tests/test_legacy_tags.py`, and the self-test proves it in both directions (it also checks that
+the overlapping prefix *still removes* a genuine `x-`-prefixed legacy tag, or the check would
+pass for a sweep that had merely stopped working).
+
+**A prefix is not a namespace, and this was checked rather than assumed.** Of the **15,553**
+distinct non-managed tags in the live Jellyfin library, **none** begins with `mf` or `xt` at
+all — so `startswith("mf-")` is safe *there, today*. It is not safe by construction; `mfx-`
+survives the sweep by test.
+
+**Driven to zero, on the live deployment.** Container stopped, `state.db` backed up to
+`state.db.bak-20260924-pre-u1`, dry run first (`rows_examined=32 rows_changed=32
+tags_removed=247`, nothing written — asserted), then applied. Re-measured from a fresh
+read-only copy: **0 distinct / 0 applications / 0 items**, row count still 10,575. The `xt-*`
+histogram is **byte-identical** across the sweep — 194 distinct, 66,068 applications, before and
+after — which is the proof that nothing managed was touched, rather than an assertion that it
+was not.
 
 **U7 — CLOSED 2026-09-23. The item rested on a misreading, and the misreading was the
 assistant's.** The operator: *"rating is the MPAA, TV, government or rating board rating (e.g.,
@@ -297,16 +408,30 @@ So there is nothing to cut for being universal, and nothing to merge for being r
 `xt-*` at all.** The live vocabulary is **191 `xt-*` tags**, of which **154 (81%) are on under
 1% of items**. Still dramatic — but quote 191, not 258.
 
+**Re-measured 2026-09-24, after [U1] removed the legacy contamination.** The index is now
+**10,575 items / 194 distinct tags, all `xt-*`** — no correction needed any more, the headline
+figure is the `xt-*` figure. The shape is unchanged: **158 of 194 (81%) are on under 1% of
+items**, and the head is still `xt-1080p` at **76.3%**, so hypothesis (a) stays false.
+
+    >=50%     4 tags        1-10%    19 tags       <0.1%    96 tags
+    10-50%   13 tags        0.1-1%   62 tags
+
+Re-run it with `python3 scripts/audit_legacy_tags.py --db <copy of state.db>` — the vocabulary
+counts there are the same ones this table is built from.
+
 What the tail is made of (of the 221 rare tags): **105 codec/HDR/misc, 72 subtitle-language,
 37 audio-language, 6 rating, 1 resolution.**
 
 **Two consequences worth acting on:**
 
-1. **This is live evidence that [U1] has not happened.** 67 distinct `mf-*` tags remain, 247
-   applications, on **32 of 10,480 items (0.31%)** — `mf-1080p` (26), `mf-EN` (22),
-   `mf-sub-EN` (21), `mf-AV1` (15), down to singletons like `mf-re-encode`. Small footprint,
-   but they inflate the apparent vocabulary by 26% and they are exactly what U1 exists to
-   remove. **Do U1 first**; it makes this item's numbers honest.
+1. ~~**This is live evidence that [U1] has not happened.**~~ **DONE 2026-09-24 — and the
+   inference was wrong.** The 67 distinct `mf-*` tags / 247 applications / 32 items were real
+   and reproduced exactly, but they were **only ever in `state.db`**: the live Jellyfin library
+   carried **zero** `mf-*` tags across all 83,238 items, and so did all five \*arr instances.
+   The legacy strip in `set_managed_tags()` had already run to completion; what survived was
+   xenotag's own record for 32 rows a scan never revisits (31 orphans, 1 `probe_failed`). See
+   the [U1] note. They are gone now, and this item's numbers above are re-measured without
+   them.
 
 2. **[U4] makes this worse, and should be weighed against it.** U4 adds `xt-sub-*` subtitle
    language tags to more destinations — and **72 of the 83 subtitle-language tags already
@@ -520,9 +645,10 @@ exactly those 100.
 
 **What this means for the two items:**
 
- - **U8 is no longer "collapse the taxonomy".** Its histogram stands as evidence and its U1
-   finding stands as a defect, but *"which tags should we stop emitting"* is answered: **none,
-   on these grounds.** Re-label accordingly.
+ - **U8 is no longer "collapse the taxonomy".** Its histogram stands as evidence, but
+   *"which tags should we stop emitting"* is answered: **none, on these grounds.** Re-label
+   accordingly. (Its U1 finding was a defect in the *index*, not in the library, and is
+   **fixed** — see the [U1] note.)
  - **P7 is no longer a density budget.** It becomes layout containment plus ordering — and the
    `show_*` booleans stay as the operator's own switch, since turning a category off is a
    choice they make knowingly rather than one the app makes for them.
