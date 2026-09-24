@@ -13,6 +13,9 @@ ignore = [
 
 [tool.ruff.lint.per-file-ignores]
 "app/preview_samples.py" = ["S311"]   # seeded random for deterministic test posters, not crypto
+# Deliberately fake sentinel secrets. They exist to be asserted ABSENT from the
+# written config file, which is the whole point of the test module.
+"tests/test_env_overrides.py" = ["S105"]
 
 [tool.black]
 line-length = 120

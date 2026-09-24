@@ -72,6 +72,7 @@ Xenotag scans your Jellyfin library, extracts resolution, codec, HDR, and audio 
 - Security headers on every response: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, X-XSS-Protection
 - Changing password immediately invalidates all existing sessions
 - Rotate `auth.secret_key` to force-invalidate all sessions without a password change
+- Secrets can be supplied by the environment (including Docker file-secrets) and are then never written to `config.yml` — see [Externally managed secrets](#externally-managed-secrets)
 
 ---
 
@@ -129,14 +130,15 @@ docker logs xenotag | grep -A4 "FIRST RUN"
 
 ## Configuration Reference
 
-All settings live in `/config/config.yml`.
+All settings live in `/config/config.yml`. Secrets can instead be supplied by the environment —
+see [Externally managed secrets](#externally-managed-secrets).
 
 ### Jellyfin
 
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `jellyfin.url` | string | `http://jellyfin:8096` | Jellyfin base URL |
-| `jellyfin.api_key` | string | `""` | Jellyfin API key |
+| `jellyfin.api_key` | string | `""` | Jellyfin API key — can be supplied by the environment instead, see [Externally managed secrets](#externally-managed-secrets) |
 | `jellyfin.library_ids` | list | `[]` | Library IDs to scan; empty = all libraries |
 
 ### Sonarr / Radarr
@@ -206,7 +208,7 @@ radarr:
 |---|---|---|---|
 | `auth.username` | string | `"admin"` | Login username |
 | `auth.password_hash` | string | `""` | bcrypt hash; leave empty for auto-generation on first boot |
-| `auth.secret_key` | string | `""` | HMAC signing secret for sessions; auto-generated if empty |
+| `auth.secret_key` | string | `""` | HMAC signing secret for sessions; auto-generated if empty. Can be supplied by the environment instead, see [Externally managed secrets](#externally-managed-secrets) |
 
 ### Other
 
@@ -218,14 +220,75 @@ radarr:
 
 ## Environment Variables
 
-These override `config.yml` values and are read only on first boot (when no credentials exist yet):
-
 | Variable | Description |
 |---|---|
-| `XENOTAG_USERNAME` | Initial admin username |
-| `XENOTAG_PASSWORD` | Initial admin password (min 12 chars) |
+| `XENOTAG_USERNAME` | Initial admin username — **seeds** `config.yml` on first boot only, when no credentials exist yet |
+| `XENOTAG_PASSWORD` | Initial admin password (min 12 chars) — first boot only, same as above |
 | `SECURE_COOKIES` | Set to `false` when running over plain HTTP without a reverse proxy |
 | `CONFIG_PATH` | Path to config file inside the container (default: `/config/config.yml`) |
+
+For the variables that **override** a config value on every boot, see below.
+
+---
+
+## Externally managed secrets
+
+`config.yml` is read-write application state: saving the Settings page rewrites the whole file.
+That makes it a poor home for a secret rendered by an outside pipeline — the next save would
+clobber it. So the environment can own individual **fields** instead of the file.
+
+| Config field | Variable | File variant |
+|---|---|---|
+| `jellyfin.api_key` | `JELLYFIN_API_KEY` | `JELLYFIN_API_KEY_FILE` |
+| `auth.secret_key` | `XENOTAG_SECRET_KEY` | `XENOTAG_SECRET_KEY_FILE` |
+| `webhooks.secret` | `XENOTAG_WEBHOOK_SECRET` | `XENOTAG_WEBHOOK_SECRET_FILE` |
+
+When one of these is set:
+
+- it **overrides** whatever `config.yml` holds, on every boot and on every save;
+- Xenotag **never writes that field back** to `config.yml`, from the Settings page, the raw YAML
+  editor, or the first-run bootstrap;
+- the Settings page shows the field read-only, labelled as externally managed;
+- startup logs which fields the environment supplied, **by name** — never by value.
+
+The `_FILE` variant names a path to read the value from — the Docker file-secret convention — and
+**takes precedence** when both are set. The file form is what a secrets pipeline writes on
+purpose; a bare variable is the form that arrives by accident, from a shared compose `env_file`
+or an inherited shell environment. When both are present, the deliberate source wins.
+
+```yaml
+services:
+  xenotag:
+    environment:
+      - JELLYFIN_API_KEY_FILE=/run/secrets/xenotag_jellyfin_api_key
+    secrets:
+      - xenotag_jellyfin_api_key
+
+secrets:
+  xenotag_jellyfin_api_key:
+    file: ./secrets/xenotag_jellyfin_api_key
+```
+
+**Failure behaviour is deliberately asymmetric,** because an override that is silently ignored is
+worse than no override — it makes you believe a secret rotated when it did not.
+
+- `<VAR>_FILE` set but unreadable, or naming an empty file: **startup fails.** Naming a file is
+  unambiguous intent; carrying on with the stale value in `config.yml` is the exact silent
+  failure this feature exists to prevent.
+- `<VAR>` set to an empty string: **ignored, with a warning.** Empty is the signature of an
+  unpopulated `${VAR}` interpolation, not of intent, and blanking a working key on that basis
+  would take the deployment down.
+
+Not yet overridable: `auth.password_hash` (a verifier, not a secret — the first-run bootstrap
+has to be able to write it) and the per-instance Sonarr/Radarr `api_key`s (they live in a
+list, which a dotted path cannot address).
+
+Use a **separate** Jellyfin API key for Xenotag rather than sharing one across your stack. A
+per-consumer key rotates and revokes independently, and Jellyfin's API key list then doubles as a
+record of what has access.
+
+Enabling an override does not rewrite `config.yml` — loading never writes. A value already in the
+file is removed by the next save (open Settings and save once), or delete the key by hand.
 
 ---
 

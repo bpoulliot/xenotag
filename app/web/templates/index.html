@@ -149,6 +149,7 @@
   .field input[type=text],.field input[type=password],.field input[type=url],.field select,.field textarea{width:100%;padding:7px 10px;border-radius:6px;border:1px solid var(--border);background:#040c1c;color:var(--text);font-size:13px}
   .field input:focus,.field select:focus,.field textarea:focus{outline:none;border-color:var(--accent)}
   .field .hint{font-size:11px;color:var(--muted);margin-top:3px}
+  input.env-managed{opacity:.6;cursor:not-allowed}
   .field-row{display:grid;grid-template-columns:1fr 1fr;gap:10px}
   @media(max-width:600px){.field-row{grid-template-columns:1fr}}
   .inline-row{display:flex;align-items:center;gap:8px}
@@ -469,6 +470,7 @@
         <div class="field">
           <label>API Key</label>
           <input type="password" id="s-jf-apikey" placeholder="Dashboard → API Keys">
+          <div class="hint" id="s-jf-apikey-hint" style="display:none"></div>
         </div>
       </div>
     </div>
@@ -1106,6 +1108,8 @@ function populateForm(s) {
   setVal('s-jf-apikey', s.jellyfin?.api_key ?? '');
   selectedLibraryIds = s.jellyfin?.library_ids ?? [];
 
+  applyEnvManaged(s.env_managed_fields ?? []);
+
   // Sonarr
   sonarrInstances = (s.sonarr?.instances ?? []).map(i => ({...i}));
   renderInstances('sonarr');
@@ -1166,6 +1170,31 @@ function populateForm(s) {
   updateContrastIndicator();
 }
 
+// Fields the environment supplies are read-only here: the app never writes them
+// back to config.yml, so an editable box would promise a save it cannot make.
+const ENV_MANAGED_INPUTS = {'jellyfin.api_key': 's-jf-apikey'};
+
+function applyEnvManaged(paths) {
+  for (const [path, inputId] of Object.entries(ENV_MANAGED_INPUTS)) {
+    const el = document.getElementById(inputId);
+    if (!el) continue;
+    const managed = paths.includes(path);
+    el.readOnly = managed;
+    el.classList.toggle('env-managed', managed);
+    if (managed) {
+      el.value = '';
+      el.placeholder = 'Set by the environment';
+    }
+    const hint = document.getElementById(inputId + '-hint');
+    if (hint) {
+      hint.style.display = managed ? '' : 'none';
+      hint.textContent = managed
+        ? 'Externally managed — supplied by the environment and not stored in config.yml. Rotate it where it is rendered, then restart.'
+        : '';
+    }
+  }
+}
+
 function collectForm() {
   // Collect destination grid
   const CATS = ['video','audio','subtitles','rating'];
@@ -1181,7 +1210,9 @@ function collectForm() {
     ...settings,
     jellyfin: {
       url: getVal('s-jf-url'),
-      api_key: getVal('s-jf-apikey'),
+      // Blank when env-managed: the server ignores it either way, but sending
+      // nothing keeps the secret out of the request body entirely.
+      api_key: envManaged('jellyfin.api_key') ? '' : getVal('s-jf-apikey'),
       library_ids: selectedLibraryIds,
     },
     sonarr: { instances: sonarrInstances.map(cleanInstance) },
@@ -1563,6 +1594,7 @@ async function apiFetch(url, opts = {}) {
   return r;
 }
 
+const envManaged = path => (settings.env_managed_fields ?? []).includes(path);
 const getVal = id => document.getElementById(id)?.value ?? '';
 const setVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };
 const setSelectVal = (id, v) => { const el = document.getElementById(id); if (el) el.value = v; };

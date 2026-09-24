@@ -6,6 +6,12 @@ services:
       - PUID=${PUID}
       - PGID=${PGID}
       - TZ=${TZ}
+      # Secrets can come from the environment instead of config.yml, and are then
+      # never written back to it. The _FILE form wins if both are set.
+      # See "Externally managed secrets" in the README.
+      # - JELLYFIN_API_KEY_FILE=/run/secrets/xenotag_jellyfin_api_key
+      # - XENOTAG_SECRET_KEY_FILE=/run/secrets/xenotag_secret_key
+      # - XENOTAG_WEBHOOK_SECRET_FILE=/run/secrets/xenotag_webhook_secret
     volumes:
       - "/path/to/xenotag/config:/config"
       # Media mounts must match Jellyfin's container-side paths exactly so that
