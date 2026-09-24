@@ -4,15 +4,23 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Xenotag — Sign in</title>
+<link rel="icon" href="/static/favicon.ico?v={{ v }}" sizes="any">
 <link rel="icon" href="/static/favicon.png?v={{ v }}" type="image/png">
+<link rel="apple-touch-icon" href="/static/apple-touch-icon.png?v={{ v }}">
+<link rel="manifest" href="/static/site.webmanifest?v={{ v }}">
+<meta name="theme-color" content="#060d1a">
 <style>
   :root { --bg: #060d1a; --surface: #0c1828; --border: #1a3554; --text: #ddeeff; --muted: #6ba3c8; --accent: #22d3ee; --red: #f87171; }
   * { box-sizing: border-box; margin: 0; padding: 0; }
   body { background: var(--bg); color: var(--text); font: 14px/1.5 "Segoe UI", system-ui, sans-serif; min-height: 100vh; display: flex; align-items: center; justify-content: center; }
   .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 32px 40px; width: 340px; }
-  .logo-row { display: flex; align-items: center; justify-content: center; gap: 12px; margin-bottom: 24px; }
-  .logo-row img { width: 56px; height: 56px; border-radius: 50%; object-fit: cover; }
-  .logo-row h1 { font-size: 22px; font-weight: 700; }
+  /* The wordmark carries the mark as its O, so it stands alone here -- the old
+     mark-plus-heading pairing printed the glyph twice. */
+  .logo-row { display: flex; flex-direction: column; align-items: center; gap: 6px; margin-bottom: 24px; }
+  .logo-row .brand-logo { display: block; width: 100%; max-width: 236px; height: auto; }
+  .logo-row small { color: var(--muted); font-size: 10.5px; letter-spacing: .3px; }
+  .sr-only { position: absolute; width: 1px; height: 1px; margin: -1px; padding: 0;
+    overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
   label { display: block; font-size: 12px; font-weight: 600; color: var(--muted); margin-bottom: 4px; margin-top: 14px; text-transform: uppercase; letter-spacing: .4px; }
   input[type=text], input[type=password] {
     width: 100%; padding: 8px 12px; border-radius: 6px;
@@ -29,8 +37,10 @@
 <body>
 <div class="card">
   <div class="logo-row">
-    <img src="/static/logo.png?v={{ v }}" onerror="this.style.display='none'" alt="">
-    <h1>Xenotag</h1>
+    <img class="brand-logo" src="/static/logo-wordmark.png?v={{ v }}" alt=""
+         onerror="this.style.display='none'">
+    <h1 class="sr-only">Xenotag</h1>
+    <small>Media information. Beyond the basics.</small>
   </div>
 
   {% if error %}

@@ -72,6 +72,13 @@ jobs:
       - name: Pill cache key sweep (B3 — must find zero collisions)
         run: python scripts/measure_pill_cache_key.py
 
+      - name: Palette separation probe self-test
+        run: python scripts/measure_palette_separation.py --self-test
+
+      # Catches a hand-edited app/static/ drifting from assets/brand/.
+      - name: Brand assets match their sources
+        run: python scripts/generate_brand_assets.py --check
+
   codeql:
     runs-on: ubuntu-latest
     permissions:

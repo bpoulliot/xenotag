@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import logging
+import mimetypes
 from contextlib import asynccontextmanager
 from pathlib import Path
 
@@ -103,6 +104,10 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 _static = Path(__file__).parent / "static"
 if _static.exists():
+    # StaticFiles guesses content types from the extension, and .webmanifest is
+    # not in Python's default table -- without this the manifest is served as
+    # octet-stream.
+    mimetypes.add_type("application/manifest+json", ".webmanifest")
     app.mount("/static", StaticFiles(directory=str(_static)), name="static")
 
 app.include_router(router)

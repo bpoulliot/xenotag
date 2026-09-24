@@ -688,7 +688,7 @@ overridden at startup**, by name, never by value.
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
 | P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
-| P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **READY** (PNG path; clean exports landed 2026-09-23) | — |
+| P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | READY | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **DECIDED 2026-09-23 → READY** | — |
 | P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | NEEDS DECISION | — |
@@ -802,7 +802,33 @@ and Bone are light enough to sit *on* a dark background. **Nothing in the brand 
 the UI — light text on dark chrome — is a comfortable fit, while the badges — white text on a
 coloured fill — are confined to two of the five colours. That is why P9 is READY and P10 is not.
 
-**P8 — brand assets. The blocking input is the artwork, not a design question.**
+**P8 — SHIPPED 2026-09-23**, on the PNG path. The source artwork lives in `assets/brand/`
+(`mark.png`, `wordmark.png`) and every raster under `app/static/` is now generated from it by
+**`scripts/generate_brand_assets.py`** (`--check` verifies without writing, and CI runs it, so a
+hand-edited static file that drifts from its source fails the build).
+
+Shipped: `logo-mark.png` 512 and `logo-wordmark.png` 960×160, both transparent; `favicon.png`
+256, `favicon.ico` 16/32/48, `apple-touch-icon.png` 180 and `icon-192`/`icon-512`, all on a
+Charcoal tile. Added `site.webmanifest`, `theme-color`, and an `application/manifest+json` MIME
+registration in `main.py` because `.webmanifest` is not in Python's default table. All the traps
+below are closed: `VERSION` bumped to 1.5.1 for the `?v=` cache-bust, the logo carries alpha, and
+the circular crop is gone from both templates.
+
+**The naming and the header layout follow van1sh's brand setup**, which the operator pointed at:
+`-mark` is the glyph alone, `-wordmark` the full lockup, and a `.brand` block pairs the art with
+a `<small>` tagline. **One thing does not transfer, and it is the interesting one.** van1sh sets
+its wordmark as live text with a gradient (`background-clip:text`, the word literally fading
+out — a pun on the name) beside a separate mark. **Xenotag's wordmark embeds the mark as its
+`O`**, so showing both prints the glyph twice — which is exactly what this header used to do.
+
+So the header shows **exactly one of the two**, chosen by width: a `<picture>` serves the
+wordmark normally and the bare mark at ≤600px, and only the chosen file is fetched. The `<h1>`
+survives as `sr-only` so the document keeps its heading while the art carries the name visually.
+Login does the same, wordmark-only and centred. Setting the wordmark as *text* is not available
+here without a font — if [P11] ever produces one, that changes.
+
+*(original filing follows)*
+
 
 What renders the mark today, all of it Metafin-era (`786949b`, "new metafin dragonfish mark"):
 `app/static/logo.png` (1254×1254, **RGB, no alpha**), `app/static/favicon.png` (256×256 RGBA),
