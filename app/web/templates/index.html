@@ -349,29 +349,29 @@
 
           <span style="font-size:12px;color:#2db8a8;font-weight:600">Video</span>
           <div class="color-row">
-            <input type="color" id="prev-video-color" value="#134e4a" oninput="syncCatHex('video'); onColorChange()">
-            <input type="text" id="prev-video-hex" value="#134e4a" class="hex-input" maxlength="7" oninput="syncCatPicker('video'); onColorChange()">
+            <input type="color" id="prev-video-color" value="{{ badge_defaults.video_badge_color }}" oninput="syncCatHex('video'); onColorChange()">
+            <input type="text" id="prev-video-hex" value="{{ badge_defaults.video_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('video'); onColorChange()">
           </div>
           <label class="toggle"><input type="checkbox" id="prev-show-video" checked onchange="onPreviewChange()"><span class="slider"></span></label>
 
           <span style="font-size:12px;color:#6080d8;font-weight:600">Audio</span>
           <div class="color-row">
-            <input type="color" id="prev-audio-color" value="#1e3a8a" oninput="syncCatHex('audio'); onColorChange()">
-            <input type="text" id="prev-audio-hex" value="#1e3a8a" class="hex-input" maxlength="7" oninput="syncCatPicker('audio'); onColorChange()">
+            <input type="color" id="prev-audio-color" value="{{ badge_defaults.audio_badge_color }}" oninput="syncCatHex('audio'); onColorChange()">
+            <input type="text" id="prev-audio-hex" value="{{ badge_defaults.audio_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('audio'); onColorChange()">
           </div>
           <label class="toggle"><input type="checkbox" id="prev-show-audio" checked onchange="onPreviewChange()"><span class="slider"></span></label>
 
           <span style="font-size:12px;color:#d06040;font-weight:600">Subtitles</span>
           <div class="color-row">
-            <input type="color" id="prev-sub-color" value="#7c2d12" oninput="syncCatHex('sub'); onColorChange()">
-            <input type="text" id="prev-sub-hex" value="#7c2d12" class="hex-input" maxlength="7" oninput="syncCatPicker('sub'); onColorChange()">
+            <input type="color" id="prev-sub-color" value="{{ badge_defaults.sub_badge_color }}" oninput="syncCatHex('sub'); onColorChange()">
+            <input type="text" id="prev-sub-hex" value="{{ badge_defaults.sub_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('sub'); onColorChange()">
           </div>
           <label class="toggle"><input type="checkbox" id="prev-show-subs" checked onchange="onPreviewChange()"><span class="slider"></span></label>
 
           <span style="font-size:12px;color:#9060c8;font-weight:600">Rating</span>
           <div class="color-row">
-            <input type="color" id="prev-rating-color" value="#4c1d95" oninput="syncCatHex('rating'); onColorChange()">
-            <input type="text" id="prev-rating-hex" value="#4c1d95" class="hex-input" maxlength="7" oninput="syncCatPicker('rating'); onColorChange()">
+            <input type="color" id="prev-rating-color" value="{{ badge_defaults.rating_badge_color }}" oninput="syncCatHex('rating'); onColorChange()">
+            <input type="text" id="prev-rating-hex" value="{{ badge_defaults.rating_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('rating'); onColorChange()">
           </div>
           <label class="toggle"><input type="checkbox" id="prev-show-rating" checked onchange="onPreviewChange()"><span class="slider"></span></label>
         </div>
@@ -1085,10 +1085,10 @@ function collectPreviewSettings() {
       badge_opacity: parseInt(document.getElementById('prev-opacity').value) / 100,
       badge_size: document.querySelector('#prev-badge-size .size-btn.active')?.dataset.size ?? 'tv',
       badge_text_color:  document.getElementById('prev-text-color')?.value  || '#ffffff',
-      video_badge_color: document.getElementById('prev-video-color')?.value  || '#134e4a',
-      audio_badge_color: document.getElementById('prev-audio-color')?.value  || '#1e3a8a',
-      sub_badge_color:   document.getElementById('prev-sub-color')?.value    || '#7c2d12',
-      rating_badge_color:document.getElementById('prev-rating-color')?.value || '#4c1d95',
+      video_badge_color: document.getElementById('prev-video-color')?.value  || '{{ badge_defaults.video_badge_color }}',
+      audio_badge_color: document.getElementById('prev-audio-color')?.value  || '{{ badge_defaults.audio_badge_color }}',
+      sub_badge_color:   document.getElementById('prev-sub-color')?.value    || '{{ badge_defaults.sub_badge_color }}',
+      rating_badge_color:document.getElementById('prev-rating-color')?.value || '{{ badge_defaults.rating_badge_color }}',
       show_video_badges: document.getElementById('prev-show-video')?.checked  ?? true,
       show_audio_badges: document.getElementById('prev-show-audio')?.checked  ?? true,
       show_sub_badges:   document.getElementById('prev-show-subs')?.checked   ?? true,
@@ -1255,10 +1255,10 @@ function collectForm() {
       badge_opacity:      (parseInt(document.getElementById('prev-opacity')?.value) || 100) / 100,
       badge_size:         document.querySelector('#prev-badge-size .size-btn.active')?.dataset.size ?? 'tv',
       badge_text_color:   document.getElementById('prev-text-color')?.value  || '#ffffff',
-      video_badge_color:  document.getElementById('prev-video-color')?.value  || '#134e4a',
-      audio_badge_color:  document.getElementById('prev-audio-color')?.value  || '#1e3a8a',
-      sub_badge_color:    document.getElementById('prev-sub-color')?.value    || '#7c2d12',
-      rating_badge_color: document.getElementById('prev-rating-color')?.value || '#4c1d95',
+      video_badge_color:  document.getElementById('prev-video-color')?.value  || '{{ badge_defaults.video_badge_color }}',
+      audio_badge_color:  document.getElementById('prev-audio-color')?.value  || '{{ badge_defaults.audio_badge_color }}',
+      sub_badge_color:    document.getElementById('prev-sub-color')?.value    || '{{ badge_defaults.sub_badge_color }}',
+      rating_badge_color: document.getElementById('prev-rating-color')?.value || '{{ badge_defaults.rating_badge_color }}',
       show_video_badges:  document.getElementById('prev-show-video')?.checked  ?? true,
       show_audio_badges:  document.getElementById('prev-show-audio')?.checked  ?? true,
       show_sub_badges:    document.getElementById('prev-show-subs')?.checked   ?? true,

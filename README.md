@@ -189,17 +189,18 @@ radarr:
 | `image.targets` | list | `[poster.jpg, ...]` | Poster filenames to search for in each item folder |
 | `image.backup_suffix` | string | `".orig"` | Suffix appended to original poster backups |
 | `image.badge_position` | string | `"bottom-left"` | Main badge group position: `bottom-left`, `bottom-right`, `top-left`, `top-right`. Rating badge is always `top-right`. |
-| `image.badge_opacity` | float | `1.0` | Badge fill opacity (0.0–1.0). This is a contrast control: below `1.0` the poster shows through the badge and the label's rendered contrast drops below the figure quoted for each colour. With the shipped palette, `0.89` is the floor for WCAG AAA and `0.73` for AA — measure with `scripts/measure_badge_contrast.py`. |
+| `image.badge_opacity` | float | `1.0` | Badge fill opacity (0.0–1.0). This is a contrast control: below `1.0` the poster shows through the badge and the label's rendered contrast drops below the figure quoted for each colour. With the shipped palette, `0.98` is the floor for WCAG AAA and `0.80` for AA — the palette trades contrast headroom for colour-blind separation, so there is little room below `1.0` — measure with `scripts/measure_badge_contrast.py`. |
 | `image.badge_size` | string | `"tv"` | Base font size tier: `desktop`, `tv`, `tv_plus` |
 | `image.normalize_portrait` | bool | `true` | Pad square/landscape images to 2:3 portrait ratio |
 | `image.show_video_badges` | bool | `true` | Render video group badge |
 | `image.show_audio_badges` | bool | `true` | Render audio group badge |
 | `image.show_sub_badges` | bool | `true` | Render subtitle group badge |
 | `image.show_rating_badge` | bool | `true` | Render content rating badge |
-| `image.video_badge_color` | string | `"#1e3a5f"` | Video badge fill color (hex) |
-| `image.audio_badge_color` | string | `"#1e3a5f"` | Audio badge fill color (hex) |
-| `image.sub_badge_color` | string | `"#1e3a5f"` | Subtitle badge fill color (hex) |
-| `image.rating_badge_color` | string | `"#7c2d12"` | Rating badge fill color (hex) |
+| `image.video_badge_color` | string | `"#203a30"` | Video badge fill color (hex) |
+| `image.audio_badge_color` | string | `"#312c4c"` | Audio badge fill color (hex) |
+| `image.sub_badge_color` | string | `"#50532f"` | Subtitle badge fill color (hex) |
+| `image.rating_badge_color` | string | `"#73485b"` | Rating badge fill color (hex) |
+| `image.badge_palette_version` | int | `2` | Internal: which default palette this config has been migrated to. Leave it alone — it is what stops the migration re-running over a colour you chose. |
 | `image.badge_text_color` | string | `"#ffffff"` | Badge text color (hex) |
 
 ### Auth

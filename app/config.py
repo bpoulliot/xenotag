@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 log = logging.getLogger(__name__)
 
@@ -68,6 +68,18 @@ class TagsConfig(BaseModel):
     destinations: TagDestinations = Field(default_factory=TagDestinations)
 
 
+BADGE_PALETTE_VERSION = 2
+
+# The defaults shipped before palette 2 (roadmap B4/P10), per field. Only a
+# value equal to its own field's old default is migrated.
+_PALETTE_1_DEFAULTS = {
+    "video_badge_color": "#134e4a",
+    "audio_badge_color": "#1e3a8a",
+    "sub_badge_color": "#7c2d12",
+    "rating_badge_color": "#4c1d95",
+}
+
+
 class ImageConfig(BaseModel):
     targets: list[str] = Field(default_factory=lambda: ["poster.jpg", "poster.png", "folder.jpg", "folder.png"])
     backup_suffix: str = ".orig"
@@ -76,9 +88,11 @@ class ImageConfig(BaseModel):
     # the pill is filled at this alpha, so anything below 1.0 lets the poster
     # show through and drops the rendered contrast of the label against the
     # fill. Measured over black/white/grey backdrops with the palette below
-    # (scripts/measure_badge_contrast.py): 1.0 -> 9.4:1 worst case, 0.89 is the
-    # floor for AAA, 0.73 the floor for AA, and 0.65 -- the default until
-    # roadmap B1 -- rendered 3.7:1 and failed both.
+    # (scripts/measure_badge_contrast.py): 1.0 -> 7.48:1 worst case, 0.98 is
+    # the floor for AAA, 0.80 the floor for AA. The palette-2 colours trade
+    # headroom for separation -- under palette 1 these floors were 0.89/0.73 --
+    # so there is almost no room below 1.0 before AAA goes. 0.65, the default
+    # until roadmap B1, now renders 3.2:1 and fails both.
     badge_opacity: float = 1.0
     badge_size: Literal["desktop", "tv", "tv_plus"] = "tv"
 
@@ -97,10 +111,48 @@ class ImageConfig(BaseModel):
     # comment. (Roadmap B1: these were annotated "verified WCAG AAA ≥7:1"
     # while the shipped default rendered 3.7-5.3:1 -- true of the hex, false of
     # the render, and that is why it went unnoticed for so long.)
-    video_badge_color: str = "#134e4a"  # dark teal    opaque  9.5:1
-    audio_badge_color: str = "#1e3a8a"  # deep navy    opaque 10.4:1
-    sub_badge_color: str = "#7c2d12"  # deep rust      opaque  9.4:1
-    rating_badge_color: str = "#4c1d95"  # deep violet opaque 11.0:1
+    #
+    # Roadmap B4/P10: the categories must also be tellable APART, which is a
+    # separate property from contrast -- the previous palette cleared AAA on
+    # every badge while audio and rating were CIEDE2000 1.9 apart under
+    # deuteranopia, i.e. the same colour. These are separated by lightness as
+    # well as hue, so the difference survives without the red-green axis:
+    # worst pair dE 12.3 across normal, protan, deutan and tritan vision.
+    # Re-measure with scripts/measure_palette_separation.py.
+    video_badge_color: str = "#203a30"  # deep forest  opaque 12.3:1
+    audio_badge_color: str = "#312c4c"  # deep indigo  opaque 13.2:1
+    sub_badge_color: str = "#50532f"  # dark olive     opaque  8.0:1
+    rating_badge_color: str = "#73485b"  # muted plum  opaque  7.5:1
+
+    # Which default palette this config has been migrated to. Persisted so the
+    # migration below runs ONCE: without it, an operator who later picks one of
+    # the old hexes on purpose would have it replaced on every load.
+    badge_palette_version: int = BADGE_PALETTE_VERSION
+
+    @model_validator(mode="before")
+    @classmethod
+    def _migrate_badge_palette(cls, data: object) -> object:
+        """Move a colour still on its old shipped default to the new one.
+
+        A colour the operator changed is left alone -- only a field whose value
+        is exactly the previous default for THAT field moves. Configs saved
+        before this existed carry no version and are treated as palette 1.
+        """
+        if not isinstance(data, dict):
+            return data
+        try:
+            version = int(data.get("badge_palette_version", 1))
+        except (TypeError, ValueError):
+            version = 1
+        if version >= BADGE_PALETTE_VERSION:
+            return data
+        data = dict(data)
+        for field, old in _PALETTE_1_DEFAULTS.items():
+            value = data.get(field)
+            if isinstance(value, str) and value.strip().lower() == old:
+                data[field] = cls.model_fields[field].default
+        data["badge_palette_version"] = BADGE_PALETTE_VERSION
+        return data
 
     # Show/hide categories on poster
     show_video_badges: bool = True
