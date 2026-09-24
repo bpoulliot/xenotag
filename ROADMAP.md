@@ -446,7 +446,7 @@ overridden at startup**, by name, never by value.
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
 | P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
-| P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **BLOCKED on P11** | — |
+| P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **READY** (PNG path; clean exports landed 2026-09-23) | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | READY | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **DECIDED 2026-09-23 → READY** | — |
 | P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | NEEDS DECISION | — |
@@ -583,24 +583,36 @@ Four traps, each of which surfaces as "the rebrand didn't work" rather than as a
    wordmark to a disc; the sheet's usage examples are rounded squares.
 4. **There is no `apple-touch-icon`, no web manifest, and no `theme-color`.** None exist today.
    The rebrand is the moment to add them; `theme-color` should be Charcoal `#171B19`.
-5. **The mark's green will not survive favicon size on a dark chrome, and the sheet asks it to.**
-   This is a property of the palette, not of any particular drawing: **Deep Forest `#203A30`
-   against Charcoal `#171B19` is 1.42:1**, so at 16–32px, where the swirl is a few pixels wide
-   and antialiasing eats most of them, it disappears into the background and leaves the bone arcs
-   and dot floating. The brand sheet specifies 32×32 as the favicon, but that size wants its
-   **own** artwork — lift the swirl to Sage `#708675` (4.44:1 on Charcoal) or drop it and keep
-   the bone counter-swirl plus dot. A separate file, not a downscale. *(Observed on a
-   reconstruction, since no correct vector exists yet — but the 1.42:1 is measured from the
-   brand hexes and is independent of geometry. Re-check once [P11] lands real artwork.)*
+5. **The mark is two-tone, so exactly one half of it disappears on any given background — and
+   a browser picks the background, not us.** Verified on the real 2026-09-23 artwork at
+   16/32/48/64/180px:
 
-**Asset status, 2026-09-23 — superseded by [P11], and P8 is blocked behind it.** The operator's
-SVGs are in `dev/xenotag` (`xenotag_icon_vector.svg`, plus three wordmark weights). They do not
-match the concept art, the supplied PNGs are clipped, and the operator's bar is *exact*. **P11
-records both problems and what unblocks them.** Until an uncropped icon export exists, P8 has
-nothing correct to generate its favicon, app-icon and `apple-touch-icon` set *from* — so start
-P11, not here. Everything else in P8 (the `?v=` cache-bust, the missing alpha, the circle crop,
-the manifest and `theme-color`) is real, independent of which artwork lands, and can be done
-whenever.
+   - on **Charcoal** chrome the bone arc carries the mark (Bone on Charcoal 12.82:1) and the
+     green swirl fades (Deep Forest on Charcoal **1.42:1**);
+   - on **light** chrome it inverts — the green carries it and the bone arc washes out.
+
+   The mark stays *identifiable* either way, because one element always has contrast, but it
+   reads as **half of itself**, and at 16px on light chrome it is weak. This corrects an earlier
+   note here that blamed the green alone; the real property is the two-tone construction.
+
+   **Fix: give the favicon and app icon a Charcoal backing tile** rather than shipping the bare
+   transparent mark. Then both elements always sit on their intended background regardless of
+   chrome. Verified legible down to 16px on a light page with a rounded-square tile at ~22%
+   corner radius and the mark inset to ~80%. This also matches the brand sheet's own "usage
+   examples", which show the icon on a rounded dark tile, not free-floating.
+
+**Asset status, 2026-09-23 — the PNG path is open.** The operator supplied clean exports: an
+icon at 936×1026 (content 586×678, 11.9% padding) and a wordmark at 4130×812, both RGBA, both
+fully contained, both essentially speckle-free. **[P11] measures them in detail.** So P8 can
+ship raster assets now and does not have to wait on the vectors.
+
+The supplied SVGs (`xenotag_icon_vector.svg` plus three wordmark weights, in `dev/xenotag`) do
+**not** match the concept art and must not be used as the asset source — that is P11's problem,
+and it is now a want rather than a blocker.
+
+**Square the icon on its solid bbox before generating anything.** The supplied canvas is
+off-centre (padding L122 T189 R228 B159); generating sizes straight from it bakes the offset
+into every icon.
 
 **P9 — UI theme retoken. READY, with one substitution that is not optional.**
 
@@ -788,10 +800,29 @@ plus re-application of the brand gradients reproduces the concept art *by constr
 of by eye. That is the recommended method, and it is why this item is Complexity 4 and not 2:
 without (1) it is a redraw, with (1) it is a trace.
 
-**Until then, [P8] cannot ship either path**, and the honest status is that xenotag keeps the
-Metafin dragonfish mark. That is not a good outcome, but shipping a mark that is *nearly* the
-brand is worse than shipping the old one, because it is the version everyone would then have to
-un-learn.
+**UPDATE, same day — the operator supplied clean exports, and the PNG blocker is RESOLVED.**
+
+| asset | canvas | content bbox | min padding | alpha | speckle |
+|---|---|---|---:|---|---|
+| icon | 936×1026 | 586×678 | 122px (**11.9%**) | RGBA, full range | **0 isolated px** |
+| wordmark | 4130×812 | 3280×545 | 131px (**3.2%**) | RGBA, full range | **1 isolated px** |
+
+Both are **fully contained** — no edge of either is clipped — and the alpha is clean enough to
+trace: a 9×9 isolation test finds a single stray pixel across 690k solid pixels between them.
+**So the PNG path is open and [P8] can ship**, and P11 reverts to what it always really was —
+the vector work, wanted for its own sake rather than as the only route to an icon.
+
+Two caveats for whoever traces:
+
+ - **The alpha edge is a ~14px soft glow, not 1–2px antialiasing** (37.6k partial-alpha pixels
+   against 2.6k edge crossings). That is *blur, not noise* — the 50% contour is well defined, so
+   threshold at alpha 128 and the traced boundary is stable. Do not trace at a low threshold.
+ - **The icon's content is 586×678 and off-centre** in its canvas (padding L122 T189 R228 B159).
+   Square it on the solid bbox before generating any asset, or every icon size inherits the
+   offset. 678px is comfortable for a 512 app icon and below; it is *not* a 1024 source.
+
+**The original ask for a 1024×1024 export still stands for P11's benefit** — a larger source
+makes the trace easier to verify against — but it is no longer blocking anything.
 
 ---
 
