@@ -10,6 +10,11 @@ open — never start one), or **NEEDS MEASUREMENT** (a number has to be taken fi
 record, re-label — do not implement in the same pass). Unlabelled items predate this and are
 unassessed.
 
+**BLOCKED on \<ID\>** (added 2026-09-23): the spec is settled and no human choice is open, but
+another item must land first. Distinct from NEEDS DECISION, where the holdup is a person, and
+from NEEDS MEASUREMENT, where it is a number — here the holdup is *another item*, so the thing
+to do is go work on that one.
+
 **Tier 0 comes first.** Correctness defects outrank features regardless of Value score.
 
 ---
@@ -441,9 +446,10 @@ overridden at startup**, by name, never by value.
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
 | P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
-| P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | NEEDS DECISION | — |
+| P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **READY** (PNG path; clean exports landed 2026-09-23) | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | READY | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **DECIDED 2026-09-23 → READY** | — |
+| P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | NEEDS DECISION | — |
 
 **P6 — KEPT 2026-09-23, explicitly as polish.** The operator: *"I still like the p6 idea and
 think there's value to ensuring accessibility while allowing things like opacity and glow.
@@ -577,21 +583,36 @@ Four traps, each of which surfaces as "the rebrand didn't work" rather than as a
    wordmark to a disc; the sheet's usage examples are rounded squares.
 4. **There is no `apple-touch-icon`, no web manifest, and no `theme-color`.** None exist today.
    The rebrand is the moment to add them; `theme-color` should be Charcoal `#171B19`.
-5. **The full mark does not survive favicon size, and the sheet asks it to.** Rendered at 32px
-   and 16px on Charcoal, the green swirl — Deep Forest against a near-black background — drops
-   out entirely, leaving the bone arcs and the centre dot floating. The brand sheet specifies
-   32×32 as the favicon, but that size needs its **own** artwork: either lift the swirl to Sage
-   `#708675` or drop it and keep the bone counter-swirl plus dot. This is a separate file, not a
-   downscale, and it is the kind of thing only discovered by actually rasterising to 16px.
+5. **The mark is two-tone, so exactly one half of it disappears on any given background — and
+   a browser picks the background, not us.** Verified on the real 2026-09-23 artwork at
+   16/32/48/64/180px:
 
-**Reconstruction status, 2026-09-23.** The operator's SVGs are described as rough and are **not
-in this repo** — nothing under `~/dev`, `~/.claude` or `/tmp` matches. Pending those files, the
-mark was rebuilt parametrically from the brand sheet: it is a **C2-symmetric two-blade
-pinwheel** — an outer sage-green spiral blade tapering from a blunt thick end to a needle tip,
-an inner bone counter-blade of constant width with square-cut caps, and a sage centre dot, each
-blade duplicated at 180°. Generating rather than tracing means the proportions stay tunable by
-number. **Prefer the operator's own SVGs if they can be placed on disk** — a reconstruction is
-a fallback, not the source of truth.
+   - on **Charcoal** chrome the bone arc carries the mark (Bone on Charcoal 12.82:1) and the
+     green swirl fades (Deep Forest on Charcoal **1.42:1**);
+   - on **light** chrome it inverts — the green carries it and the bone arc washes out.
+
+   The mark stays *identifiable* either way, because one element always has contrast, but it
+   reads as **half of itself**, and at 16px on light chrome it is weak. This corrects an earlier
+   note here that blamed the green alone; the real property is the two-tone construction.
+
+   **Fix: give the favicon and app icon a Charcoal backing tile** rather than shipping the bare
+   transparent mark. Then both elements always sit on their intended background regardless of
+   chrome. Verified legible down to 16px on a light page with a rounded-square tile at ~22%
+   corner radius and the mark inset to ~80%. This also matches the brand sheet's own "usage
+   examples", which show the icon on a rounded dark tile, not free-floating.
+
+**Asset status, 2026-09-23 — the PNG path is open.** The operator supplied clean exports: an
+icon at 936×1026 (content 586×678, 11.9% padding) and a wordmark at 4130×812, both RGBA, both
+fully contained, both essentially speckle-free. **[P11] measures them in detail.** So P8 can
+ship raster assets now and does not have to wait on the vectors.
+
+The supplied SVGs (`xenotag_icon_vector.svg` plus three wordmark weights, in `dev/xenotag`) do
+**not** match the concept art and must not be used as the asset source — that is P11's problem,
+and it is now a want rather than a blocker.
+
+**Square the icon on its solid bbox before generating anything.** The supplied canvas is
+off-centre (padding L122 T189 R228 B159); generating sizes straight from it bakes the offset
+into every icon.
 
 **P9 — UI theme retoken. READY, with one substitution that is not optional.**
 
@@ -722,6 +743,86 @@ Traps, and the first is the one that will actually bite:
    badge and no warning.
  - **[P6] is unaffected but should be told.** A background-aware palette needs a *pair* of
    palettes; if P10 lands monochrome, P6 has one fewer degree of freedom to work with.
+
+**P11 — filed 2026-09-23. The bar is exact, and nothing on hand clears it.**
+
+The operator, rejecting an attempted reconstruction: *"Needs to match concept logo and wordmark
+exactly, not 'close enough'. Otherwise we can stick with pngs for now."* That settles the
+standard. **An approximation of this mark is not a cheaper version of it, it is a different
+mark** — so no parametric or hand-tuned redraw counts, and one was tried, rejected and removed.
+
+**The supplied SVGs draw the wrong shape, and it is a structural error, not a tuning gap.**
+`xenotag_icon_vector.svg` is two fat lens shapes in **mirror symmetry**, which reads as an eye.
+The concept art is a **C2 pinwheel** — 180° rotational symmetry, slender tapered blades, generous
+negative space. Those are different symmetry groups; no amount of nudging the control points on
+these paths converges on the concept art. Two consequences:
+
+ - **The same two paths are reused as the wordmark's `O`** at `scale(0.7)`, so the identical
+   error appears in all four supplied files. One correct geometry fixes all four; one wrong
+   geometry breaks all four.
+ - **The letterforms are fine.** X/E/N/T/A/G are clean stroked paths — the distinctive stemless
+   three-bar E and the dotted A both match the sheet. Only the `O` is wrong. Whoever does this
+   should not redraw the lettering.
+
+**The three weights are also inverted.** `primary` is `stroke-width="10"`, `medium` `11.5`,
+`small` `13` — so the file named *small* is the **boldest** of the three, while the brand sheet
+captions it *"reduced weight for tight spaces"*. One of the two is wrong. Optical sizing argues
+the SVG is right and the caption is backwards (small renderings need more weight, not less), but
+**that is the operator's call** and it is cheap either way: six `stroke-width` values per file.
+
+**The PNG fallback is also blocked, which is the part that was not known.** Measured on the
+supplied uploads, counting pixels with alpha > 128 along each border:
+
+| asset | size | top | bottom | left | right | verdict |
+|---|---|---:|---:|---:|---:|---|
+| icon | 856×896 | 5.0% | 16.1% | 0.0% | **24.9%** | **clipped** |
+| wordmark A | 1580×236 | 3.2% | 2.9% | 2.1% | 0.0% | no margin |
+| wordmark B | 1644×236 | 2.9% | 2.8% | 1.7% | 0.0% | no margin |
+| wordmark C | 1476×212 | 0.0% | 2.8% | 0.0% | 0.0% | no margin |
+
+**A quarter of the icon's right edge is solid artwork running off the canvas.** The swirl is cut
+off, so that PNG cannot ship as an icon at any size — padding it just centres a truncated mark.
+The wordmarks are not clipped so much as *untrimmed*: the glyphs touch the canvas edge, leaving
+no room for the margin a logo needs.
+
+**And the only uncropped icon anywhere is too small.** The brand sheet's "ICON (STANDALONE)"
+panel is **200×164 px** of actual image data. That is under the 256px favicon source and far
+under a 512px app icon, so upscaling it is not an option either.
+
+**What unblocks this, and it is one export, not a redraw:**
+
+ 1. **An uncropped icon at 1024×1024**, transparent, with ~10% padding on all four sides.
+ 2. **Wordmarks re-exported with margin**, at the three weights, transparent.
+
+With (1) in hand, **the exact-match requirement becomes tractable by tracing rather than
+drawing** — the blade silhouettes are flat two-colour regions, so an auto-trace of the alpha
+plus re-application of the brand gradients reproduces the concept art *by construction* instead
+of by eye. That is the recommended method, and it is why this item is Complexity 4 and not 2:
+without (1) it is a redraw, with (1) it is a trace.
+
+**UPDATE, same day — the operator supplied clean exports, and the PNG blocker is RESOLVED.**
+
+| asset | canvas | content bbox | min padding | alpha | speckle |
+|---|---|---|---:|---|---|
+| icon | 936×1026 | 586×678 | 122px (**11.9%**) | RGBA, full range | **0 isolated px** |
+| wordmark | 4130×812 | 3280×545 | 131px (**3.2%**) | RGBA, full range | **1 isolated px** |
+
+Both are **fully contained** — no edge of either is clipped — and the alpha is clean enough to
+trace: a 9×9 isolation test finds a single stray pixel across 690k solid pixels between them.
+**So the PNG path is open and [P8] can ship**, and P11 reverts to what it always really was —
+the vector work, wanted for its own sake rather than as the only route to an icon.
+
+Two caveats for whoever traces:
+
+ - **The alpha edge is a ~14px soft glow, not 1–2px antialiasing** (37.6k partial-alpha pixels
+   against 2.6k edge crossings). That is *blur, not noise* — the 50% contour is well defined, so
+   threshold at alpha 128 and the traced boundary is stable. Do not trace at a low threshold.
+ - **The icon's content is 586×678 and off-centre** in its canvas (padding L122 T189 R228 B159).
+   Square it on the solid bbox before generating any asset, or every icon size inherits the
+   offset. 678px is comfortable for a 512 app icon and below; it is *not* a 1024 source.
+
+**The original ask for a 1024×1024 export still stands for P11's benefit** — a larger source
+makes the trace easier to verify against — but it is no longer blocking anything.
 
 ---
 
