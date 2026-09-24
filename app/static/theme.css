@@ -1,0 +1,42 @@
+/* Xenotag theme tokens — the ONE place the UI palette is defined.
+ *
+ * Linked from both index.html and login.html. Until roadmap P9 each template
+ * carried its own copy of these, and login's had already drifted.
+ *
+ * Brand palette (operator's brand sheet, 2026-09-23):
+ *   Charcoal #171B19   Deep Forest #203A30   Sage #708675
+ *   Warm Gray #B7B2A6  Bone #E2DDCF
+ *
+ * Every foreground/background pairing the UI uses was measured (WCAG 2.x).
+ * The weakest is --accent on --surface2 at 5.07:1, which is AA; text and
+ * muted text clear AAA on every surface except muted-on-surface2 (5.81, AA).
+ */
+:root {
+  /* surfaces, darkest to lightest */
+  --inset: #121614;      /* wells: inputs, log, YAML editor   */
+  --bg: #171b19;         /* Charcoal                          */
+  --surface: #1c2320;    /* cards, header                     */
+  --surface2: #203a30;   /* Deep Forest: raised, active nav   */
+  --hover: #294a3c;      /* hover on a --surface2 control     */
+  --border: #2c3a33;     /* 1.46:1 on bg, the old theme's 1.56 */
+  --badge-bg: #203a30;
+
+  /* text */
+  --text: #e2ddcf;       /* Bone       12.82:1 on bg */
+  --muted: #b7b2a6;      /* Warm Gray   8.23:1 on bg */
+
+  /* The sheet's Sage #708675 is 4.44:1 on Charcoal, short of AA for text, so
+     the accent is a lightened sage (7.18:1). It is a LIGHT colour: anything
+     drawn ON it takes --on-accent, never white (white on it is ~2.4:1). */
+  --accent: #96ac9b;
+  --accent-hi: #a8bcac;
+  --on-accent: #171b19;
+
+  /* Semantic status colours, deliberately NOT tinted toward the brand:
+     success and failure have to stay easy to tell apart at a glance. */
+  --green: #34d399;
+  --red: #f87171;
+  --yellow: #fbbf24;
+  --danger-bg: #2a1515;  /* red on it 6.24:1 */
+  --danger-hi: #3a1c1c;  /* red on it 5.57:1 */
+}

@@ -697,7 +697,7 @@ overridden at startup**, by name, never by value.
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
 | P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
-| P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | READY | — |
+| P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
 | P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | NEEDS DECISION | — |
 
@@ -890,6 +890,49 @@ and it is now a want rather than a blocker.
 **Square the icon on its solid bbox before generating anything.** The supplied canvas is
 off-centre (padding L122 T189 R228 B159); generating sizes straight from it bakes the offset
 into every icon.
+
+**P9 — SHIPPED 2026-09-24.** The palette tokens now live in **`app/static/theme.css`**, linked from
+both templates. `login.html` used to carry its own copy of the token block, which had already
+drifted, so there is now exactly one place the UI palette is defined. The mapping is the one
+proposed below, plus four tokens the sweep turned out to need: `--inset` (`#121614`, the wells
+behind inputs, the log and the YAML editor, which were `#040c1c`/`#030a16` literals), `--hover`,
+`--on-accent`, and `--danger-bg`/`--danger-hi`.
+
+**Every pairing the UI actually draws was measured, not just the ones proposed below.** The weakest
+is the accent on Deep Forest at 5.07:1 (AA). Text and muted text clear AAA everywhere except muted
+on Deep Forest (5.81, AA). Status green, yellow and red were deliberately left un-tinted and still
+clear AA on Charcoal.
+
+What the sweep found beyond a colour swap:
+
+ - **The accent is a light colour, so nothing may draw white on it.** `.size-btn.active` did
+   (white on the new sage would be ~2.4:1), and so would the primary buttons once they became solid
+   sage. Everything drawn on the accent now takes `--on-accent` (Charcoal, 7.18:1). The toggle knob
+   had the same problem in reverse: Bone on the sage "on" track is 1.78:1, so the knob now goes dark
+   when a toggle is on.
+ - **Text inputs were split by page.** Settings used a near-black well and the Preview page used
+   `--badge-bg`. Under the old navy theme the two looked alike; under the brand it is black against
+   green. Every text-entry control is now an `--inset` well. Buttons and chips keep `--badge-bg`.
+ - **A third, stale badge palette was hardcoded in the template** — `#1a7a6e #6b3a9e #a86200
+   #2d2d2d`, the live deployment's old custom colours, used as preview and form fallbacks. B4's fix
+   only searched for the old *defaults* and missed these. They now read `ImageConfig` like the rest.
+ - The per-category labels on the colour pickers were tinted in the old palette's hues. Palette 2's
+   hues are fill colours too dark to read as text on Charcoal, and the swatch beside each label
+   already shows the colour, so the labels are now plain text.
+
+`index.html` went from 46 distinct hex literals to 11, each deliberate: badge text and contrast maths
+(badge data), the dual/multi chip tints (status), the 4K/720p chips (categorical), and the
+`theme-color` meta, which cannot read a CSS variable. `theme-color` and the manifest are Charcoal.
+
+**Verified in a real browser, not just by token audit:** the app was run against a scratch config
+and screenshotted with headless Chromium (login, dashboard, preview, settings, and 390px), with no
+JS errors and no 4xx/5xx responses. A token audit confirms every `var(--x)` the templates use is
+defined, and none are defined but unused.
+
+**Not fixed here, and not caused by it:** at 390px the header's nav runs off the right edge. The
+pre-P8 header was wider, so this predates P9. It belongs to [P4] (mobile breakpoints).
+
+*(original filing follows)*
 
 **P9 — UI theme retoken. READY, with one substitution that is not optional.**
 
