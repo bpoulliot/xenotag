@@ -25,7 +25,7 @@ to do is go work on that one.
 |----|--------|:-----:|:----------:|-----------|-------|
 | B1 | **Badge contrast is roughly half what the config claims.** `ImageConfig` annotates each badge colour "verified WCAG AAA ≥7:1 against white text" — true of the opaque hex, but not of what renders. | 5 | 2 | **FIXED 2026-09-22** | — |
 | B2 | **A configured badge colour is never checked for contrast.** Any hex the settings UI or `config.yml` supplies is used as-is; the live deployment's palette renders at 2.6:1. | 4 | 2 | READY | — |
-| B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | READY | — |
+| B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | **FIXED 2026-09-24** | — |
 | B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | READY | — |
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | READY | — |
 
@@ -193,22 +193,73 @@ without overriding. The UI already renders a live preview, so the number has som
 
 Reproduce either table: `python3 scripts/measure_badge_contrast.py [--config FILE] [--opacity X]`.
 
-**B3 — filed 2026-09-22, found while fixing B1. Not fixed; evidence only.**
+**B3 — filed 2026-09-22 while fixing B1; FIXED 2026-09-24.**
 
-`_PILL_CACHE` is keyed `(text, fill_hex, text_hex, alpha, font_size)`, but `_pill_tile()` also
+`_PILL_CACHE` was keyed `(text, fill_hex, text_hex, alpha, font_size)`, but `_pill_tile()` also
 takes `pad_h` and `pad_v`, and those change the tile. `_compute_layout_params()` derives all
 three from the poster width by separate roundings, so they can disagree: sweeping widths
-200–4000px at the default `badge_size` finds **121 collisions**, the first being **494px and
+200–4000px at the default `badge_size` found **121 collisions**, the first being **494px and
 501px — both `font_size` 36, `pad_v` 2 vs 3**. Same key, different correct tile; whichever
-poster is processed first supplies the tile for every later one in that process.
+poster was processed first supplied the tile for every later one in that process.
 
-Consequence is small but real: the row layout in `_render_group()` computes `pill_h` from *its*
+Consequence was small but real: the row layout in `_render_group()` computes `pill_h` from *its*
 `pad_v`, so a mis-served tile is a ~2px vertical mismatch between where the row expects the pill
-and how tall the pill actually is. Nothing is unreadable; it is wrong, cheap to fix, and it is
-the same class of defect P6 is warned about — adding padding to the key is a one-line change.
+and how tall the pill actually is. Nothing was unreadable; it was wrong, and the fix is the
+one-line widening of the key to all seven arguments.
 
-Recorded executably as a `strict=True` xfail in `tests/test_badge_contrast.py`
-(`test_cache_key_covers_padding`); remove the marker when it is fixed.
+New probe: **`scripts/measure_pill_cache_key.py`** (`--min-width`, `--max-width`,
+`--badge-size`, `--text`, `--compare`, `--self-test`). It does not re-state the key tuple and check it by
+eye — restating the key is how the bug got written. It **renders**: for every width it asks the
+live cache for a tile, renders the same arguments again against a scratch cache for ground
+truth, and compares the bytes. It **exits non-zero** on any collision.
+
+Regenerate the table below with `--compare`, which re-runs the sweep against the pre-fix
+5-term key as well, so the "before" column stays reproducible without checking out the defect.
+3801 renders requested per row, widths 200–4000px:
+
+| badge_size | collisions | cache entries | hit rate |
+|---|---|---:|---:|
+| desktop | 149 → **0** | 214 → 232 | 94.37% → 93.90% |
+| **tv** (default) | **121 → 0** | 275 → 293 | 92.77% → 92.29% |
+| tv_plus | 105 → **0** | 335 → 353 | 91.19% → 90.71% |
+
+**What the wider key costs — the trap in this item.** Cache entries grow by **exactly 18** at
+every badge size, and the hit rate drops **0.5pp** (0.47–0.48 in all three). Those 18 entries
+are *exactly* the 18 tiles the narrow key was serving wrong: 18 `font_size` classes in this
+range contain two `pad_v` values — never more — and the widened key splits each of them in two.
+The fix buys correctness with nothing it was not already getting by cheating. (The *collision*
+counts differ across badge sizes only because a smaller `badge_size` makes each `font_size`
+class span more widths, so the same 18 split classes catch more posters.) The sweep is also the worst
+case by construction — every width distinct, one render each. A real library's posters come in
+a handful of sizes, and the padding is a deterministic function of the width, so at any fixed
+width the wider key costs nothing at all.
+
+**Is anything else missing from the key?** No. `_pill_tile()` now keys on all seven of its
+arguments, asserted structurally by `test_cache_key_is_every_pill_tile_argument` so a new
+argument cannot be added without landing in the key or failing. Everything else the body reads
+is a module constant fixed for the life of a process — `_GLOW_MARGIN`, `_GLOW_EXPAND`,
+`_GLOW_BLUR`, the corner radii, the glow's own `(255,255,255,210)`. `_FONT_PATHS` and
+`_font_cache` are module state the key does not cover, but they are set at import and never
+written in production; the settings routes already call `clear_pill_cache()` on every config
+save, which is what covers a `badge_size` or palette change mid-process.
+
+**`pad_h` is in the key, and no poster width can prove it belongs there.** The sweep reports
+`pad_h` as never varying within a `font_size` class — at *any* badge size, over 1–8000px. The
+reason is arithmetic: every `_BADGE_SIZE_PX` value is an exact multiple of 8 (56 = 7×8,
+72 = 9×8, 88 = 11×8), so every `round(8 * scale)` rounding step lands on a
+`round(base * scale)` step too. `pad_v`'s base is 5, which divides none of them, which is why
+it is the one that collides. This is luck in the layout constants, not a property of the cache;
+a badge size that is not a multiple of 8 would spend it. So `pad_h` stays in the key, its test
+case is planted by hand rather than derived from a width, and the probe's self-test carries a
+hand-planted `pad_h` control precisely because a width sweep cannot supply one.
+
+Re-run: `python3 scripts/measure_pill_cache_key.py [--compare] [--self-test]`. The test suite
+carries the probe's self-test, the 480–520px band that used to fail, the entry-count arithmetic,
+and — the strongest of them — `test_a_poster_renders_the_same_whatever_went_through_the_cache_first`,
+which renders a whole 494px and 501px poster through `render_badge_groups()` in both orders and
+compares the bytes. That one guards the defect *class* rather than B3's instance of it: P6 would
+fail it too, which is the cue to add a palette term to the key. Reverting the key alone fails 12
+tests.
 
 **B4 — found 2026-09-23 while speccing the rebrand, and it is not a rebrand problem.**
 
