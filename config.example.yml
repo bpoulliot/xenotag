@@ -24,7 +24,8 @@ scan:
   max_workers: 4          # parallel ffprobe workers; lower for slow/spinning disks
 
 tags:
-  managed_prefix: "mf-"
+  managed_prefix: "xt-"
+  legacy_prefixes: ["mf-"]      # stripped on sight, from the server and the local index
   dual_audio_tag: "dual-audio"  # applied when exactly 2 audio languages found
   multi_audio_tag: "re-encode"  # applied when 3+ audio languages found
   destinations:

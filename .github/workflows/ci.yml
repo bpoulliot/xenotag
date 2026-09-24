@@ -60,6 +60,9 @@ jobs:
       - name: Badge contrast probe self-test
         run: python scripts/measure_badge_contrast.py --self-test
 
+      - name: Legacy tag audit probe self-test
+        run: python scripts/audit_legacy_tags.py --self-test
+
   codeql:
     runs-on: ubuntu-latest
     permissions:

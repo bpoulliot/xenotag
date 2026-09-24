@@ -172,12 +172,13 @@ radarr:
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `tags.managed_prefix` | string | `"xt-"` | Prefix for all tags written by Xenotag |
+| `tags.legacy_prefixes` | list | `["mf-"]` | Prefixes from an earlier install to strip on sight — from the media server on every write, and from the local index at startup. A tag carrying `managed_prefix` is never stripped, even if a legacy prefix also matches it. |
 | `tags.dual_audio_tag` | string | `"dual-audio"` | Tag applied when exactly 2 audio languages detected |
 | `tags.multi_audio_tag` | string | `"multi-audio"` | Tag applied when 3+ audio languages detected |
-| `tags.destinations.video` | list | `["jellyfin","sonarr","radarr"]` | Which services receive video tags |
-| `tags.destinations.audio` | list | `["jellyfin","sonarr","radarr"]` | Which services receive audio tags |
-| `tags.destinations.subtitles` | list | `["jellyfin"]` | Which services receive subtitle tags |
-| `tags.destinations.rating` | list | `["jellyfin"]` | Which services receive rating tags |
+| `tags.destinations.video` | list | `["poster","jellyfin","sonarr","radarr"]` | Which destinations receive video tags |
+| `tags.destinations.audio` | list | `["poster","jellyfin","sonarr","radarr"]` | Which destinations receive audio tags |
+| `tags.destinations.subtitles` | list | `["poster","jellyfin"]` | Which destinations receive subtitle tags |
+| `tags.destinations.rating` | list | `["poster"]` | Which destinations receive rating tags |
 
 ### Image Overlay
 
@@ -249,9 +250,11 @@ Configure the webhook URL in your *arr application's Connect settings. Xenotag w
 | POST | `/scan/cancel` | Yes | Cancel a running scan |
 | GET | `/scan/status` | Yes | Current scan progress (total, done, running, current item) |
 | GET | `/scan/stream` | Yes | SSE stream of live scan log lines |
-| GET | `/scan/errors` | Yes | All scan errors (probe failures, missing files) |
-| DELETE | `/scan/errors` | Yes | Clear all scan errors |
-| GET | `/scan/history` | Yes | Recent scan run records |
+| GET | `/api/scan-errors` | Yes | All scan errors (probe failures, missing files) |
+| DELETE | `/api/scan-errors` | Yes | Clear all scan errors |
+| GET | `/api/scan-runs` | Yes | Recent scan run records |
+| GET | `/api/legacy-tags` | Yes | Dry run: what a legacy-prefix sweep would remove from the local index |
+| DELETE | `/api/legacy-tags` | Yes | Apply the legacy-prefix sweep to the local index |
 | GET | `/media` | Yes | Paginated media browser (filter by resolution, language) |
 | GET | `/api/settings` | Yes | Structured settings (password_hash redacted) |
 | PUT | `/api/settings` | Yes | Save settings |

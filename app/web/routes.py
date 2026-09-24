@@ -39,6 +39,7 @@ from ..state import (
     get_scan_errors,
     get_session,
     get_stats,
+    purge_legacy_tags,
 )
 from .schemas import (
     ConfigResponse,
@@ -318,6 +319,35 @@ async def scan_errors_clear(request: Request):
     finally:
         session.close()
     return {"status": "cleared"}
+
+
+@router.get("/api/legacy-tags")
+async def legacy_tags_report(request: Request):
+    """Dry run: what a legacy-prefix sweep would remove from the local index.
+
+    Reports only; nothing is written. The outward tags on Jellyfin/*arr are
+    already stripped by every scan that reaches an item -- this covers the rows
+    a scan never reaches.
+    """
+    _require_user(request)
+    cfg = get_config()
+    session = get_session()
+    try:
+        return purge_legacy_tags(session, cfg.tags.legacy_prefixes, cfg.tags.managed_prefix, dry_run=True)
+    finally:
+        session.close()
+
+
+@router.delete("/api/legacy-tags")
+async def legacy_tags_purge(request: Request):
+    """Apply the legacy-prefix sweep to the local index."""
+    _require_user(request)
+    cfg = get_config()
+    session = get_session()
+    try:
+        return purge_legacy_tags(session, cfg.tags.legacy_prefixes, cfg.tags.managed_prefix)
+    finally:
+        session.close()
 
 
 @router.get("/api/scan-runs", response_model=list[ScanRunItem])
