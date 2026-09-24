@@ -403,6 +403,9 @@ overridden at startup**, by name, never by value.
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
 | P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
+| P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | NEEDS DECISION | — |
+| P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | READY | — |
+| P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 3 | NEEDS DECISION | — |
 
 **P6 — KEPT 2026-09-23, explicitly as polish.** The operator: *"I still like the p6 idea and
 think there's value to ensuring accessibility while allowing things like opacity and glow.
@@ -488,6 +491,152 @@ density budget (N badges max, with a documented precedence order) rather than pe
 booleans, but that is the decision to make. **Sequence this after U8**: the cheapest way to
 simplify the overlay is to stop emitting tags that carry no information, and U8's histogram is
 the evidence for which those are.
+
+**P8–P10 — Brand rebrand, filed 2026-09-23 from an operator-supplied brand sheet.**
+
+The sheet is canonical and names five colours. Every figure below was **measured** against those
+hexes with the WCAG relative-luminance formula — the same one `scripts/measure_badge_contrast.py`
+uses — not estimated from the artwork.
+
+| token | hex | on Charcoal | role |
+|---|---|---:|---|
+| Charcoal | `#171B19` | — | page background |
+| Deep Forest | `#203A30` | 1.42:1 | surface / raised surface — **never text** |
+| Sage | `#708675` | **4.44:1** | accent — **fails AA**, see P9 |
+| Warm Gray | `#B7B2A6` | 8.23:1 | muted text |
+| Bone | `#E2DDCF` | 12.82:1 | body text |
+
+Tagline *"Media information. Beyond the basics."*; icon at 128/64/32; wordmark in three weights
+(primary / medium / small).
+
+**The one fact that decides the shape of all three items:** the palette splits cleanly by
+lightness. Charcoal and Deep Forest are dark enough to sit *under* white text; Sage, Warm Gray
+and Bone are light enough to sit *on* a dark background. **Nothing in the brand does both.** So
+the UI — light text on dark chrome — is a comfortable fit, while the badges — white text on a
+coloured fill — are confined to two of the five colours. That is why P9 is READY and P10 is not.
+
+**P8 — brand assets. The blocking input is the artwork, not a design question.**
+
+What renders the mark today, all of it Metafin-era (`786949b`, "new metafin dragonfish mark"):
+`app/static/logo.png` (1254×1254, **RGB, no alpha**), `app/static/favicon.png` (256×256 RGBA),
+`app/static/favicon.ico` (16/32/48), referenced from `index.html:7,201` and `login.html:7,32`.
+
+**The open decision is asset intake.** The operator has SVG sources, describes them as rough, and
+they are not in the repo. Either **(a)** land cleaned SVGs as the source of truth and generate
+every raster from them with a committed script, or **(b)** hand-export rasters once and keep no
+source. **Recommend (a)** — the sheet already specifies three icon sizes and three wordmark
+weights, so a generator pays for itself the first time a size is added.
+
+Four traps, each of which surfaces as "the rebrand didn't work" rather than as an obvious failure:
+
+1. **`?v=` is the VERSION string, not a content hash.** `routes.py:57-58` reads `VERSION`; the
+   templates append `?v={{ v }}`. Swapping the assets **without bumping `VERSION` leaves every
+   returning browser on the old mark**, indefinitely.
+2. **`logo.png` has no alpha channel** — it is RGB. On a Charcoal page a non-transparent logo
+   shows whatever background it was exported against. Export RGBA.
+3. **The login logo is circle-cropped.** `login.html:14` sets `border-radius:50%;
+   object-fit:cover` on a 56px box. That clips a rounded-square app tile and would crop a
+   wordmark to a disc; the sheet's usage examples are rounded squares.
+4. **There is no `apple-touch-icon`, no web manifest, and no `theme-color`.** None exist today.
+   The rebrand is the moment to add them; `theme-color` should be Charcoal `#171B19`.
+
+**P9 — UI theme retoken. READY, with one substitution that is not optional.**
+
+Current tokens (`index.html:9-12`) are a dark-blue theme with a cyan accent:
+
+    --bg:#060d1a  --surface:#0c1828  --surface2:#122035  --border:#1a3554
+    --text:#ddeeff --muted:#6ba3c8  --accent:#22d3ee
+    --green:#34d399 --red:#f87171 --yellow:#fbbf24 --badge-bg:#122035
+
+**Sage cannot be the accent as specified.** `#708675` on Charcoal is **4.44:1** — it misses AA
+for body text by 0.06, where the cyan it replaces is 10.76:1. Adopting it unchanged is a
+measurable accessibility regression in an app that just spent B1 fixing one. The fix is a
+lightened sage that is still plainly the brand colour:
+
+| candidate | on Charcoal | |
+|---|---:|---|
+| `#708675` (sheet Sage) | 4.44:1 | fails AA |
+| `#7E9484` | 5.35:1 | AA |
+| `#8CA292` | 6.38:1 | AA |
+| **`#96AC9B`** | **7.18:1** | **AAA — recommended** |
+| `#A8BCAC` | 8.66:1 | AAA |
+
+Keep `#708675` for non-text fills and rules, where it is fine; use `#96AC9B` wherever the accent
+carries text. That is "adjacent to the palette", which is what was asked for.
+
+Proposed mapping, every value measured:
+
+    --bg:#171B19        Charcoal
+    --surface:#1C2320   Charcoal, raised     Bone on it 11.81:1 AAA
+    --surface2:#203A30  Deep Forest          Bone on it  9.05:1 AAA
+    --border:#2C3A33    Deep Forest, lifted  1.46:1 vs bg (current border is 1.56:1 — parity)
+    --text:#E2DDCF      Bone                12.82:1 AAA  (current 16.43:1)
+    --muted:#B7B2A6     Warm Gray            8.23:1 AAA  (current  7.13:1 — improves)
+    --accent:#96AC9B    Sage, lightened      7.18:1 AAA  (current 10.76:1)
+    --badge-bg:#203A30  Deep Forest
+
+**Leave `--green` / `--red` / `--yellow` alone.** They are semantic status colours, not brand
+colours, and re-tinting them toward sage would make success and failure harder to tell apart.
+All three still clear AA on Charcoal as-is: green `#34d399` 9.05:1, yellow `#fbbf24` 10.42:1,
+red `#f87171` 6.29:1.
+
+**The retoken is not just the `:root` block, and that is where the Complexity 3 comes from.**
+`index.html` has **173 `var()` usages but 82 hardcoded hex literals (46 distinct)** that bypass
+the tokens entirely, and **`login.html` uses 12 hardcoded hexes and no tokens at all** — it does
+not share the theme. So the work is: move login onto the shared tokens, then sweep the 46
+hardcoded values. **The badge-colour swatches are the exception** — those render *badge* colours
+and belong to P10, not here.
+
+**P10 — badge palette. NEEDS DECISION, and the decision is a design one.**
+
+Measured as badge fills against the shipped white label text (`badge_text_color: "#ffffff"`):
+
+| brand colour | white text | |
+|---|---:|---|
+| Charcoal `#171B19` | 17.40:1 | AAA |
+| Deep Forest `#203A30` | 12.29:1 | AAA |
+| Sage `#708675` | 3.92:1 | **fails AA** |
+| Warm Gray `#B7B2A6` | 2.11:1 | **fails** |
+| Bone `#E2DDCF` | 1.36:1 | **fails** |
+
+Deep Forest is an *excellent* badge fill — 12.29:1 beats all four shipped colours (9.37–10.95).
+The problem is not contrast, it is **counting**: the overlay encodes four categories
+(video/audio/sub/rating) by hue and the brand supplies **one** usable dark hue. Three ways out:
+
+1. **Monochrome.** All four fills Deep Forest; the label text already names the category.
+   Maximally on-brand, and it discards the at-a-glance cue that hue currently carries.
+2. **Four brand-adjacent hues.** Anchor on Deep Forest, rotate hue, hold the dark desaturated
+   character. Measured, all AAA on white: `#203A30` forest 12.29 · `#1C3A42` teal-blue 12.12 ·
+   `#33401F` olive 11.09 · `#2B3540` slate-green 12.46.
+3. **Deep Forest fill plus a per-category Sage/Bone keyline.** Keeps one fill colour and moves
+   the cue to an accent. Most work, and it touches `_pill_tile()`'s glow geometry, which B1 just
+   settled — weigh that before choosing it.
+
+**Recommend (2):** it is the only option that changes no rendering code, and B1's guarantee — the
+rendered ratio equals the opaque-hex ratio — holds for all four.
+
+Traps, and the first is the one that will actually bite:
+
+ - **Most existing deployments will not see a new palette at all.** B1 already recorded this and
+   it applies verbatim: `save_config_from_dict()` dumps the whole model, so **any operator who
+   has ever opened Settings and saved has all four old hexes written into `config.yml`**, and
+   keeps them. A default-only recolour reaches new installs and nobody else. Decide explicitly
+   whether this ships as a default change, a migration, or a prompt — and say which in the
+   release notes.
+ - **`tests/test_badge_contrast.py` pins `#134e4a`** (lines 173, 175, 190, 191) and asserts on
+   *rendered pixels*. A recolour must update those and re-run
+   `python3 scripts/measure_badge_contrast.py`. The probe exists so this is not a judgement call.
+ - **The README already documents colours that do not exist.** It lists `image.video_badge_color`,
+   `audio` and `sub` as defaulting to `"#1e3a5f"` (README:196-198); the real defaults are
+   `#134e4a` / `#1e3a8a` / `#7c2d12`, and **`#1e3a5f` appears nowhere in the codebase**. This is
+   wrong today, independently of the rebrand — fix it in the same pass, and check
+   `config.example.yml:47-50` with it.
+ - **This is [B2]'s use case.** B2 — warn on a low-contrast configured colour, beside the picker —
+   would catch Sage-as-a-badge-fill at the moment of choosing. **Do B2 first** and P10 becomes
+   safe to experiment with; do P10 first and the first operator who tries Sage gets a 3.92:1
+   badge and no warning.
+ - **[P6] is unaffected but should be told.** A background-aware palette needs a *pair* of
+   palettes; if P10 lands monochrome, P6 has one fewer degree of freedom to work with.
 
 ---
 
