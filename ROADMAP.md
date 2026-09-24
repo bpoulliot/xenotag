@@ -302,7 +302,9 @@ revisited*:
    other 31 no longer exist in Jellyfin and their files are gone from disk — displaced
    re-encodes, mostly (`Iron Lung (2026)` appears twice, once as x264 and once as AV1). `state.db`
    has no reconciliation pass, so a row outlives the item it describes. **That is [U2]'s job**,
-   not this one's, and 1,161 rows total (10,575 − 9,414) are in the same condition.
+   not this one's — and measured the same way, **1,162 of the 10,575 rows (11.0%) describe a
+   Jellyfin item that no longer exists.** (Not 10,575 − 9,414 = 1,161: one live item has no row
+   at all, so the two errors nearly cancel. Count the set difference, not the totals.)
  - **1 of 32 is `probe_failed`.** `Frontier War (2024)` is still in Jellyfin and its file is
    still on disk, but ffprobe failed on it during the 2026-09-23 full scan (`scan_errors` row,
    `error_type='probe_failed'`). `_run_scan()` `continue`s on a `None` probe result
