@@ -263,14 +263,66 @@ benefit; the mtime problem is the residue for files that change without an event
 
 ### I — Infrastructure
 
-| ID | Feature | Value | Complexity | Issue |
-|----|---------|:-----:|:----------:|-------|
-| I1 | CSRF protection: form token validation on login and settings forms | 4 | 1 | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
-| I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
-| I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
-| I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
-| I5 | Prometheus metrics endpoint | 3 | 2 | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
-| I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | — |
+| ID | Feature | Value | Complexity | Readiness | Issue |
+|----|---------|:-----:|:----------:|-----------|-------|
+| I1 | CSRF protection: form token validation on login and settings forms | 4 | 1 | — | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
+| I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | — | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
+| I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | — | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
+| I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | — | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
+| I5 | Prometheus metrics endpoint | 3 | 2 | — | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
+| I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | — | — |
+| I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | READY | — |
+
+**I8 note — measured 2026-09-23, after a credential leak made it concrete.**
+
+`config.yml` holds `jellyfin.api_key`, `auth.secret_key` and the bcrypt `auth.password_hash`.
+An assistant session `cat`-ed the file to check badge settings and printed all three into a
+transcript. Rotating them is currently a manual, four-step, per-secret job — and the host has a
+SOPS + age pipeline (`scripts/materialize-secrets.sh`) that renders secrets for every other
+service. **xenotag cannot use it**, for two independent reasons, either of which alone is
+disqualifying:
+
+1. **There is no env override to inject into.** `AppConfig` is a `BaseModel`, **not** a
+   `BaseSettings`. The only environment variable `load_config()` reads is `CONFIG_PATH`
+   (`app/config.py:141`). So there is no `JELLYFIN_API_KEY` or `..._FILE` hook for a secrets
+   renderer to populate — the surrounding stack's `_FILE` convention has nothing to attach to.
+
+2. **`config.yml` is read-write application state, not a rendered artifact.** `save_config()`,
+   `save_settings()` and `save_auth()` all do `yaml.dump(cfg.model_dump())` and write the
+   **whole file back**, secrets included. A SOPS-materialised `config.yml` would be **clobbered
+   the moment anyone saves the Settings page** — a secrets pipeline fighting the application,
+   with the application winning silently. That failure mode is worse than the status quo,
+   because it looks like it works until someone opens Settings.
+
+**The fix, and it is small:** let an environment variable (or `..._FILE`, matching the
+convention the rest of the stack already uses) **override** the YAML value at load time, and
+make the `save_*` functions **never write an overridden field back**. Roughly:
+
+ - `load_config()` applies env overrides after `model_validate`, recording which fields came
+   from the environment;
+ - `save_*` omits those fields, so the file never re-acquires a secret it did not supply;
+ - the Settings UI shows such a field as externally managed and read-only, rather than
+   displaying a value it cannot persist.
+
+**Start with `jellyfin.api_key`**, which is the one that leaked and the one with a real rotation
+story; `auth.secret_key` follows the same shape.
+
+**This does NOT mean sharing one Jellyfin key with the rest of the stack.** Verified 2026-09-23:
+xenotag's key is *not* the `JELLYFIN_API_KEY` the host's scripts use, and that isolation is
+worth keeping — a per-consumer key rotates and revokes independently, and Jellyfin's API key
+list becomes an audit trail of who has access. **Same process, different key.** A shared key
+means one leak forces a stack-wide rotation, which is exactly why the host's `pub-chroma` ntfy
+rotation keeps being deferred.
+
+**Related:** [I2] wants to download and upload `state.db`; the same question applies to
+`config.yml`, and both are really "this file holds things it should not hold alone". Whoever
+does I8 should say whether I2's backup should include `config.yml` at all once secrets can live
+outside it — a backup that captures a rendered secret is a leak with a longer half-life.
+
+**Trap for whoever implements it:** an override that is silently ignored is worse than no
+override. If an env var is set and does not take effect — misspelled, wrong nesting, shadowed by
+the YAML — the operator believes the secret rotated when it did not. **Log which fields were
+overridden at startup**, by name, never by value.
 
 ### P — Polish
 
