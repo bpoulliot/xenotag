@@ -16,7 +16,7 @@ from PIL import Image
 
 from app import overlay
 from app.config import ImageConfig
-from app.overlay import _parse_color
+from app.overlay import BadgeGroup, _parse_color, render_badge_groups
 from scripts.measure_badge_contrast import (
     BACKDROPS,
     contrast_ratio,
@@ -242,6 +242,35 @@ def test_no_poster_width_is_served_another_width_s_tile(font_env):
     r = cache_key_sweep(ImageConfig(), 480, 520)
     assert r["collisions"] == []
     assert r["cache_entries"] == r["ideal_entries"] == 4
+
+
+@pytest.mark.parametrize(("first", "second"), [(494, 501), (501, 494)])
+def test_a_poster_renders_the_same_whatever_went_through_the_cache_first(font_env, first, second):
+    """B3 at the level a viewer meets it — a whole poster, through the real path.
+
+    494px and 501px agree on font_size and differ on pad_v. Rendering one and
+    then the other must give exactly the bytes the second produces on its own,
+    in either order. This guards the defect *class* rather than B3's instance
+    of it: P6's background-aware palette would fail here too, which is the cue
+    to add a palette term to the key.
+
+    Renders to bytes; it touches no file and no library.
+    """
+    cfg = ImageConfig()
+    groups = [BadgeGroup(labels=["1080p"], fill_color=cfg.video_badge_color)]
+
+    def render(width: int) -> bytes:
+        base = Image.new("RGBA", (width, int(width * 1.5)), (0, 0, 0, 255))
+        return render_badge_groups(base, groups, None, cfg).tobytes()
+
+    overlay.clear_pill_cache()
+    render(first)
+    after = render(second)
+
+    overlay.clear_pill_cache()
+    alone = render(second)
+
+    assert after == alone, f"{second}px wore {first}px's badge"
 
 
 def test_widening_the_key_costs_only_the_entries_it_was_stealing():

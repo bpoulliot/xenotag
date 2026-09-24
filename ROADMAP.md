@@ -253,8 +253,13 @@ a badge size that is not a multiple of 8 would spend it. So `pad_h` stays in the
 case is planted by hand rather than derived from a width, and the probe's self-test carries a
 hand-planted `pad_h` control precisely because a width sweep cannot supply one.
 
-Re-run: `python3 scripts/measure_pill_cache_key.py [--self-test]`. The test suite carries the
-self-test, the 480–520px band that used to fail, and the entry-count arithmetic.
+Re-run: `python3 scripts/measure_pill_cache_key.py [--compare] [--self-test]`. The test suite
+carries the probe's self-test, the 480–520px band that used to fail, the entry-count arithmetic,
+and — the strongest of them — `test_a_poster_renders_the_same_whatever_went_through_the_cache_first`,
+which renders a whole 494px and 501px poster through `render_badge_groups()` in both orders and
+compares the bytes. That one guards the defect *class* rather than B3's instance of it: P6 would
+fail it too, which is the cue to add a palette term to the key. Reverting the key alone fails 12
+tests.
 
 **B4 — found 2026-09-23 while speccing the rebrand, and it is not a rebrand problem.**
 
