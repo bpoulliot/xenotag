@@ -16,6 +16,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from .. import auth as _auth
+from ..arr_sync import load_report
 from ..clients.jellyfin import JellyfinClient
 from ..clients.radarr import RadarrClient
 from ..clients.sonarr import SonarrClient
@@ -32,7 +33,14 @@ from ..config import (
 )
 from ..contrast import badge_contrast
 from ..overlay import BadgeGroup, clear_pill_cache, generate_preview_bytes
-from ..pipeline import handle_webhook, progress, run_full_scan, run_incremental_scan
+from ..pipeline import (
+    arr_dry_run_state,
+    handle_webhook,
+    progress,
+    run_arr_dry_run_background,
+    run_full_scan,
+    run_incremental_scan,
+)
 from ..preview_samples import ensure_sample_posters
 from ..scheduler import next_run_time, reschedule
 from ..state import (
@@ -833,3 +841,33 @@ async def badge_contrast_check(
         show_rating=show_rating,
     )
     return badge_contrast(cfg_img)
+
+
+# ---------------------------------------------------------------------------
+# Sonarr/Radarr tag sync report (roadmap B5)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/arr-sync/report")
+async def arr_sync_report(request: Request):
+    """The last *arr sync report -- from a scan, or from a dry run started below."""
+    _require_user(request)
+    cfg = get_config()
+    return {
+        "mode": cfg.arr_sync.mode,
+        "certification_fallback": cfg.arr_sync.certification_fallback,
+        "running": arr_dry_run_state["running"],
+        "error": arr_dry_run_state["error"],
+        "report": load_report(),
+    }
+
+
+@router.post("/api/arr-sync/dry-run")
+async def arr_sync_dry_run(request: Request):
+    """Match every item and count what a live sync would write. Sends nothing but GETs."""
+    _require_user(request)
+    if arr_dry_run_state["running"]:
+        raise HTTPException(status_code=409, detail="A dry run is already running")
+    arr_dry_run_state["running"] = True
+    threading.Thread(target=run_arr_dry_run_background, args=(get_config(),), daemon=True).start()
+    return {"status": "started"}

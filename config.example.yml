@@ -20,6 +20,13 @@ jellyfin:
 #       url: http://radarr:7878
 #       api_key: ""
 
+# Sonarr/Radarr writes ship as a dry run: every scan matches each item to its
+# series/movie and records what WOULD be written (Settings shows the report),
+# and nothing but GETs is sent. Turning either switch on forces a full re-tag.
+arr_sync:
+  mode: dry_run                  # dry_run | live
+  certification_fallback: false  # fill a blank Jellyfin rating from the *arr certification
+
 scan:
   schedule: "0 3 * * *"  # cron expression; empty = manual-only
   incremental: true

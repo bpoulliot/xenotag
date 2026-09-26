@@ -185,8 +185,10 @@ def purge_legacy_tags(
     """Remove legacy-prefixed tags from ``media_state.tags_applied``.
 
     This is the *local index* half of the legacy migration. The outward half —
-    stripping the same prefixes from Jellyfin/Sonarr/Radarr — already happens in
-    ``set_managed_tags()`` on every item a scan processes. Rows the scan never
+    stripping the same prefixes from Jellyfin — already happens in
+    ``set_managed_tags()`` on every item a scan processes (and on Sonarr/Radarr,
+    in ``arr_sync``, once those writes are live; before roadmap B5 nothing
+    reached them at all). Rows the scan never
     reaches keep their pre-migration record forever: an item whose file vanished,
     or whose ffprobe fails, is skipped before ``_process_one_item()`` and so is
     never re-written. That residue is what this clears.

@@ -213,6 +213,7 @@
   .dest-grid th:not(:first-child),.dest-grid td:not(:first-child){text-align:center}
   .dest-grid input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
   .dest-grid tr:hover td{background:var(--surface2)}
+  .arr-dry-flag{font-size:10px;font-weight:400;color:var(--yellow)}
   .cat-color-grid{display:grid;grid-template-columns:100px 1fr auto;gap:5px 10px;align-items:center;margin-top:6px}
   /* The colour cell holds the picker AND its contrast chip, side by side; on a
      phone the chip drops under the picker. One cell, so the grid's rows can
@@ -652,8 +653,9 @@
     </div>
     <div class="section-body">
       <p class="hint" style="margin-bottom:10px">Control which categories of tags are applied to each platform. "Poster" controls badge visibility on overlaid images.</p>
+      <p class="hint arr-dry-note" style="margin-bottom:10px;color:var(--yellow);display:none">Sonarr/Radarr are in <b>dry run</b>: those columns choose what <i>would</i> be written, and nothing is sent. See "Sonarr / Radarr writes" below.</p>
       <table class="dest-grid">
-        <thead><tr><th></th><th>Poster</th><th>Jellyfin</th><th>Sonarr</th><th>Radarr</th></tr></thead>
+        <thead><tr><th></th><th>Poster</th><th>Jellyfin</th><th>Sonarr<div class="arr-dry-flag"></div></th><th>Radarr<div class="arr-dry-flag"></div></th></tr></thead>
         <tbody>
           <tr>
             <td>Video info</td>
@@ -685,6 +687,41 @@
           </tr>
         </tbody>
       </table>
+    </div>
+  </div>
+
+  <!-- Sonarr / Radarr writes (roadmap B5) -->
+  <div class="settings-section">
+    <div class="section-header" onclick="toggleSection(this)">
+      🔁 Sonarr / Radarr writes <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <p class="hint" style="margin-bottom:10px">Each Jellyfin item is matched to its series/movie on every instance by TVDB/TMDB/IMDb id <b>and</b> folder: the object's path must be the item's folder. A copy in another folder (the HD vs the 4K instance), ids that point at two titles, and a title two items claim are never written. Tags are added and removed through the *arr's bulk editor, which changes nothing but tags, and every write is read back — a mismatch stops further writes for that scan.</p>
+      <div class="field-row">
+        <div class="field">
+          <label>Tag writes</label>
+          <select id="s-arr-mode" onchange="updateArrModeUI()">
+            <option value="dry_run">Dry run — match and count, write nothing</option>
+            <option value="live">Live — write tags to Sonarr/Radarr</option>
+          </select>
+          <div class="hint" id="s-arr-mode-hint"></div>
+        </div>
+        <div class="field">
+          <label>Rating from *arr certification</label>
+          <div class="toggle-wrap" style="margin-top:8px">
+            <label class="toggle"><input type="checkbox" id="s-arr-certfb" onchange="updateArrModeUI()"><span class="slider"></span></label>
+            <span style="font-size:12px;color:var(--muted)">Fill a blank Jellyfin rating</span>
+          </div>
+          <div class="hint" id="s-arr-certfb-hint"></div>
+        </div>
+      </div>
+      <div class="btn-row">
+        <button class="btn sm" onclick="runArrDryRun()">Run dry run now</button>
+        <button class="btn sm" onclick="loadArrReport()">Refresh report</button>
+        <span id="arr-report-status" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <p class="hint" style="margin-top:6px">The dry run reads Jellyfin, every instance and the local index — it sends nothing but GETs and reads no media file. A scan also leaves a report here.</p>
+      <div id="arr-report" style="margin-top:10px;font-size:12px;overflow-x:auto"></div>
     </div>
   </div>
 
@@ -1278,7 +1315,102 @@ function populateForm(s) {
     }
   }
 
+  // Settings page — Sonarr/Radarr writes (roadmap B5)
+  setSelectVal('s-arr-mode', s.arr_sync?.mode ?? 'dry_run');
+  setChk('s-arr-certfb', s.arr_sync?.certification_fallback ?? false);
+  updateArrModeUI();
+  loadArrReport();
+
   scheduleContrastCheck();
+}
+
+// Every value states its consequence, and the destination grid says plainly
+// when the Sonarr/Radarr columns are not being written.
+function updateArrModeUI() {
+  const live = document.getElementById('s-arr-mode')?.value === 'live';
+  const certfb = document.getElementById('s-arr-certfb')?.checked ?? false;
+  const savedLive = (settings.arr_sync?.mode ?? 'dry_run') === 'live';
+  const savedCert = settings.arr_sync?.certification_fallback ?? false;
+  const modeHint = document.getElementById('s-arr-mode-hint');
+  if (modeHint) {
+    modeHint.textContent = live
+      ? 'Scans WRITE the managed xt- tags to every matched series/movie and create missing tag labels. '
+        + (savedLive ? '' : 'Saving this makes the next scan a full re-tag of every item. ')
+        + 'Read the dry-run report first.'
+      : 'Nothing but reads is sent to Sonarr/Radarr — the clients cannot send a write. Scans still match every item and record what would be written.';
+    modeHint.style.color = live ? 'var(--yellow)' : '';
+  }
+  const certHint = document.getElementById('s-arr-certfb-hint');
+  if (certHint) {
+    certHint.textContent = certfb
+      ? 'On: an item Jellyfin has no rating for gets its series/movie certification written to Jellyfin (the rating field, and the rating tag/badge where destinations send them). '
+        + (savedCert ? '' : 'Saving this makes the next scan a full re-tag.')
+      : 'Off: an item Jellyfin has no rating for stays unrated. The report counts how many would be filled.';
+    certHint.style.color = certfb ? 'var(--yellow)' : '';
+  }
+  document.querySelectorAll('.arr-dry-flag').forEach(el => { el.textContent = live ? '' : 'dry run — not written'; });
+  document.querySelectorAll('.arr-dry-note').forEach(el => { el.style.display = live ? 'none' : ''; });
+}
+
+async function runArrDryRun() {
+  const st = document.getElementById('arr-report-status');
+  try {
+    await apiFetch('/api/arr-sync/dry-run', {method: 'POST'});
+    st.textContent = 'Dry run started — reading Jellyfin and every instance…';
+    st.style.color = 'var(--muted)';
+    for (let i = 0; i < 180; i++) {
+      await sleep(2000);
+      const r = await apiFetch('/api/arr-sync/report');
+      if (!r.running) { renderArrReport(r); return; }
+    }
+    st.textContent = 'Still running — use Refresh report.';
+  } catch (e) {
+    st.textContent = '✗ ' + e;
+    st.style.color = 'var(--red)';
+  }
+}
+
+async function loadArrReport() {
+  try { renderArrReport(await apiFetch('/api/arr-sync/report')); } catch {}
+}
+
+function renderArrReport(r) {
+  const st = document.getElementById('arr-report-status');
+  const box = document.getElementById('arr-report');
+  if (!st || !box) return;
+  const e = v => esc(String(v ?? ''));
+  if (r.error) { st.textContent = '✗ Last dry run failed: ' + r.error; st.style.color = 'var(--red)'; }
+  else if (r.running) { st.textContent = 'Dry run running…'; st.style.color = 'var(--muted)'; }
+  const rep = r.report;
+  if (!rep) { box.innerHTML = '<span style="color:var(--muted)">No report yet — run a dry run.</span>'; return; }
+  if (!r.error && !r.running) {
+    st.textContent = `Report: ${rep.mode === 'live' ? 'LIVE' : 'dry run'} from ${rep.source}, ${new Date(rep.generated_at).toLocaleString()}`;
+    st.style.color = 'var(--muted)';
+  }
+  const live = rep.mode === 'live';
+  const rows = Object.entries(rep.instances || {}).map(([label, i]) => {
+    if (!i.available) return `<tr><td>${e(label)}</td><td colspan="9" style="color:var(--red)">unavailable — ${e(i.error)}</td></tr>`;
+    const by = Object.entries(i.matched_by || {}).map(([k, v]) => `${e(k)} ${v}`).join(', ') || '—';
+    const refused = Object.entries(i.labels_rejected || {}).map(([k, v]) => `${e(k)} (${v})`).join(', ') || '—';
+    const flagged = i.readback_failures || i.write_errors ? ' style="color:var(--red)"' : '';
+    return `<tr${flagged}><td>${e(label)}</td><td>${i.objects}</td><td>${by}</td><td>${i.owned}</td><td>${i.elsewhere}</td>`
+      + `<td>${i.ambiguous + i.claimed_twice}</td><td>${live ? i.written : i.would_change} / ${i.synced}</td>`
+      + `<td>${Object.keys(i.labels_to_create || {}).length}</td><td style="text-align:left">${refused}</td>`
+      + `<td>${i.readback_failures} / ${i.write_errors}</td></tr>`;
+  }).join('');
+  const it = rep.items || {};
+  const unowned = Object.entries(it).filter(([k]) => k.includes('_unowned_')).map(([k, v]) => `${e(k.replace('_unowned_', ': '))} ${v}`).join(' · ') || 'none';
+  const c = rep.certification_fallback || {};
+  const cv = Object.entries(c.by_value || {}).map(([k, v]) => `${e(k)} ${v}`).join(', ');
+  box.innerHTML = (rep.halted ? `<p style="color:var(--red)">Writes HALTED: ${e(rep.halted)}</p>` : '')
+    + `<table class="dest-grid"><thead><tr><th>Instance</th><th>Objects</th><th>Matched by id</th><th>Owned</th>`
+    + `<th title="id matched, but the object lives in another folder — e.g. the other instance's copy">Elsewhere</th>`
+    + `<th title="ids that point at two titles, or a title two items claim — never written">Refused</th>`
+    + `<th>${live ? 'Written' : 'Would change'} / synced</th><th>Labels to create</th><th>Labels refused (items)</th>`
+    + `<th>Read-back / errors</th></tr></thead><tbody>${rows}</tbody></table>`
+    + `<p class="hint" style="margin-top:6px">Unmatched items — ${unowned}. No probe record: ${it.no_probe_record ?? 0}.</p>`
+    + `<p class="hint">Rating fallback (${c.enabled ? 'ON' : 'off'}): ${c.blank_rating ?? 0} items have no Jellyfin rating; `
+    + `${c.would_fill ?? 0} would be filled${cv ? ' (' + cv + ')' : ''}.</p>`;
 }
 
 // Fields the environment supplies are read-only here: the app never writes them
@@ -1337,6 +1469,10 @@ function collectForm() {
       ...(settings.tags || {}),
       destinations,
     },
+    arr_sync: {
+      mode: document.getElementById('s-arr-mode')?.value || 'dry_run',
+      certification_fallback: document.getElementById('s-arr-certfb')?.checked ?? false,
+    },
     image: {
       ...(settings.image || {}),
       badge_position:     document.getElementById('prev-position')?.value ?? 'bottom-left',
@@ -1370,6 +1506,7 @@ async function saveSettings() {
     statusEl.className = 'save-status ok';
     statusEl.textContent = '✓ Saved at ' + new Date().toLocaleTimeString();
     settings = {...settings, ...body};
+    updateArrModeUI();
   } catch(e) {
     statusEl.className = 'save-status err';
     statusEl.textContent = '✗ ' + e;

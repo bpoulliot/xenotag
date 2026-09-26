@@ -9,8 +9,10 @@ two different places with two different truths:
     own record of what it last wrote, and it is only refreshed for items a scan
     reaches. An item whose file has gone, or whose ffprobe fails, is skipped
     before `_process_one_item()` and so keeps its pre-migration record forever.
-  * **the outward destinations** (Jellyfin, Sonarr, Radarr) are rewritten by
-    `set_managed_tags()`, which strips `tags.legacy_prefixes` on every write.
+  * **the outward destinations** are rewritten on every write, which strips
+    `tags.legacy_prefixes`: Jellyfin by `set_managed_tags()`, and Sonarr/Radarr
+    by `app/arr_sync.py` once `arr_sync.mode` is `live` (before roadmap B5
+    nothing was ever written to them).
 
 So a legacy count in `state.db` does *not* imply a legacy tag on the media
 server. This script reports both, separately, and never writes anything.
