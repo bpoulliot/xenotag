@@ -27,12 +27,70 @@ to do is go work on that one.
 | B2 | **A configured badge colour is never checked for contrast.** Any hex the settings UI or `config.yml` supplies is used as-is; the live deployment's palette renders at 2.6:1. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | **FIXED 2026-09-24** | — |
 | B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | **FIXED 2026-09-24** | — |
-| B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **FIXED 2026-09-25 — writes ship OFF; go-live is the operator's step** | — |
+| B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **LIVE 2026-09-26** (v1.7.0) — all five instances written and read back | — |
 | B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | NEEDS DECISION | — |
 | B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | NEEDS DECISION | — |
 | B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. | 3 | 2 | NEEDS MEASUREMENT | — |
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | NEEDS DECISION | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
+| B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | READY | — |
+| B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
+| B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule would put a 1916-wide 1080p crop at `720p`. | 3 | 1 | NEEDS MEASUREMENT | — |
+
+**B13 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
+
+The B5 read-back compared every film that sits in both Radarr instances. Two 4K copies carry
+`xt-1080p`, each planned from its own 4K item — not a crossed write. `ffprobe` on the files:
+*Return to Silent Hill* (`WEBDL-2160p`) is **3836×1604**, *Dr. Strangelove* (`Bluray-2160p`) is
+**3584×2160**. `scanner._detect_resolution()` returns the first `RESOLUTION_THRESHOLDS` label
+whose width the stream reaches — 3840 / 1920 / 1280 / 854 — so four pixels of crop costs a
+whole class, and a 2160-line picture is called 1080p. The same rule puts any 1080p encode
+cropped below 1920 wide at `720p` (how often that happens here is the measurement below).
+
+NEEDS MEASUREMENT before a rule is chosen (a tolerance on width, height-or-width, or the
+nominal class from the larger dimension): how many items sit just under a threshold. Jellyfin's
+item `MediaStreams` already carry `Width`/`Height` (`ITEM_FIELDS` requests them), so it is a
+read-only sweep, no probing. Any fix renames tags already on Jellyfin and the \*arrs.
+
+**B12 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
+
+Measured during the go-live: for every item it planned (9,356), Jellyfin's current `xt-` tags
+against `state.db`'s `tags_applied`. **9,346 match exactly; 10 carry no `xt-` tag at all.** Five
+are B11's empty series. The other five are films the 2026-09-24 full scan reached and tagged —
+*Steel Magnolias*, *Swearnet: The Movie*, *War Dogs*, *What Happens After the Massacre?* (22:51Z),
+*What If* (22:56Z) — with their files on disk, `LockData`/`LockedFields` unset. Their Jellyfin
+`Tags` now hold TMDB keywords, `luxe`, and on two of them `av1` + `nav1s` (the AV1 batch
+encoder's marker). So something rewrote those items' tags wholesale after xenotag's write, and
+xenotag's incremental scan is mtime-driven: an unchanged file is never re-tagged, so the loss
+stays until the next full scan. (The 2026-09-27 03:00 scan is one — B5's switch forces it — so
+the five should be re-tagged then; whether they lose the tags again is the first thing to look at.) The \*arr copies are unaffected (B5 wrote them from the fresh
+09-24 probes).
+
+NEEDS MEASUREMENT: *what* rewrites them — a Jellyfin metadata refresh that replaces tags with
+provider keywords, or an outside writer (the `nav1s`/`av1` tags point at the AV1 batch script,
+`/mnt/media/xtor/encodes/nav1s.sh`) — measured by watching one item's `Tags` across a refresh
+and across an encode, before choosing between a reconciliation pass and fixing the writer.
+
+**B11 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
+
+The B5 go-live (below) was driven from the index, like the dry run, and its independent
+cross-check (every \*arr label must also be on the item's own Jellyfin tags) flagged 5 series
+whose Jellyfin item carries **no** `xt-` tag while `state.db` has a full row. All 5, and 4 more,
+are `probe_failed` in the 2026-09-26 09:00 scan (`scan_errors.last_seen`), with `last_scanned`
+between 2026-06-02 and 2026-08-09. Measured on the host: **9 of the 10 series folders hold zero
+`.mkv`/`.mp4` files** — the episodes are gone, the series remain in Jellyfin and Sonarr, no first
+episode resolves, so the scan probes the *folder* and fails (48 Hours, Dateline NBC, Frontline,
+Hollywood Demons, A Plan to Kill, Bodies in the Water, Fatal First Dates, The Tonight Show
+Starring Jimmy Fallon, Unlocked: A Jail Experiment). The tenth, *Mating Season*, has 10 files,
+ffprobe failed on an episode, and it has no row (the dry run's `no_probe_record: 1`).
+
+So the dry run over-counts by exactly the owned items the latest scan could not reach, with
+tags describing files that no longer exist; the go-live wrote those 9 and then removed them
+again (B5 below). **Fix (READY):** in `run_arr_dry_run()`, skip items whose `scan_errors` row
+was seen by the latest scan, and report them as their own category ("owned, but the scan
+cannot reach it") instead of as "would change" — the rule the go-live driver used. Not
+covered: why Jellyfin keeps a series with no episodes (the \*arr side keeps it too — it is the
+library's choice, not xenotag's), and whether such rows should also go from the index (U2).
 
 **B9 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
@@ -115,7 +173,88 @@ they do to a config that loads today: **expand** `#rgb` and reject the rest at v
 config with `red` would then fail to load — or be migrated), or **validate only** and refuse the
 save. Either is a small change; which one is the operator's call.
 
-**B5 — FIXED 2026-09-25. Sonarr/Radarr writes ship OFF (dry run); going live is the operator's step.**
+**B5 — LIVE 2026-09-26 (release v1.7.0). All five instances written and read back; `arr_sync.mode: live` since 11:28Z.**
+
+Operator decision 2026-09-26: B5 was a bug fix, so it goes live, one instance first.
+
+**Release.** v1.7.0 (published 2026-09-26 03:30Z, `docker-publish` green, image revision
+`f2f83db`) already carried B5, and production had run it since 08:40Z. `main` differed from it
+only in this file, so no release was cut for the go-live.
+
+**Dry run in production** (11:09Z, `python -m app.arr_sync --dry-run --db /config/state.db`, 38
+GETs, 0 blocked): **35,402 tags / 9,356 objects / 142 labels**, against last night's 35,492 /
+9,378 / 142 — −0.25%, all library change: Jellyfin series 2,477 → 2,453 and sonarr/general
+objects 1,095 → 1,074 since 09-25; radarr/general +1 film and +1 newly probed. Cert fallback
+would fill 0 of 1,361 — left **off**.
+
+**How one instance went first.** `arr_sync.mode` is global, so the rollout used a one-instance
+driver: a copy of `run_arr_dry_run()` that builds **one** \*arr client and runs the shipped
+`ArrTagSync` with `mode=live` — matching, planning, the bulk-editor write, the read-back and the
+halt all unchanged. Jellyfin stayed behind `ReadOnlyTransport`; the \*arr client got an
+allowlist transport (GET, `POST /tag`, `PUT /{series,movie}/editor` — anything else raises
+before sending). Per instance: a read-only pass of the driver had to reproduce the official dry
+run field for field (it did, all five); a 1-object canary on the first Sonarr and the first
+Radarr; then the rest, bracketed by GET-only snapshots of every object.
+
+| instance | objects tagged | tags | labels created | refused (B9) | read-back failures / errors / halts |
+|---|---:|---:|---:|---:|---|
+| sonarr/general | 1,052 | 4,244 | 33 | 0 | 0 / 0 / 0 |
+| sonarr/4k | 7 | 34 | 8 | 0 | 0 / 0 / 0 |
+| sonarr/anime | 1,355 | 7,339 | 35 | 0 | 0 / 0 / 0 |
+| radarr/general | 6,864 | 23,466 | 47 | 4,514 | 0 / 0 / 0 |
+| radarr/4k | 69 | 283 | 19 | 77 | 0 / 0 / 0 |
+| **total** | **9,347** | **35,366** | **142** | **4,591** | **0** |
+
+**Read back, independently of the in-write check** (`verify.py`, self-test: a clean write passes
+and six planted faults — user tag removed, other field changed, managed tag missing, label
+deleted, crossed tag, write to an unplanned object — each fail). The final snapshot (11:27Z)
+against the one taken before anything was written (11:12Z), **every object on every instance**,
+not a sample:
+
+ - **9,347 / 9,347** tagged objects carry exactly the planned tags; the 271 others are
+   untouched (sonarr/general 22, anime 1, radarr/general 242, radarr/4k 6).
+ - **No existing tag removed:** the 7,812 objects that carry an operator tag carry the same
+   ones. No label deleted or renamed; the 142 new ones are all `xt-`.
+ - **No other field changed** on any of the 9,618 objects (the volatile fields the read-back
+   ignores excepted).
+ - **Twins took only their own copy's tags.** Every tagged copy was planned from the Jellyfin
+   item in its own folder. The 6 series in both Sonarrs: all 6 HD copies `xt-1080p`, all 6 4K
+   copies `xt-4k` — e.g. *The Expanse* `[1080p, av1, en, opus]` on general, `[4k, dts-hd, en,
+   h.265, hdr10]` on 4k. The 69 films in both Radarrs: 64 split HD / `xt-4k`; in 2 the 4K copy
+   is a cropped 2160p file tagged `xt-1080p` from its own probe (**B13**); in 3 one or both
+   copies have no item and were not written.
+ - **Cross-check against Jellyfin:** every object's labels must also be on its own Jellyfin
+   item (lowercased). True for 9,341; the 6 exceptions are items whose Jellyfin tags are
+   gone — filed as **B12**, not a write fault (their \*arr tags come from probes of the files
+   on disk; *Frontier War*'s May row has the same mtime as the file today).
+
+**Nine written, then removed (B11).** That cross-check caught 5 sonarr/general series whose
+Jellyfin item has no `xt-` tag; the cause was 9 series in all whose folders hold no video file,
+which every scan fails to probe and skips — so their rows (June–August) described deleted files,
+and a live scan would never have written them. They were reverted through the same editor
+(`applyTags: remove`, read back) to their baseline, and the driver skipped any item the latest
+scan could not reach on the other four instances (0 there). Hence 9,347 = 9,356 − 9, and
+35,366 = 35,402 − 36.
+
+**Switched on:** `config.yml` gained `arr_sync: {mode: live, certification_fallback: false}`
+(3 lines, the rest byte-identical), container restarted healthy. The tag-config hash goes
+`20142cb0e93c4394` → `aabcd4f06c79b714`, so **the 03:00 scan on 2026-09-27 is a full re-tag** —
+expect ~1 h (the last two full scans took 55 and 76 min) and near-zero \*arr writes, since
+every reachable object is already current. That scan is the first run of the live path from
+a scan; read its report (`written`, read-back, **HALTED**).
+
+**Where things are:** the `state.db` backup is
+`~/docker/xenotag/config/state.db{,-wal,-shm}.bak-20260926-pre-b5-live`; scripts, every report
+and every snapshot (the 11:12Z one is the record of each object's tags *before* B5) are in
+`~/docker/xenotag/b5-golive-20260926/`. **Back out:** delete the three `arr_sync` lines and
+restart (stops writes, removes nothing); to strip the tags, the recipe in step 6 below.
+
+**Still open:** B9 (Radarr refuses `xt-h.264`/`xt-h.265`/`xt-dd+` — 4,591 applications skipped,
+so ~3 in 5 radarr/general films have no codec tag there), B7 (odd language labels such as
+`xt-zx`, `xt-ma` now exist as \*arr labels), B8 (a webhook would process the wrong item; now
+live, but 0 webhooks in 30 days and B8 cannot cross-tag), B11, B12, B13.
+
+**B5 — FIXED 2026-09-25. Sonarr/Radarr writes shipped OFF (dry run); going live was the operator's step (done 2026-09-26, above).**
 
 Matching now uses what Jellyfin supplies — `Tvdb` / `Tmdb` / `Imdb` against the `tvdbId` /
 `tmdbId` / `imdbId` of the catalogue `preload()` already fetched — in `app/arr_sync.py`. Nothing
@@ -202,7 +341,7 @@ independent before/after diff found **no field changed but `tags`**; a second li
 caught — `READ-BACK MISMATCH … field changed: .monitored`, writes halted, the next item skipped.
 The dev instances keep the seeded series/film.
 
-### Going live — the operator's steps
+### Going live — the operator's steps (done 2026-09-26: see "B5 — LIVE" above)
 
  1. Release and deploy as usual. Nothing changes: writes are off and no rescan is forced.
  2. Settings → **Sonarr / Radarr writes** → **Run dry run now**, and read the report — or
