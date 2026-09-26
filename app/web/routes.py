@@ -654,85 +654,6 @@ async def preview_sample_posters(request: Request, source: str = "synthetic"):
     return [{"source": "synthetic", "sample": s["filename"], "name": s["label"]} for s in synthetics]
 
 
-def _image_config_from_params(
-    *,
-    position: str = "bottom-left",
-    opacity: float = 1.0,
-    badge_size: str = "tv",
-    text_color: str = "#ffffff",
-    video_color: str = "",
-    audio_color: str = "",
-    sub_color: str = "",
-    rating_color: str = "",
-    show_video: str = "true",
-    show_audio: str = "true",
-    show_subs: str = "true",
-    show_rating: str = "true",
-) -> ImageConfig:
-    """The ImageConfig the Badge settings controls describe right now.
-
-    Shared by the preview image and the contrast check, so the two can never
-    be judging different badges.
-    """
-    default = ImageConfig()
-    return ImageConfig(
-        # These colours are what the operator is previewing right now, not a
-        # legacy config: without the version, the palette migration would read
-        # a deliberately chosen old default as unmigrated and swap it out.
-        badge_palette_version=BADGE_PALETTE_VERSION,
-        badge_position=position,
-        badge_opacity=max(0.1, min(1.0, opacity)),
-        badge_size=badge_size if badge_size in ("desktop", "tv", "tv_plus") else "tv",
-        badge_text_color=text_color or "#ffffff",
-        video_badge_color=video_color or default.video_badge_color,
-        audio_badge_color=audio_color or default.audio_badge_color,
-        sub_badge_color=sub_color or default.sub_badge_color,
-        rating_badge_color=rating_color or default.rating_badge_color,
-        show_video_badges=show_video.lower() not in ("false", "0"),
-        show_audio_badges=show_audio.lower() not in ("false", "0"),
-        show_sub_badges=show_subs.lower() not in ("false", "0"),
-        show_rating_badge=show_rating.lower() not in ("false", "0"),
-    )
-
-
-@router.get("/api/badge-contrast")
-async def badge_contrast_check(
-    request: Request,
-    opacity: float = 1.0,
-    text_color: str = "#ffffff",
-    video_color: str = "",
-    audio_color: str = "",
-    sub_color: str = "",
-    rating_color: str = "",
-    show_video: str = "true",
-    show_audio: str = "true",
-    show_subs: str = "true",
-    show_rating: str = "true",
-):
-    """Rendered contrast of the badge colours being chosen (roadmap B2).
-
-    Informational only -- nothing refuses a colour on the strength of this.
-    Computed here rather than in the browser because the figure has to be the
-    ratio of what RENDERS, and only the renderer knows that; a JavaScript copy
-    of the compositing would be a second implementation free to drift, which
-    is how B1 happened. Same code as `scripts/measure_badge_contrast.py`.
-    """
-    _require_user(request)
-    cfg_img = _image_config_from_params(
-        opacity=opacity,
-        text_color=text_color,
-        video_color=video_color,
-        audio_color=audio_color,
-        sub_color=sub_color,
-        rating_color=rating_color,
-        show_video=show_video,
-        show_audio=show_audio,
-        show_subs=show_subs,
-        show_rating=show_rating,
-    )
-    return badge_contrast(cfg_img)
-
-
 @router.get("/preview/image")
 async def preview_image(
     request: Request,
@@ -833,3 +754,82 @@ async def preview_image(
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
     return Response(content=img_bytes, media_type="image/jpeg")
+
+
+def _image_config_from_params(
+    *,
+    position: str = "bottom-left",
+    opacity: float = 1.0,
+    badge_size: str = "tv",
+    text_color: str = "#ffffff",
+    video_color: str = "",
+    audio_color: str = "",
+    sub_color: str = "",
+    rating_color: str = "",
+    show_video: str = "true",
+    show_audio: str = "true",
+    show_subs: str = "true",
+    show_rating: str = "true",
+) -> ImageConfig:
+    """The ImageConfig the Badge settings controls describe right now.
+
+    Shared by the preview image and the contrast check, so the two can never
+    be judging different badges.
+    """
+    default = ImageConfig()
+    return ImageConfig(
+        # These colours are what the operator is previewing right now, not a
+        # legacy config: without the version, the palette migration would read
+        # a deliberately chosen old default as unmigrated and swap it out.
+        badge_palette_version=BADGE_PALETTE_VERSION,
+        badge_position=position,
+        badge_opacity=max(0.1, min(1.0, opacity)),
+        badge_size=badge_size if badge_size in ("desktop", "tv", "tv_plus") else "tv",
+        badge_text_color=text_color or "#ffffff",
+        video_badge_color=video_color or default.video_badge_color,
+        audio_badge_color=audio_color or default.audio_badge_color,
+        sub_badge_color=sub_color or default.sub_badge_color,
+        rating_badge_color=rating_color or default.rating_badge_color,
+        show_video_badges=show_video.lower() not in ("false", "0"),
+        show_audio_badges=show_audio.lower() not in ("false", "0"),
+        show_sub_badges=show_subs.lower() not in ("false", "0"),
+        show_rating_badge=show_rating.lower() not in ("false", "0"),
+    )
+
+
+@router.get("/api/badge-contrast")
+async def badge_contrast_check(
+    request: Request,
+    opacity: float = 1.0,
+    text_color: str = "#ffffff",
+    video_color: str = "",
+    audio_color: str = "",
+    sub_color: str = "",
+    rating_color: str = "",
+    show_video: str = "true",
+    show_audio: str = "true",
+    show_subs: str = "true",
+    show_rating: str = "true",
+):
+    """Rendered contrast of the badge colours being chosen (roadmap B2).
+
+    Informational only -- nothing refuses a colour on the strength of this.
+    Computed here rather than in the browser because the figure has to be the
+    ratio of what RENDERS, and only the renderer knows that; a JavaScript copy
+    of the compositing would be a second implementation free to drift, which
+    is how B1 happened. Same code as `scripts/measure_badge_contrast.py`.
+    """
+    _require_user(request)
+    cfg_img = _image_config_from_params(
+        opacity=opacity,
+        text_color=text_color,
+        video_color=video_color,
+        audio_color=audio_color,
+        sub_color=sub_color,
+        rating_color=rating_color,
+        show_video=show_video,
+        show_audio=show_audio,
+        show_subs=show_subs,
+        show_rating=show_rating,
+    )
+    return badge_contrast(cfg_img)

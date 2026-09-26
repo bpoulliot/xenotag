@@ -295,6 +295,15 @@ digits, at 0.65, 1.0 and a non-white text colour. Suite 116 → 131.
    by the decision, a log line is not a warning.
  - **B6 filed** (below): a non-`#rrggbb` colour renders black. The warning reports that
    truthfully (it measures what renders), but only the hand-edit path can produce one.
+ - **Seven CodeQL alerts are open on `main` and nothing in this file tracks them** (checked
+   2026-09-25): #3–5 `py/path-injection` on `preview_image`'s `sample` read, #6–7
+   `py/weak-sensitive-data-hashing` and #8 `py/clear-text-logging-sensitive-data` in `auth.py`,
+   #1 `py/cookie-injection`. This PR's first push failed the CodeQL check with #3–5 — not new,
+   same alert numbers as `main` — because the new helper sat *above* `preview_image` and git's
+   diff re-attributed that route's signature (the `sample` source) as changed code. Moving the
+   helper below the route cleared it; no alert was dismissed. Whether #3–5 are real is **not
+   determined** (`Path(sample).name` looks like a sanitiser CodeQL does not recognise); they
+   deserve an item of their own, with evidence, rather than a guess here.
 
 *(decision record follows)*
 
