@@ -1027,7 +1027,7 @@ overridden at startup**, by name, never by value.
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
-| P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | NEEDS DECISION | — |
+| P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | **CLOSED 2026-09-25 — keep the PNGs** | — |
 
 **P6 — KEPT 2026-09-23, explicitly as polish.** The operator: *"I still like the p6 idea and
 think there's value to ensuring accessibility while allowing things like opacity and glow.
@@ -1439,6 +1439,27 @@ Traps, and the first is the one that will actually bite:
    picker.)*
  - **[P6] is unaffected but should be told.** A background-aware palette needs a *pair* of
    palettes; if P10 lands monochrome, P6 has one fewer degree of freedom to work with.
+
+**P11 — CLOSED 2026-09-25. The operator: *"Option 2, just use the pngs."*** `assets/brand/mark.png`
+and `wordmark.png` stay the source of truth for every shipped asset; nothing changes in the app.
+
+**Why a vector cannot clear the bar, recorded so nobody retries the same route.** The concept art is
+a *rendered* image, not a drawing: each shape sits inside a soft, uneven ~14px glow, and the
+design's actual edge is a thin bevel line drawn inside that glow. A tracer
+(`alpha-128 contour + Schneider Bezier fit + least-squares gradients`) and an independent verifier
+(cairosvg render on the source's pixel grid) were built on 2026-09-25. The trace **passed every
+numeric threshold** — IoU 0.997, mean boundary 0.12px, dE00 mean 1.03 (mark) / 0.62 (wordmark) —
+and was **visibly not exact**: wavy edges, a blobby N inner corner, a notched arc end, no bevel rim.
+It sat within 1.00px of the alpha contour everywhere, corners included, which is exactly why the
+shape metrics could not see the problem: **they measured fidelity to the glow, and the glow's 50%
+contour is irregular.** Any future verifier for "exact" must measure the visible colour/bevel edge.
+
+The only routes to an exact vector are a designer's hand trace or vectors exported from whatever
+produced the concept. **What option 2 gives up:** the single SVG favicon that stays sharp at every
+size; the fixed 16/32/48 ICO set stays. The tracer and verifier live on the local branch
+`feat/brand-vectors-p11`, unpushed; `assets/brand/vectors-wip/` is kept for reference only.
+
+*(original filing follows)*
 
 **P11 — filed 2026-09-23. The bar is exact, and nothing on hand clears it.**
 
