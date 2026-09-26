@@ -20,40 +20,14 @@ Regenerate after changing either:
     python3 scripts/generate_brand_assets.py
     # then bump VERSION -- static URLs are cache-busted by ?v=<VERSION>
 
-## `vectors-wip/` — not sources yet
+## `vectors-wip/` — reference only, not sources
 
-Vector versions of the mark and wordmark live here **until they match the
-concept art exactly**. They are not wired into anything, and nothing generates
-from them.
+The PNGs above are the source of truth; the operator closed **P11** on 2026-09-25 with *"just use
+the pngs."* These SVGs are the operator's early rough vectors, kept for reference. Nothing reads
+them, and they do not match the concept art (the icon is mirror-symmetric where the concept is a
+C2 pinwheel).
 
-The ones supplied so far do not match: the icon draws two fat lens shapes in
-*mirror* symmetry, which reads as an eye, where the concept art is a **C2
-pinwheel** — 180° rotational symmetry, slender tapered blades. Those are
-different symmetry groups, so they need redrawing rather than nudging. The same
-two paths are reused as the wordmark's `O`, so the error appears in every file.
-The letterforms themselves are fine and should not be redrawn.
-
-**Roadmap item [P11]** owns this, and records the measurements plus the
-recommended method (trace the alpha at threshold 128, re-apply the brand
-gradients, so the art is reproduced by construction rather than by eye).
-
-Preferred names, though anything recognisable is fine — they get normalised on
-the way in:
-
-    vectors-wip/mark.svg
-    vectors-wip/wordmark-primary.svg
-    vectors-wip/wordmark-medium.svg
-    vectors-wip/wordmark-small.svg
-
-Note the three weights arrived **inverted**: `primary` was `stroke-width="10"`,
-`medium` `11.5` and `small` `13`, so the file named *small* was the boldest,
-while the brand sheet captions it "reduced weight for tight spaces". One of the
-two is wrong and it is six values per file either way.
-
-### When P11 lands
-
-The vectors graduate out of `vectors-wip/` to `mark.svg` and `wordmark.svg`
-beside the PNGs and become the sources the rasters are generated from. That
-also unlocks an **SVG favicon** (`<link rel="icon" type="image/svg+xml">`),
-which is one file that stays sharp at every size instead of the fixed 16/32/48
-set — the approach van1sh uses.
+A traced vector was also tried and rejected: the concept art is a rendered image whose shapes sit
+inside a soft glow, so tracing it reproduces the glow's irregular edge rather than the design's
+crisp bevel line. `ROADMAP.md` P11 records the measurements. An exact vector needs a designer's
+hand trace, or vectors exported from whatever produced the concept.
