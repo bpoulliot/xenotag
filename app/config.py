@@ -101,6 +101,23 @@ class ImageConfig(BaseModel):
     targets: list[str] = Field(default_factory=lambda: ["poster.jpg", "poster.png", "folder.jpg", "folder.png"])
     backup_suffix: str = ".orig"
     badge_position: str = "bottom-left"
+    # Corner for the content-rating badge, independent of badge_position
+    # (roadmap B10). Before this it was hardwired to top-left, so choosing
+    # top-left for the tags drew them on top of it. If both share a corner they
+    # stack, rating nearest the corner; see render_badge_groups().
+    rating_position: Literal["top-left", "top-right", "bottom-left", "bottom-right"] = "top-left"
+
+    @field_validator("rating_position", mode="before")
+    @classmethod
+    def _unknown_rating_position(cls, v: object) -> object:
+        # A typo hand-edited into config.yml must not stop the app starting over
+        # a cosmetic setting: fall back to the historical corner, and say so.
+        corners = ("top-left", "top-right", "bottom-left", "bottom-right")
+        if v not in corners:
+            log.warning("image.rating_position %r is not one of %s; using top-left", v, corners)
+            return "top-left"
+        return v
+
     # Badge fill opacity. This is a CONTRAST control, not just a cosmetic one:
     # the pill is filled at this alpha, so anything below 1.0 lets the poster
     # show through and drops the rendered contrast of the label against the

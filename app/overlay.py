@@ -224,17 +224,23 @@ def _render_group(
     col_gap: int,
     margin: int,
     y_offset: int = 0,
-) -> Image.Image:
-    """Render one badge group as a single row onto base. Overflow replaced with … pill."""
+    reserve_w: int = 0,
+) -> tuple[Image.Image, list[tuple[int, int, int, int]]]:
+    """Render one badge group as a single row onto base. Overflow replaced with … pill.
+
+    ``reserve_w`` narrows the row by that many pixels from the far side, for a row
+    that shares its band with another group across the poster (roadmap B10).
+    Returns the image and the ``(x, y, w, h)`` of every pill placed.
+    """
     if not labels:
-        return base
+        return base, []
 
     font = _load_font(font_size)
     img_w, img_h = base.size
 
     ref_h = font.getbbox("AgfpQ")[3] - font.getbbox("AgfpQ")[1]
     pill_h = ref_h + pad_v * 2
-    max_row_w = img_w - 2 * margin
+    max_row_w = img_w - 2 * margin - reserve_w
 
     # Truncate any label whose pill would alone exceed the row width, then compute sizes
     badge_sizes: list[tuple[str, int]] = []
@@ -272,7 +278,7 @@ def _render_group(
         # else: exactly 1 badge fills the row — silently omit ellipsis, badge presence implies content
 
     if not row:
-        return base
+        return base, []
 
     row_w = sum(bw for _, bw in row) + col_gap * (len(row) - 1)
     is_bottom = "bottom" in position
@@ -283,12 +289,14 @@ def _render_group(
 
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     gm = _GLOW_MARGIN
+    rects = []
     for badge, bw in row:
         tile = _pill_tile(badge, fill_color, text_color, alpha, font_size, pad_h, pad_v)
         overlay.paste(tile, (x - gm, y - gm), tile)
+        rects.append((x, y, bw, pill_h))
         x += bw + col_gap
 
-    return Image.alpha_composite(base, overlay)
+    return Image.alpha_composite(base, overlay), rects
 
 
 def render_badge_groups(
@@ -296,50 +304,66 @@ def render_badge_groups(
     groups: list[BadgeGroup],
     rating_group: BadgeGroup | None,
     cfg: ImageConfig,
+    placed: list | None = None,
 ) -> Image.Image:
-    """Composite all badge groups onto base and return the result."""
+    """Composite all badge groups onto base and return the result.
+
+    If ``placed`` is given, it is extended with ``(kind, (x, y, w, h))`` for every
+    pill drawn, ``kind`` being "rating" or "tags" -- so tests can check layout
+    against the real render path rather than a re-implementation of it.
+    """
     img_w, _ = base.size
     p = _compute_layout_params(img_w, cfg)
 
     result = base.convert("RGBA") if base.mode != "RGBA" else base
+    common = (p["alpha"], p["font_size"], p["pad_h"], p["pad_v"], p["col_gap"], p["margin"])
+    row_h = _measure_group_height(p["font_size"], p["pad_v"])
 
-    # Main badge groups rendered at cfg.badge_position, bottom-to-top
-    cumulative_offset = 0
+    # Roadmap B10. The rating and the tag rows each have their own corner, and
+    # every combination must render without overlap:
+    #   same corner          -> stack: the rating sits nearest the corner and
+    #                           the tag rows continue past it;
+    #   same edge, opposite  -> the one tag row sharing the rating's band is
+    #   sides                   narrowed so it stops short of the rating (a tag
+    #                           row may otherwise span the poster's full width);
+    #   different edges      -> independent.
+    # The rating is placed first because it owns its corner.
+    rating_rects: list[tuple[int, int, int, int]] = []
+    if rating_group and rating_group.labels:
+        result, rating_rects = _render_group(
+            result,
+            rating_group.labels,
+            cfg.rating_position,
+            rating_group.fill_color,
+            rating_group.text_color,
+            *common,
+        )
+        if placed is not None:
+            placed.extend(("rating", r) for r in rating_rects)
+
+    same_corner = bool(rating_rects) and cfg.rating_position == cfg.badge_position
+    same_edge = bool(rating_rects) and cfg.rating_position.split("-")[0] == cfg.badge_position.split("-")[0]
+    rating_w = max(x + w for x, _, w, _ in rating_rects) - min(x for x, _, _, _ in rating_rects) if rating_rects else 0
+
+    # Tag groups at cfg.badge_position, stacked away from the edge.
+    cumulative_offset = row_h + p["row_gap"] if same_corner else 0
     for group in reversed(groups):
         if not group.labels:
             continue
-        result = _render_group(
+        shares_band = same_edge and not same_corner and cumulative_offset == 0
+        result, rects = _render_group(
             result,
             group.labels,
             cfg.badge_position,
             group.fill_color,
             group.text_color,
-            p["alpha"],
-            p["font_size"],
-            p["pad_h"],
-            p["pad_v"],
-            p["col_gap"],
-            p["margin"],
+            *common,
             y_offset=cumulative_offset,
+            reserve_w=rating_w + p["col_gap"] if shares_band else 0,
         )
-        group_h = _measure_group_height(p["font_size"], p["pad_v"])
-        cumulative_offset += group_h + p["row_gap"]
-
-    # Top-left rating (independent)
-    if rating_group and rating_group.labels:
-        result = _render_group(
-            result,
-            rating_group.labels,
-            "top-left",
-            rating_group.fill_color,
-            rating_group.text_color,
-            p["alpha"],
-            p["font_size"],
-            p["pad_h"],
-            p["pad_v"],
-            p["col_gap"],
-            p["margin"],
-        )
+        if placed is not None:
+            placed.extend(("tags", r) for r in rects)
+        cumulative_offset += row_h + p["row_gap"]
 
     return result
 

@@ -38,7 +38,7 @@ Xenotag scans your Jellyfin library, extracts resolution, codec, HDR, and audio 
 - **Video badges**: resolution, codec, HDR type in a single grouped pill
 - **Audio badges**: codec-first grouping — `DTS-HD EN JA` instead of separate pills per language
 - **Subtitle badges**: format-first grouping — `PGS EN JA IT`, `SRT EN`
-- **Rating badge**: content rating rendered independently at top-right
+- **Rating badge**: content rating in its own corner (`image.rating_position`, default top-left); sharing a corner with the other badges stacks them instead of overlapping
 - Badge position configurable: bottom-left, bottom-right, top-left, top-right
 - Configurable opacity, font size, badge colors per group (video, audio, subtitle, rating)
 - Long language lists truncate gracefully with `…` rather than overflowing the poster edge
@@ -212,7 +212,8 @@ report.
 |---|---|---|---|
 | `image.targets` | list | `[poster.jpg, ...]` | Poster filenames to search for in each item folder |
 | `image.backup_suffix` | string | `".orig"` | Suffix appended to original poster backups |
-| `image.badge_position` | string | `"bottom-left"` | Main badge group position: `bottom-left`, `bottom-right`, `top-left`, `top-right`. Rating badge is always `top-right`. |
+| `image.badge_position` | string | `"bottom-left"` | Main badge group position: `bottom-left`, `bottom-right`, `top-left`, `top-right`. |
+| `image.rating_position` | string | `"top-left"` | Content-rating badge corner, same four values. If it matches `badge_position` the two stack, rating nearest the corner; on the same edge but opposite sides, the badge row beside the rating is shortened so the two never touch. An unrecognised value falls back to `top-left` with a warning. |
 | `image.badge_opacity` | float | `1.0` | Badge fill opacity (0.0–1.0). This is a contrast control: below `1.0` the poster shows through the badge and the label's rendered contrast drops below the figure quoted for each colour. With the shipped palette, `0.98` is the floor for WCAG AAA and `0.80` for AA — the palette trades contrast headroom for colour-blind separation, so there is little room below `1.0` — the Badge settings page shows the rendered figure as you move the slider, and `scripts/measure_badge_contrast.py` prints the same numbers. |
 | `image.badge_size` | string | `"tv"` | Base font size tier: `desktop`, `tv`, `tv_plus` |
 | `image.normalize_portrait` | bool | `true` | Pad square/landscape images to 2:3 portrait ratio |

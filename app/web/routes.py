@@ -672,6 +672,7 @@ async def preview_image(
     subtitles: str = "",
     rating: str = "",
     position: str = "bottom-left",
+    rating_position: str = "top-left",
     opacity: float = 1.0,
     badge_size: str = "tv",
     text_color: str = "#ffffff",
@@ -689,6 +690,7 @@ async def preview_image(
     _require_user(request)
     cfg_img = _image_config_from_params(
         position=position,
+        rating_position=rating_position,
         opacity=opacity,
         badge_size=badge_size,
         text_color=text_color,
@@ -764,9 +766,13 @@ async def preview_image(
     return Response(content=img_bytes, media_type="image/jpeg")
 
 
+_CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
+
+
 def _image_config_from_params(
     *,
     position: str = "bottom-left",
+    rating_position: str = "top-left",
     opacity: float = 1.0,
     badge_size: str = "tv",
     text_color: str = "#ffffff",
@@ -791,6 +797,9 @@ def _image_config_from_params(
         # a deliberately chosen old default as unmigrated and swap it out.
         badge_palette_version=BADGE_PALETTE_VERSION,
         badge_position=position,
+        # An unknown corner from the query string falls back rather than 422s,
+        # the same way badge_size is clamped below.
+        rating_position=rating_position if rating_position in _CORNERS else "top-left",
         badge_opacity=max(0.1, min(1.0, opacity)),
         badge_size=badge_size if badge_size in ("desktop", "tv", "tv_plus") else "tv",
         badge_text_color=text_color or "#ffffff",
