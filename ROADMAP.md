@@ -930,6 +930,7 @@ benefit; the mtime problem is the residue for files that change without an event
 | I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | — | — |
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
 | I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | NEEDS DECISION | — |
+| I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | READY | — |
 
 **I8 — SHIPPED 2026-09-24.** `jellyfin.api_key`, `auth.secret_key` and `webhooks.secret` can now
 be supplied by `JELLYFIN_API_KEY` / `XENOTAG_SECRET_KEY` / `XENOTAG_WEBHOOK_SECRET`, or by the
@@ -1046,6 +1047,39 @@ outside it — a backup that captures a rendered secret is a leak with a longer 
 override. If an env var is set and does not take effect — misspelled, wrong nesting, shadowed by
 the YAML — the operator believes the secret rotated when it did not. **Log which fields were
 overridden at startup**, by name, never by value.
+
+**I10 — filed 2026-09-25, from the v1.7.0 deploy log. Nothing is broken; this is removal-proofing.**
+
+On every start, prod logs:
+
+    fastapi/routing.py:120: FastAPIDeprecationWarning: ORJSONResponse is deprecated, FastAPI now
+    serializes data directly to JSON bytes via Pydantic when a return type or response model is
+    set, which is faster and doesn't need a custom response class.
+
+Verified 2026-09-25 against `main` and the running image (FastAPI **0.136.3**, pinned in
+`requirements.txt`): the **only** use is `app/main.py:98`, `default_response_class=ORJSONResponse`,
+imported at `main.py:9`. **Nothing else imports `orjson`** in `app/`, `scripts/` or `tests/`, so
+`orjson==3.11.9` exists in `requirements.txt` solely for this line. It works today; it will stop
+working when FastAPI removes the class, and a Dependabot bump of FastAPI is how that would arrive —
+as a green-looking PR that fails at import.
+
+**The fix, minimal and READY:** delete `default_response_class=ORJSONResponse` and its import, so
+the app falls back to FastAPI's standard `JSONResponse`, and drop `orjson` from `requirements.txt`.
+Performance is not a reason to keep it: payloads here are small, and the media browser is
+paginated.
+
+**The one trap, measured so the implementer need not rediscover it: non-finite floats.** orjson
+writes `NaN`/`Infinity` as `null`; the standard `JSONResponse` **raises** on them (`allow_nan=False`),
+so an endpoint that ever returned one would go from a quiet `null` to a 500. As of 2026-09-25 nothing
+can: a search of `app/` finds no `inf`/`nan` construction, and the only float in
+`app/web/schemas.py` is scan progress (`done`). But `app/contrast.py` (B2) computes ratios, and a
+ratio is where a division goes non-finite. **Pin it with a test** — e.g. every JSON route's output
+survives `json.dumps(..., allow_nan=False)` for the edge inputs it accepts — rather than trusting
+today's grep. Datetimes are not a trap: none cross the response schemas.
+
+**Optional, separate, not part of this item:** FastAPI's new fast path needs a return type or
+`response_model`, and only 5 of the 35 routes in `routes.py` declare one. Adding them is typing
+polish with a small speed-up; it is not required to clear the warning, so do not bundle it.
 
 ### P — Polish
 
