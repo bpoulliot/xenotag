@@ -52,6 +52,7 @@ image:
     - folder.png
   backup_suffix: ".orig"
   badge_position: bottom-left  # bottom-left | bottom-right | top-left | top-right
+  rating_position: top-left   # content-rating corner; sharing badge_position's corner stacks them
   badge_opacity: 1.0         # contrast control: <1.0 lets the poster through the fill
   badge_size: tv               # desktop | tv | tv_plus (see README for guidance)
   badge_text_color: "#ffffff"

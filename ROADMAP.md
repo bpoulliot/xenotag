@@ -32,6 +32,7 @@ to do is go work on that one.
 | B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | NEEDS DECISION | — |
 | B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. | 3 | 2 | NEEDS MEASUREMENT | — |
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | NEEDS DECISION | — |
+| B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 
 **B9 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
@@ -257,6 +258,34 @@ supply. Matching on those turns two dead branches into working ones without a Je
 five run with `recycleBin` empty. Tag writes do not displace files, but the `_put("/series/{id}",
 series)` round-trips the whole series object — so this needs a dry-run/count mode and a
 read-back check before it is let near production, and it should say so in its own spec.
+
+**B10 — FIXED 2026-09-25, filed and fixed the same day.** Reported by the operator: choosing
+top-left for the tags laid them *on top of* the content rating (e.g. `PG-13`). Cause, verified in
+code: `render_badge_groups()` drew the rating at a hardwired `"top-left"` with no offset, while the
+tag rows went to `badge_position` and stacked only against each other. The README compounded it by
+saying the rating was always **top-right**, so an operator avoiding the collision would have picked
+the wrong corner to avoid. *(An earlier session called this "B6"; that ID was already taken by the
+non-hex-colour defect, so this is B10.)*
+
+The operator chose option 4 of four: **both positions independently configurable.** The rating gets
+`image.rating_position` (default `top-left`, where it always was, so no existing poster moves), with
+its own control beside the tag position. The operator's own list included drag-and-drop for the
+same-corner case; a deterministic rule was used instead, because pixel offsets do not transfer between
+posters of different sizes and a rule covers every combination:
+
+ - **same corner** → stack, rating nearest the corner, tag rows continuing past it;
+ - **same edge, opposite sides** → the one tag row in the rating's band is narrowed so it stops short
+   of it. This case was not in the original recommendation and was found while implementing: a tag
+   row may span the poster's **full** width, so rating top-left with tags top-right still collided;
+ - **different edges** → independent, as before.
+
+`tests/test_rating_position.py` (26 tests) checks all 16 corner combinations for overlap using pill
+rectangles reported by the real render path, not a re-implementation. Mutation-checked: removing the
+stacking fails 10, removing the narrowing fails 5, hardwiring the rating again fails 7. An unknown
+`rating_position` in `config.yml` falls back to `top-left` with a warning rather than stopping the app.
+
+Not covered: a tag stack tall enough to reach a rating on the *opposite* edge. That needs a very
+short poster, and bounding pills to the poster generally is [P7]'s containment question.
 
 **B1 — FIXED 2026-09-22.** Measured, fixed and re-measured in one session. The measurement
 below was reproduced from scratch first and **agreed with the original to the decimal**, so the

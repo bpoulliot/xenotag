@@ -340,12 +340,24 @@
     <div class="prev-controls-grid">
 
       <div class="prev-ctrl-group">
-        <span class="prev-ctrl-label">Position</span>
+        <span class="prev-ctrl-label">Tag position</span>
         <select id="prev-position" onchange="onPreviewChange()">
           <option value="bottom-left">Bottom-left</option>
           <option value="bottom-right">Bottom-right</option>
           <option value="top-left">Top-left</option>
           <option value="top-right">Top-right</option>
+        </select>
+      </div>
+
+      <!-- Roadmap B10: the rating has its own corner. Sharing one with the tags
+           stacks them, rating nearest the corner. -->
+      <div class="prev-ctrl-group">
+        <span class="prev-ctrl-label">Rating position</span>
+        <select id="prev-rating-position" onchange="onPreviewChange()">
+          <option value="top-left">Top-left</option>
+          <option value="top-right">Top-right</option>
+          <option value="bottom-left">Bottom-left</option>
+          <option value="bottom-right">Bottom-right</option>
         </select>
       </div>
 
@@ -1155,6 +1167,7 @@ function setBadgeSize(size) {
 
 function refreshPreviews() {
   const position = document.getElementById('prev-position').value;
+  const ratingPosition = document.getElementById('prev-rating-position')?.value || 'top-left';
   const opacity = (document.getElementById('prev-opacity').value / 100).toFixed(2);
   const badgeSize = document.querySelector('#prev-badge-size .size-btn.active')?.dataset.size ?? 'tv';
   const enc = v => encodeURIComponent(v || '');
@@ -1180,7 +1193,7 @@ function refreshPreviews() {
     }
     const url = `/preview/image?resolution=${enc(p.resolution)}&video_codec=${enc(p.video_codec)}&hdr_type=${enc(p.hdr_type)}`
       + `&audio=${enc(p.audio)}&subtitles=${enc(p.subtitles)}&rating=${enc(p.rating)}`
-      + `&position=${enc(position)}&opacity=${opacity}&badge_size=${badgeSize}`
+      + `&position=${enc(position)}&rating_position=${enc(ratingPosition)}&opacity=${opacity}&badge_size=${badgeSize}`
       + `&text_color=${textColor}&video_color=${videoColor}&audio_color=${audioColor}`
       + `&sub_color=${subColor}&rating_color=${ratingColor}`
       + `&show_video=${showVideo}&show_audio=${showAudio}&show_subs=${showSubs}&show_rating=${showRating}`
@@ -1207,6 +1220,7 @@ function collectPreviewSettings() {
     image: {
       ...(settings.image || {}),
       badge_position: document.getElementById('prev-position').value,
+      rating_position: document.getElementById('prev-rating-position')?.value ?? 'top-left',
       badge_opacity: parseInt(document.getElementById('prev-opacity').value) / 100,
       badge_size: document.querySelector('#prev-badge-size .size-btn.active')?.dataset.size ?? 'tv',
       badge_text_color:  document.getElementById('prev-text-color')?.value  || '#ffffff',
@@ -1274,6 +1288,7 @@ function populateForm(s) {
 
   // Populate preview controls from saved settings
   setSelectVal('prev-position', s.image?.badge_position ?? 'bottom-left');
+  setSelectVal('prev-rating-position', s.image?.rating_position ?? 'top-left');
   const opacityPct = Math.round((s.image?.badge_opacity ?? 1.0) * 100);
   document.getElementById('prev-opacity').value = opacityPct;
   document.getElementById('prev-opacity-val').textContent = opacityPct + '%';
@@ -1476,6 +1491,7 @@ function collectForm() {
     image: {
       ...(settings.image || {}),
       badge_position:     document.getElementById('prev-position')?.value ?? 'bottom-left',
+      rating_position:    document.getElementById('prev-rating-position')?.value ?? 'top-left',
       badge_opacity:      (parseInt(document.getElementById('prev-opacity')?.value) || 100) / 100,
       badge_size:         document.querySelector('#prev-badge-size .size-btn.active')?.dataset.size ?? 'tv',
       badge_text_color:   document.getElementById('prev-text-color')?.value  || '#ffffff',
