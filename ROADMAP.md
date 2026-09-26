@@ -1069,7 +1069,9 @@ benefit; the mtime problem is the residue for files that change without an event
 | I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | — | — |
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
 | I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | NEEDS DECISION | — |
-| I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | READY | — |
+| I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
+| I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | NEEDS MEASUREMENT | — |
+| I12 | **`datetime.utcnow()` is deprecated** — `app/state.py:137` stamps `last_scanned` with it (Python 3.12 `DeprecationWarning`) | 1 | 1 | NEEDS MEASUREMENT | — |
 
 **I8 — SHIPPED 2026-09-24.** `jellyfin.api_key`, `auth.secret_key` and `webhooks.secret` can now
 be supplied by `JELLYFIN_API_KEY` / `XENOTAG_SECRET_KEY` / `XENOTAG_WEBHOOK_SECRET`, or by the
@@ -1186,6 +1188,41 @@ outside it — a backup that captures a rendered secret is a leak with a longer 
 override. If an env var is set and does not take effect — misspelled, wrong nesting, shadowed by
 the YAML — the operator believes the secret rotated when it did not. **Log which fields were
 overridden at startup**, by name, never by value.
+
+**I10 — SHIPPED 2026-09-26.** `default_response_class=ORJSONResponse` and its import are gone from
+`app/main.py`, so every route renders through Starlette's `JSONResponse`, and `orjson` is gone from
+`requirements.txt` (`pip show orjson` in a venv built from the old `requirements.txt`: `Required-by:`
+empty — nothing needed it transitively). Measured:
+
+* **The warning.** `tests/test_json_responses.py::test_a_request_records_no_fastapi_deprecation_warning`
+  makes one `GET /health` through `TestClient` and asserts no `FastAPIDeprecationWarning` was recorded.
+  It **failed on `main` (`e49e4ec`)** and passes after. The same app started under uvicorn on a scratch
+  config (`CONFIG_PATH`/`STATE_DB` in `/tmp`): `GET /health` + an authenticated
+  `GET /api/badge-contrast` logged **1** `FastAPIDeprecationWarning` on `main`, **0** after.
+* **Non-finite floats.** `/api/badge-contrast` driven with `opacity` 0, -1, 1.5, 1e308, `nan`, `inf`,
+  `-inf`; identical fill and text; malformed colours (`#fff`, `red`, empty, `zzzzzz`, `#gggggg`,
+  `#12345`); every badge hidden — **14/14 return 200 with only finite numbers**, opacity always in
+  [0.1, 1.0]. No defect found. A NaN injected into the route's output makes the request raise
+  `ValueError: Out of range float values are not JSON compliant`, so the test does fail when it should.
+* Full suite 220 passed with `orjson` uninstalled from the venv.
+
+**Worth knowing:** `opacity=nan` is safe only by argument order. FastAPI parses `nan`/`inf` from a
+query string as a float, and `_image_config_from_params()` clamps with `max(0.1, min(1.0, opacity))`;
+`min(1.0, nan)` is `1.0`, but `min(nan, 1.0)` would be `nan`. The `nan` case in the test pins it.
+
+**I11 — filed 2026-09-26, seen in I10's test output.** `from fastapi.testclient import TestClient`
+logs `StarletteDeprecationWarning: Using httpx with starlette.testclient is deprecated; install httpx2
+instead` (Starlette 1.6.0). It is the *test* path only: `httpx` itself is a runtime dependency
+(`app/clients/arr.py`, `app/clients/readonly.py`, `app/arr_sync.py`) and must stay. NEEDS MEASUREMENT:
+whether `httpx2` is a drop-in for the test client at the pinned Starlette, and whether it belongs in
+`requirements.txt` or a test-only install (CI installs `requirements.txt pytest`).
+
+**I12 — filed 2026-09-26, seen in I10's test output.** `app/state.py:137` sets
+`row.last_scanned = datetime.utcnow()`, deprecated since Python 3.12. NEEDS MEASUREMENT before the
+obvious swap to `datetime.now(UTC)`: that returns an AWARE datetime, and whether the column and every
+comparison against `last_scanned` tolerate aware values (SQLite stores naive) has not been checked.
+
+**I10 — filed 2026-09-25, from the v1.7.0 deploy log. Nothing is broken; this is removal-proofing.**
 
 **I10 — filed 2026-09-25, from the v1.7.0 deploy log. Nothing is broken; this is removal-proofing.**
 
