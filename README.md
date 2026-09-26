@@ -62,6 +62,7 @@ Xenotag scans your Jellyfin library, extracts resolution, codec, HDR, and audio 
 - **Scan errors table**: live-refreshing during active scans; full file path, item ID, error type
 - **Media browser**: paginated table filterable by resolution and language
 - **Badge preview**: render overlay against synthetic test posters or live Jellyfin artwork using your current color/opacity/position settings
+- **Contrast warning**: beside each badge colour and the opacity slider, the label's contrast as the badge actually *renders* — the worst case over black, white and grey posters, against your text colour — with WCAG AA (4.5:1) and AAA (7:1) marked. Advisory only: a colour that fails still saves and renders as chosen
 - **Settings editor**: full config editor with live preview; change password; reschedule scans
 - **Cancel button**: interrupt a running scan between phases
 
@@ -189,7 +190,7 @@ radarr:
 | `image.targets` | list | `[poster.jpg, ...]` | Poster filenames to search for in each item folder |
 | `image.backup_suffix` | string | `".orig"` | Suffix appended to original poster backups |
 | `image.badge_position` | string | `"bottom-left"` | Main badge group position: `bottom-left`, `bottom-right`, `top-left`, `top-right`. Rating badge is always `top-right`. |
-| `image.badge_opacity` | float | `1.0` | Badge fill opacity (0.0–1.0). This is a contrast control: below `1.0` the poster shows through the badge and the label's rendered contrast drops below the figure quoted for each colour. With the shipped palette, `0.98` is the floor for WCAG AAA and `0.80` for AA — the palette trades contrast headroom for colour-blind separation, so there is little room below `1.0` — measure with `scripts/measure_badge_contrast.py`. |
+| `image.badge_opacity` | float | `1.0` | Badge fill opacity (0.0–1.0). This is a contrast control: below `1.0` the poster shows through the badge and the label's rendered contrast drops below the figure quoted for each colour. With the shipped palette, `0.98` is the floor for WCAG AAA and `0.80` for AA — the palette trades contrast headroom for colour-blind separation, so there is little room below `1.0` — the Badge settings page shows the rendered figure as you move the slider, and `scripts/measure_badge_contrast.py` prints the same numbers. |
 | `image.badge_size` | string | `"tv"` | Base font size tier: `desktop`, `tv`, `tv_plus` |
 | `image.normalize_portrait` | bool | `true` | Pad square/landscape images to 2:3 portrait ratio |
 | `image.show_video_badges` | bool | `true` | Render video group badge |
@@ -330,6 +331,7 @@ Configure the webhook URL in your *arr application's Connect settings. Xenotag w
 | GET | `/api/radarr/{name}/rootfolders` | Yes | List Radarr root folders |
 | GET | `/api/preview/sample-posters` | Yes | Poster sources for badge preview |
 | GET | `/preview/image` | Yes | Render a preview badge overlay image |
+| GET | `/api/badge-contrast` | Yes | Rendered WCAG contrast of the badge colours being chosen (same query parameters as `/preview/image`) |
 | POST | `/webhook/{source}` | No* | Trigger single-item processing from *arr/Jellyfin webhook |
 
 *Webhook endpoint is unauthenticated by design to support *arr's built-in webhook delivery.

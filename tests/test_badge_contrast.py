@@ -1,6 +1,8 @@
 """Rendered-contrast regression tests for badge overlays (roadmap B1).
 
-Every assertion here samples a pixel out of a real `_pill_tile()` composite.
+Every assertion here samples a pixel out of a real pill-tile composite (since
+B2 the probe renders through `_render_pill_tile()`, the body `_pill_tile()`
+caches, so a measurement never touches `_PILL_CACHE`).
 That is deliberate and is the whole point of the file: for the life of the B1
 defect the badge colours *were* WCAG AAA as hex constants, and any test that
 checked the constants would have passed the entire time while the shipped

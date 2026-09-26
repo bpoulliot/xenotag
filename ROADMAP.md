@@ -24,10 +24,33 @@ to do is go work on that one.
 | ID | Defect | Value | Complexity | Readiness | Issue |
 |----|--------|:-----:|:----------:|-----------|-------|
 | B1 | **Badge contrast is roughly half what the config claims.** `ImageConfig` annotates each badge colour "verified WCAG AAA ≥7:1 against white text" — true of the opaque hex, but not of what renders. | 5 | 2 | **FIXED 2026-09-22** | — |
-| B2 | **A configured badge colour is never checked for contrast.** Any hex the settings UI or `config.yml` supplies is used as-is; the live deployment's palette renders at 2.6:1. | 4 | 2 | READY | — |
+| B2 | **A configured badge colour is never checked for contrast.** Any hex the settings UI or `config.yml` supplies is used as-is; the live deployment's palette renders at 2.6:1. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | **FIXED 2026-09-24** | — |
 | B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | **FIXED 2026-09-24** | — |
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | READY | — |
+| B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | NEEDS DECISION | — |
+
+**B6 — FILED 2026-09-25, found while fixing B2. Not fixed here.**
+
+`ImageConfig`'s five colour fields are plain `str`, so `config.yml` (hand-edited or through the
+raw YAML editor) accepts anything, and `overlay._parse_color()` returns `(0, 0, 0)` for every
+value that is not exactly `#` plus six hex digits. Measured:
+
+| value | parses to |
+|---|---|
+| `#ffffff` | `(255, 255, 255)` |
+| `#fff`, `#FFF`, `fff`, `red`, `#12345`, `#1234567`, `#gggggg` | `(0, 0, 0)` — **black** |
+
+So `badge_text_color: "#fff"` — a perfectly ordinary CSS spelling of the default — renders
+**black labels** on the dark default fills, and a rendered `#fc0` fill under `#fff` text samples
+as pure black on black, **1.00:1**. No error, no log line. The Settings pickers always emit
+`#rrggbb`, so only the hand-edit paths reach it; the B2 warning reports such a badge truthfully
+(it measures the render) but nothing says *why* it is black.
+
+NEEDS DECISION rather than READY because there are two defensible fixes and they differ in what
+they do to a config that loads today: **expand** `#rgb` and reject the rest at validation (a
+config with `red` would then fail to load — or be migrated), or **validate only** and refuse the
+save. Either is a small change; which one is the operator's call.
 
 **B5 — FILED 2026-09-24, found while auditing U1's outward destinations. Not fixed here.**
 
@@ -139,7 +162,152 @@ fails 10 cases, restoring the glow behind the pill fails 4.
 **P6 is now answerable.** The rendered ratio is finally a function of the configured colour, so
 a background-aware palette can be evaluated on its own merits.
 
-**B2 — DECIDED 2026-09-23: WARN, do not prevent.** The operator: *"B2 should warn, not
+**B2 — FIXED 2026-09-25.** The Badge settings card now shows, beside each colour picker and
+under the opacity slider, the label's contrast **as the badge renders** — the worst case over
+black, white and grey posters, against the **configured** text colour — with WCAG AA (4.5:1) and
+AAA (7:1) each marked met or not. Informational only, per the decision below: a failing colour
+saves and renders as chosen, and a test saves one through the route.
+
+### Re-measured 2026-09-25 — replaces the stale tables
+
+Both runs through the committed probe (`python3 scripts/measure_badge_contrast.py [--config]`),
+which as of this item prints from the same code the UI does. White text, `worst` = the figure the
+UI shows:
+
+| badge | shipped default | opaque hex | black | white | grey | **worst** |
+|---|---|---:|---:|---:|---:|---:|
+| video | `#203a30` | 12.3 | 12.3 | 12.3 | 12.3 | **12.29** |
+| audio | `#312c4c` | 13.2 | 13.2 | 13.2 | 13.2 | **13.16** |
+| sub | `#50532f` | 8.0 | 8.0 | 8.0 | 8.0 | **8.02** |
+| rating | `#73485b` | 7.5 | 7.5 | 7.5 | 7.5 | **7.48** |
+
+**The live config renders exactly this table.** A scratch copy of prod's `config.yml` (read
+programmatically, deleted after) sets **none** of the four colours, `badge_opacity` or
+`badge_text_color` — the reset of 2026-09-23 removed them — and prod runs v1.6.0, whose
+`ImageConfig()` defaults were checked inside the container to be palette 2. So prod renders
+**7.48:1 worst, all four AAA**, on any poster. (It carries no `badge_palette_version` yet — it has
+not been saved since v1.6.0 — and has nothing for the migration to move.)
+
+**What changed since the filing, and why the old numbers are gone:** the old table described
+four custom colours at `badge_opacity: 0.65`; the operator reset both (2026-09-23), and B4/P10
+then replaced the defaults (PR #65). Re-run as history, the old palette reproduces the filing to
+the decimal — 2.69 / 3.32 / 2.58 / 4.48 worst at 0.65, 5.18 / 7.71 / 4.76 / 13.77 opaque — so
+moving the probe's internals into `app/` changed no number.
+
+**Opacity floors for the shipped palette**, at the slider's own 1 % steps: **98 % is the lowest
+that holds AAA, 80 % the lowest that holds AA** (97 % → 6.90, 79 % → 4.39, 65 % → 3.19, the
+worst badge always `rating` on white). These confirm the figures `config.py` and the README
+already quote.
+
+### The premise was half wrong: something DID check a colour — the wrong number, and it prevented
+
+The entry said nothing checks a configured colour. The Badge settings card in fact carried a
+client-side "contrast box" (`wcagContrast()` / `updateContrastIndicator()`), and it was wrong in
+four ways:
+
+ 1. **It judged the opaque hex.** A JavaScript copy of the formula — a *third* copy, besides the
+    two in `scripts/` — fed the picker values straight in. Opacity never entered it, and it was
+    not even refreshed when the slider moved. B1's error, in the one place an operator looks.
+ 2. **It called 4.5:1 "AAA".** `required = fontSize >= 24 ? 4.5 : 7.0`, with font sizes 56/72/88,
+    is always 4.5, displayed as "✓ WCAG AAA". That is the *large-text* AAA threshold; see below
+    for why it is not claimed.
+ 3. **One number for four pickers**, beside the text colour, not beside the colour being chosen.
+ 4. **It disabled "Save badge settings" on a fail** (`saveBtn.disabled = !pass`) — *prevent*,
+    the opposite of the decision below, and leaky with it: the Settings page's Save and the raw
+    YAML editor were never gated.
+
+So "nothing checks it" was wrong in letter and right in effect: nothing checked what renders.
+
+### What shipped
+
+ - **`app/contrast.py` is the one implementation** — WCAG luminance and ratio, the pill
+   renderer-over-backdrop, the modal interior sampler, and `badge_contrast(cfg)`. The badge probe
+   imports it (and re-exports the names the tests use); the separation probe's contrast column
+   uses its formula; the JavaScript copy is deleted. Three copies → one. The separation probe
+   keeps its own sRGB→Lab/CVD maths, which is a different computation, not a copy.
+ - **`overlay._render_pill_tile()`** is the old body of `_pill_tile()`, uncached; `_pill_tile()`
+   is now lookup-then-render with the **same signature and key** (B3's structural test untouched
+   and green). The measurement calls the uncached one, so a colour the operator is only trying
+   neither reads a tile rendered for something else nor leaves one in `_PILL_CACHE` (tested).
+   **`badge_alpha()`** is now the single opacity→alpha mapping for both rendering and measuring.
+   Nothing about rendering changed — no rendering test was touched.
+ - **`GET /api/badge-contrast`, server-side, deliberately.** The figure must be the rendered
+   ratio, and only the renderer knows that; a JavaScript model of the compositing would be a
+   second implementation free to drift, which is precisely how B1 lived so long. Cost: ~20 ms a
+   call (twelve tile renders), debounced 120 ms, with stale responses dropped by sequence number.
+   It shares **`_image_config_from_params()`** with `/preview/image`, so the warning judges exactly
+   the badge the preview draws — including the 0.1 opacity clamp and the palette-version pin
+   (without which checking the old navy would have measured indigo — P10's trap, handled once).
+ - **UI.** Beside each picker, a chip: worst ratio, which poster ("on a white poster", or "on any
+   poster" when opaque), and `✓/✗ AA 4.5:1 · ✓/✗ AAA 7:1`. Under the opacity slider, the worst
+   shown badge at that opacity, plus — below 100 % — a line saying the poster shows through. The
+   old box beside the text colour is now the summary of the shown badges and says "Advisory only".
+   A hidden badge is still measured (dimmed) but left out of the summary. **Save is never
+   disabled.** Screenshotted in a throwaway container at 1366 px and 390 px, passing (defaults)
+   and failing (`#a86200` at 65 %: sub **2.58:1** on white, every badge failing AA at that
+   opacity, summary "2.58:1 ✗ AA 4.5:1 · ✗ AAA 7:1 — Subtitles, on a white poster"); the failing
+   colour saved through the real UI and reloaded as saved.
+ - **Normal-text thresholds, not large-text.** WCAG's large-text exemption (AA 3:1, AAA 4.5:1)
+   needs ≥18pt. Badges are sized against a 1000 px reference poster; in a library grid a poster
+   is ~150–300 px wide, where a 72 px label is ~11–22 px. No size can be promised, so none is
+   claimed.
+ - **The warning is readable in the P9 theme — after one correction.** Measured on the card
+   (`--surface`): green 8.33, yellow 9.60, red 5.79, muted 7.58. **`--red` on `--surface2` is
+   4.44:1** — and `--surface2` was the old box's background, so a failing verdict was itself below
+   AA. The box moved to `--inset` (red 6.60). `theme.css`'s header says every pairing the UI uses
+   was measured with a weakest of 5.07; red-on-Deep-Forest was not in that set. **Not audited:**
+   whether anything else draws `--red` on `--surface2`.
+
+### Is "worst of black, white and grey" the worst poster? For a verdict, yes
+
+ - **For light text on a dark fill (the default), white is the worst of *every* flat poster; for
+   dark text on a light fill, black is.** Tested: black text on `#e2ddcf` at 0.65 reports black.
+ - **A mid-luminance text colour can do worse on some mid-tone poster than on any of the three.**
+   `#808080` text on `#203a30` at 0.5: the three give **1.40**, a sweep of all 256 greys finds
+   **1.00** at grey 203 — the poster that lands the fill exactly on the text's luminance.
+ - **That can never flip a pass into a fail.** To pass AA against the black-, grey- *and*
+   white-backed interiors, a text colour *inside* their luminance range would need a gap of
+   ≥ 4.5² = 20.25× in (L + 0.05) between two adjacent interiors; over 20,000 random fill/alpha
+   pairs (arithmetic compositing, not rendered) the widest gaps are **5.36×** (black→grey) and
+   **3.95×** (grey→white). So a passing figure has the text outside the range, where the extremes
+   are the black and white posters — both measured. Spot-checked by render: **42 passing cases,
+   0 where a grey poster did worse.** Conclusion: a PASS is exact over every flat poster; a FAIL
+   may be optimistic about *how badly* it fails.
+ - **Not determined:** a textured poster under the pill. The sampler takes the modal pixel, which
+   is right for flat backdrops; a real poster's variance under a translucent fill is not modelled.
+
+### Guarded by
+
+`tests/test_badge_contrast_warning.py` (15). Mutation-checked: judging the opaque hex fails 4
+(including `test_a_translucent_colour_is_judged_on_what_renders_not_on_its_hex`), hard-coding
+white text fails 2, re-disabling Save in the template fails 1. The UI↔probe agreement test runs
+the same config through the endpoint and through the probe's printed table and compares the
+digits, at 0.65, 1.0 and a non-white text colour. Suite 116 → 131.
+
+### Not done, deliberately
+
+ - **Palette separation is not in the warning.** B4's CIEDE2000 check is a between-badge
+   property, not a within-badge one. *Follow-up worth considering (NEEDS DECISION):* the same
+   chips could flag a chosen palette whose worst pair falls below dE 5 under simulated CVD —
+   `measure_palette_separation.worst_separation()` already computes it. Not built here.
+ - **Only the Badge settings controls warn.** The raw YAML editor and a hand-edited `config.yml`
+   get no figure; `--config FILE` on the probe covers them. Nothing warns at scan time either —
+   by the decision, a log line is not a warning.
+ - **B6 filed** (below): a non-`#rrggbb` colour renders black. The warning reports that
+   truthfully (it measures what renders), but only the hand-edit path can produce one.
+ - **Seven CodeQL alerts are open on `main` and nothing in this file tracks them** (checked
+   2026-09-25): #3–5 `py/path-injection` on `preview_image`'s `sample` read, #6–7
+   `py/weak-sensitive-data-hashing` and #8 `py/clear-text-logging-sensitive-data` in `auth.py`,
+   #1 `py/cookie-injection`. This PR's first push failed the CodeQL check with #3–5 — not new,
+   same alert numbers as `main` — because the new helper sat *above* `preview_image` and git's
+   diff re-attributed that route's signature (the `sample` source) as changed code. Moving the
+   helper below the route cleared it; no alert was dismissed. Whether #3–5 are real is **not
+   determined** (`Path(sample).name` looks like a sanitiser CodeQL does not recognise); they
+   deserve an item of their own, with evidence, rather than a guess here.
+
+*(decision record follows)*
+
+**DECIDED 2026-09-23: WARN, do not prevent.** The operator: *"B2 should warn, not
 prevent."*
 
 So a configured colour that fails contrast is **rendered as asked** and reported — never
@@ -152,25 +320,15 @@ knowingly.
 **in the Settings UI, beside the colour picker, at the moment of choosing** — with the AA/AAA
 thresholds named. A warning emitted at scan time is a warning delivered to nobody.
 
-**Note the measurements below are STALE as of 2026-09-23.** The live config was reset to
-defaults that day (`badge_opacity` override removed, all four custom colours removed), so the
-"configured" column no longer describes the deployment. **Re-measure with `--config FILE` before
-using any of these numbers.** The defect itself is unchanged: nothing checks a configured
-colour.
-
-*(original filing follows)*
+*(original filing, 2026-09-22, follows)*
 
 The four colours in `ImageConfig` are only defaults. The settings UI and `config.yml` accept
 any hex and **nothing checks it**. The live deployment at `~/docker/xenotag/config/config.yml`
 has replaced all four, and it keeps `badge_opacity: 0.65`, so B1's new default does not reach
 it. Measured with the same probe (`--config FILE`), before and after B1:
 
-| badge | configured | opaque hex | black | white | grey |
-|---|---|---:|---:|---:|---:|
-| video | `#1a7a6e` | 5.2:1 | 3.3 → 9.4 | 2.7 → **2.7** | 3.0 → 4.8 |
-| audio | `#6b3a9e` | 7.7:1 | 4.1 → 12.2 | 3.3 → **3.3** | 3.7 → 6.2 |
-| sub | `#a86200` | 4.8:1 | 3.1 → 8.9 | 2.6 → **2.6** | 2.8 → 4.6 |
-| rating | `#2d2d2d` | 13.8:1 | 5.7 → 16.9 | 4.5 → **4.5** | 5.0 → 8.9 |
+*(The configured-palette table that stood here is superseded: that config no longer exists.
+It is re-run under "Re-measured 2026-09-25" above, as history, and reproduces to the decimal.)*
 
 B1 fixes the dark-poster case for this palette and **does nothing for the light-poster case**,
 exactly as its own lever table predicts: at 0.65 the thing showing through the fill is no
@@ -1107,7 +1265,8 @@ Traps, and the first is the one that will actually bite:
  - **This is [B2]'s use case.** B2 — warn on a low-contrast configured colour, beside the picker —
    would catch Sage-as-a-badge-fill at the moment of choosing. **Do B2 first** and P10 becomes
    safe to experiment with; do P10 first and the first operator who tries Sage gets a 3.92:1
-   badge and no warning.
+   badge and no warning. *(B2 FIXED 2026-09-25: Sage as a fill now shows 3.92:1 ✗ AA beside the
+   picker.)*
  - **[P6] is unaffected but should be told.** A background-aware palette needs a *pair* of
    palettes; if P10 lands monochrome, P6 has one fewer degree of freedom to work with.
 
