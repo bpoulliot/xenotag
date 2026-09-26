@@ -25,12 +25,23 @@ def _session_key(secret: str, password_hash: str) -> str:
 try:
     import bcrypt as _bcrypt
 
+    # bcrypt only ever uses the first 72 bytes of a password. bcrypt 4.x
+    # truncated longer input silently; 5.x raises ValueError instead, which
+    # verify_password() below would swallow as "wrong password" -- locking out
+    # anyone whose >72-byte password was hashed under 4.x, with nothing logged.
+    # Truncating the bytes here reproduces 4.x exactly, so every existing hash
+    # stays valid under either version.
+    _BCRYPT_MAX_BYTES = 72
+
+    def _bcrypt_input(pw: str) -> bytes:
+        return pw.encode()[:_BCRYPT_MAX_BYTES]
+
     def hash_password(pw: str) -> str:
-        return _bcrypt.hashpw(pw.encode(), _bcrypt.gensalt(rounds=12)).decode()
+        return _bcrypt.hashpw(_bcrypt_input(pw), _bcrypt.gensalt(rounds=12)).decode()
 
     def verify_password(pw: str, hashed: str) -> bool:
         try:
-            return _bcrypt.checkpw(pw.encode(), hashed.encode())
+            return _bcrypt.checkpw(_bcrypt_input(pw), hashed.encode())
         except Exception:
             return False
 
