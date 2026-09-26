@@ -125,12 +125,23 @@
   .hex-input{flex:1;min-width:0;padding:4px 8px;background:var(--inset);border:1px solid var(--border);border-radius:4px;color:var(--text);font-size:12px;font-family:"Cascadia Code","Fira Mono",monospace}
   .hex-input:focus{outline:none;border-color:var(--accent)}
 
-  .contrast-box{background:var(--surface2);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;display:flex;flex-direction:column;gap:3px;justify-content:center}
+  .contrast-box{background:var(--inset);border:1px solid var(--border);border-radius:6px;padding:8px 12px;font-size:12px;display:flex;flex-direction:column;gap:3px;justify-content:center}
   .contrast-ratio{font-size:16px;font-weight:700;color:var(--text)}
   .contrast-status{font-size:11px;font-weight:600}
-  .contrast-status.pass{color:var(--green)}
-  .contrast-status.fail{color:var(--red)}
   .contrast-req{font-size:10px;color:var(--muted)}
+  /* Roadmap B2: rendered contrast beside each colour control. Advisory only.
+     AAA = --green, AA but not AAA = --yellow, below AA = --red. Measured on
+     the card (--surface): green 8.33, yellow 9.60, red 5.79, muted 7.58.
+     The summary box is on --inset (red 6.60), NOT --surface2: red on Deep
+     Forest is 4.44:1, and a contrast warning that fails AA is no warning. */
+  .cc-chip{font-size:11px;line-height:1.35;white-space:nowrap}
+  .cc-chip b{font-size:12px}
+  .cc-where{color:var(--muted)}
+  .cc-aaa{color:var(--green);white-space:nowrap}
+  .cc-aa{color:var(--yellow);white-space:nowrap}
+  .cc-fail{color:var(--red);white-space:nowrap}
+  .cc-off{opacity:.55}
+  .cc-opacity{font-size:11px;line-height:1.4;margin-top:5px;color:var(--muted)}
 
   .poster-source-bar{display:flex;align-items:center;gap:16px;flex-wrap:wrap;padding:10px 16px;background:var(--surface);border:1px solid var(--border);border-radius:6px;margin-bottom:12px}
   .psb-label{font-size:11px;font-weight:600;color:var(--muted);text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;flex-shrink:0}
@@ -203,6 +214,20 @@
   .dest-grid input[type=checkbox]{accent-color:var(--accent);width:14px;height:14px;cursor:pointer}
   .dest-grid tr:hover td{background:var(--surface2)}
   .cat-color-grid{display:grid;grid-template-columns:100px 1fr auto;gap:5px 10px;align-items:center;margin-top:6px}
+  /* The colour cell holds the picker AND its contrast chip, side by side; on a
+     phone the chip drops under the picker. One cell, so the grid's rows can
+     never come apart (a spanning chip plus dense flow scrambled them). */
+  .cc-cell{display:flex;gap:10px;align-items:center;min-width:0}
+  .cc-cell .color-row{flex:1;min-width:0}
+  .cc-cell .cc-chip,.cc-cell .cc-head{flex:0 0 200px}
+  @media(max-width:600px){
+    .cat-color-grid{grid-template-columns:64px 1fr auto}
+    .cc-cell{flex-direction:column;align-items:stretch;gap:3px}
+    .cc-cell .cc-chip{flex:none;white-space:normal}
+    .cc-cell .cc-head{display:none}
+    .prev-controls-grid{grid-template-columns:1fr}
+    .cc-textrow{flex-direction:column;align-items:stretch !important}
+  }
 
   /* Save bar */
   .save-bar{position:sticky;bottom:0;background:var(--surface);border-top:1px solid var(--border);padding:12px 16px;display:flex;align-items:center;gap:12px;margin:-20px -24px;margin-top:16px;padding-left:24px;padding-right:24px}
@@ -327,6 +352,7 @@
         <span class="prev-ctrl-label">Opacity — <span id="prev-opacity-val">100%</span></span>
         <input type="range" id="prev-opacity" min="10" max="100" value="100"
           oninput="document.getElementById('prev-opacity-val').textContent=this.value+'%'; onPreviewChange()">
+        <div class="cc-opacity" id="cc-opacity" aria-live="polite"></div>
       </div>
 
       <div class="prev-ctrl-group">
@@ -343,38 +369,53 @@
         <span class="prev-ctrl-label">Badge colors &amp; visibility</span>
         <div class="cat-color-grid">
           <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Category</span>
-          <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Color</span>
+          <div class="cc-cell">
+            <span style="flex:1;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Color</span>
+            <span class="cc-head" style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px" title="Label against the badge as it renders, worst case over black, white and grey posters">Contrast</span>
+          </div>
           <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Show</span>
 
           <span style="font-size:12px;color:var(--text);font-weight:600">Video</span>
-          <div class="color-row">
-            <input type="color" id="prev-video-color" value="{{ badge_defaults.video_badge_color }}" oninput="syncCatHex('video'); onColorChange()">
-            <input type="text" id="prev-video-hex" value="{{ badge_defaults.video_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('video'); onColorChange()">
+          <div class="cc-cell">
+            <div class="color-row">
+              <input type="color" id="prev-video-color" value="{{ badge_defaults.video_badge_color }}" oninput="syncCatHex('video'); onColorChange()">
+              <input type="text" id="prev-video-hex" value="{{ badge_defaults.video_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('video'); onColorChange()">
+            </div>
+            <div class="cc-chip" id="cc-video" aria-live="polite">—</div>
           </div>
           <label class="toggle"><input type="checkbox" id="prev-show-video" checked onchange="onPreviewChange()"><span class="slider"></span></label>
 
           <span style="font-size:12px;color:var(--text);font-weight:600">Audio</span>
-          <div class="color-row">
-            <input type="color" id="prev-audio-color" value="{{ badge_defaults.audio_badge_color }}" oninput="syncCatHex('audio'); onColorChange()">
-            <input type="text" id="prev-audio-hex" value="{{ badge_defaults.audio_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('audio'); onColorChange()">
+          <div class="cc-cell">
+            <div class="color-row">
+              <input type="color" id="prev-audio-color" value="{{ badge_defaults.audio_badge_color }}" oninput="syncCatHex('audio'); onColorChange()">
+              <input type="text" id="prev-audio-hex" value="{{ badge_defaults.audio_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('audio'); onColorChange()">
+            </div>
+            <div class="cc-chip" id="cc-audio" aria-live="polite">—</div>
           </div>
           <label class="toggle"><input type="checkbox" id="prev-show-audio" checked onchange="onPreviewChange()"><span class="slider"></span></label>
 
           <span style="font-size:12px;color:var(--text);font-weight:600">Subtitles</span>
-          <div class="color-row">
-            <input type="color" id="prev-sub-color" value="{{ badge_defaults.sub_badge_color }}" oninput="syncCatHex('sub'); onColorChange()">
-            <input type="text" id="prev-sub-hex" value="{{ badge_defaults.sub_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('sub'); onColorChange()">
+          <div class="cc-cell">
+            <div class="color-row">
+              <input type="color" id="prev-sub-color" value="{{ badge_defaults.sub_badge_color }}" oninput="syncCatHex('sub'); onColorChange()">
+              <input type="text" id="prev-sub-hex" value="{{ badge_defaults.sub_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('sub'); onColorChange()">
+            </div>
+            <div class="cc-chip" id="cc-sub" aria-live="polite">—</div>
           </div>
           <label class="toggle"><input type="checkbox" id="prev-show-subs" checked onchange="onPreviewChange()"><span class="slider"></span></label>
 
           <span style="font-size:12px;color:var(--text);font-weight:600">Rating</span>
-          <div class="color-row">
-            <input type="color" id="prev-rating-color" value="{{ badge_defaults.rating_badge_color }}" oninput="syncCatHex('rating'); onColorChange()">
-            <input type="text" id="prev-rating-hex" value="{{ badge_defaults.rating_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('rating'); onColorChange()">
+          <div class="cc-cell">
+            <div class="color-row">
+              <input type="color" id="prev-rating-color" value="{{ badge_defaults.rating_badge_color }}" oninput="syncCatHex('rating'); onColorChange()">
+              <input type="text" id="prev-rating-hex" value="{{ badge_defaults.rating_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('rating'); onColorChange()">
+            </div>
+            <div class="cc-chip" id="cc-rating" aria-live="polite">—</div>
           </div>
           <label class="toggle"><input type="checkbox" id="prev-show-rating" checked onchange="onPreviewChange()"><span class="slider"></span></label>
         </div>
-        <div style="display:flex;gap:12px;align-items:flex-start;margin-top:10px">
+        <div class="cc-textrow" style="display:flex;gap:12px;align-items:flex-start;margin-top:10px">
           <div style="flex:1">
             <span class="prev-ctrl-label">Text color (all categories)</span>
             <div class="color-row">
@@ -383,10 +424,10 @@
                 oninput="syncPicker('text'); onColorChange()">
             </div>
           </div>
-          <div class="contrast-box" id="contrast-box" style="flex:1">
+          <div class="contrast-box" id="contrast-box" style="flex:1" aria-live="polite">
             <div class="contrast-ratio" id="contrast-ratio">—</div>
             <div class="contrast-status" id="contrast-status"></div>
-            <div class="contrast-req" id="contrast-req"></div>
+            <div class="contrast-req" id="contrast-req">Advisory only: a colour that fails still saves and renders as chosen.</div>
           </div>
         </div>
       </div>
@@ -682,47 +723,94 @@ const PREVIEW_PROFILES = [
   {resolution:"720p", video_codec:"H.264", hdr_type:"",       audio:"EN AAC",                       subtitles:"",                     rating:"",      label:"720p · minimal"},
 ];
 
-// ═══════════════════════ WCAG CONTRAST ═══════════════════════
-function wcagContrast(hex1, hex2) {
-  const lum = hex => {
-    const h = hex.replace('#','');
-    const r = parseInt(h.slice(0,2),16)/255, g = parseInt(h.slice(2,4),16)/255, b = parseInt(h.slice(4,6),16)/255;
-    const lin = c => c <= 0.04045 ? c/12.92 : Math.pow((c+0.055)/1.055, 2.4);
-    return 0.2126*lin(r) + 0.7152*lin(g) + 0.0722*lin(b);
-  };
-  const l1 = lum(hex1 || '#000000'), l2 = lum(hex2 || '#ffffff');
-  const [hi, lo] = l1 > l2 ? [l1, l2] : [l2, l1];
-  return (hi + 0.05) / (lo + 0.05);
+// ═══════════════════════ WCAG CONTRAST (roadmap B2) ═══════════════════════
+// The ratio is computed by the server, which renders the pill and samples it
+// (app/contrast.py, the same code as scripts/measure_badge_contrast.py). Below
+// 100% opacity the poster shows through the fill, so the hex alone does not
+// say what the viewer sees -- there is deliberately no copy of the formula
+// here. Informational only: nothing on this page refuses a colour.
+const CC_CATS = [
+  {cat:'video',  label:'Video',     showId:'prev-show-video'},
+  {cat:'audio',  label:'Audio',     showId:'prev-show-audio'},
+  {cat:'sub',    label:'Subtitles', showId:'prev-show-subs'},
+  {cat:'rating', label:'Rating',    showId:'prev-show-rating'},
+];
+let contrastDebounce = null;
+let contrastSeq = 0;
+
+function scheduleContrastCheck() {
+  clearTimeout(contrastDebounce);
+  contrastDebounce = setTimeout(runContrastCheck, 120);
 }
 
-function updateContrastIndicator() {
-  const text = document.getElementById('prev-text-color').value || '#ffffff';
-  const sizeMap = {desktop: 56, tv: 72, tv_plus: 88};
-  const fontSize = sizeMap[document.querySelector('#prev-badge-size .size-btn.active')?.dataset.size] ?? 72;
-  // Check worst contrast across visible category colors
-  const cats = [
-    {colorId:'prev-video-color',  showId:'prev-show-video'},
-    {colorId:'prev-audio-color',  showId:'prev-show-audio'},
-    {colorId:'prev-sub-color',    showId:'prev-show-subs'},
-    {colorId:'prev-rating-color', showId:'prev-show-rating'},
-  ];
-  let minRatio = Infinity;
-  for (const {colorId, showId} of cats) {
-    if (!document.getElementById(showId)?.checked) continue;
-    const fill = document.getElementById(colorId)?.value || '#000000';
-    const r = wcagContrast(fill, text);
-    if (r < minRatio) minRatio = r;
+function contrastParams() {
+  const enc = v => encodeURIComponent(v || '');
+  const val = id => document.getElementById(id)?.value;
+  const shown = id => document.getElementById(id)?.checked !== false ? 'true' : 'false';
+  // The same opacity the Save button would write (percent / 100).
+  const opacity = (parseInt(val('prev-opacity')) || 100) / 100;
+  return `opacity=${opacity}&text_color=${enc(val('prev-text-color'))}`
+    + `&video_color=${enc(val('prev-video-color'))}&audio_color=${enc(val('prev-audio-color'))}`
+    + `&sub_color=${enc(val('prev-sub-color'))}&rating_color=${enc(val('prev-rating-color'))}`
+    + `&show_video=${shown('prev-show-video')}&show_audio=${shown('prev-show-audio')}`
+    + `&show_subs=${shown('prev-show-subs')}&show_rating=${shown('prev-show-rating')}`;
+}
+
+// Both thresholds named every time, each marked met or not.
+function ccThresholds(ratio, t) {
+  const mark = (name, need) => ratio >= need
+    ? `<span class="cc-aaa">✓ ${name} ${need}:1</span>`
+    : `<span class="cc-fail">✗ ${name} ${need}:1</span>`;
+  return `${mark('AA', t.AA)} · ${mark('AAA', t.AAA)}`;
+}
+const ccClass = grade => ({AAA:'cc-aaa', AA:'cc-aa', fail:'cc-fail'})[grade] || '';
+const ccWhere = backdrop => backdrop ? `on a ${backdrop} poster` : 'on any poster';
+
+async function runContrastCheck() {
+  const seq = ++contrastSeq;
+  let m;
+  try {
+    m = await apiFetch('/api/badge-contrast?' + contrastParams());
+  } catch (e) {
+    if (seq !== contrastSeq) return;
+    for (const {cat} of CC_CATS) document.getElementById('cc-' + cat).textContent = '—';
+    document.getElementById('contrast-ratio').textContent = '—';
+    document.getElementById('contrast-status').textContent = 'Contrast check unavailable';
+    document.getElementById('cc-opacity').textContent = '';
+    return;
   }
-  if (!isFinite(minRatio)) minRatio = wcagContrast('#000000', text);
-  const required = fontSize >= 24 ? 4.5 : 7.0;
-  const pass = minRatio >= required;
-  document.getElementById('contrast-ratio').textContent = minRatio.toFixed(1) + ':1';
+  if (seq !== contrastSeq) return;  // a newer check is already on its way
+  const t = m.thresholds;
+
+  for (const {cat} of CC_CATS) {
+    const b = m.badges[cat];
+    const el = document.getElementById('cc-' + cat);
+    el.className = 'cc-chip' + (b.shown ? '' : ' cc-off');
+    el.title = `Rendered: black ${b.rendered.black.toFixed(2)} · white ${b.rendered.white.toFixed(2)} · grey ${b.rendered.grey.toFixed(2)} · opaque hex ${b.opaque_text}:1`
+      + (b.shown ? '' : ' (badge hidden)');
+    el.innerHTML = `<b class="${ccClass(b.grade)}">${b.worst_text}:1</b> ${ccThresholds(b.worst, t)}`
+      + `<br><span class="cc-where">${ccWhere(b.worst_backdrop)}${b.shown ? '' : ' · hidden'}</span>`;
+  }
+
+  const w = m.worst;
+  const ratioEl = document.getElementById('contrast-ratio');
   const statusEl = document.getElementById('contrast-status');
-  statusEl.textContent = pass ? '✓ WCAG AAA' : '✗ Fails WCAG AAA';
-  statusEl.className = 'contrast-status ' + (pass ? 'pass' : 'fail');
-  document.getElementById('contrast-req').textContent = `Min across categories · req ${required}:1`;
-  const saveBtn = document.getElementById('btn-save-preview');
-  if (saveBtn) saveBtn.disabled = !pass;
+  const opEl = document.getElementById('cc-opacity');
+  const pct = Math.round(m.opacity * 100);
+  if (!w) {
+    ratioEl.textContent = '—';
+    ratioEl.className = 'contrast-ratio';
+    statusEl.textContent = 'No badges shown';
+    opEl.textContent = '';
+    return;
+  }
+  const label = CC_CATS.find(c => c.cat === w.badge)?.label ?? w.badge;
+  ratioEl.textContent = w.text + ':1';
+  ratioEl.className = 'contrast-ratio ' + ccClass(w.grade);
+  statusEl.innerHTML = ccThresholds(w.ratio, t)
+    + `<br><span class="cc-where">worst shown badge: ${label}, ${ccWhere(w.backdrop)}</span>`;
+  opEl.innerHTML = `At ${pct}%: worst <b class="${ccClass(w.grade)}">${w.text}:1</b> (${label}) · ${ccThresholds(w.ratio, t)}`
+    + (m.opacity < 1 ? '<br>Below 100% the poster shows through the fill; the figure is the worst over black, white and grey posters.' : '');
 }
 
 function syncHex(which) {
@@ -735,7 +823,7 @@ function syncPicker(which) {
   const hex = document.getElementById(`prev-${which}-hex`).value.trim();
   if (/^#[0-9a-fA-F]{6}$/.test(hex)) {
     document.getElementById(`prev-${which}-color`).value = hex;
-    updateContrastIndicator();
+    scheduleContrastCheck();
   }
 }
 
@@ -748,18 +836,19 @@ function syncCatPicker(cat) {
   const val = (document.getElementById(`prev-${cat}-hex`)?.value || '').trim();
   if (/^#[0-9a-fA-F]{6}$/.test(val)) {
     const picker = document.getElementById(`prev-${cat}-color`);
-    if (picker) { picker.value = val; updateContrastIndicator(); }
+    if (picker) { picker.value = val; scheduleContrastCheck(); }
   }
 }
 function onSettingsChange() {}
 
 function onColorChange() {
   syncHex('text');
-  updateContrastIndicator();
+  scheduleContrastCheck();
   schedulePreviewRefresh();
 }
 
 function onPreviewChange() {
+  scheduleContrastCheck();  // opacity and the Show toggles change the verdict too
   schedulePreviewRefresh();
 }
 
@@ -1189,7 +1278,7 @@ function populateForm(s) {
     }
   }
 
-  updateContrastIndicator();
+  scheduleContrastCheck();
 }
 
 // Fields the environment supplies are read-only here: the app never writes them

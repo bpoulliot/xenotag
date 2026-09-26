@@ -4,8 +4,12 @@
 Roadmap item B1. The config's per-colour comments quote the contrast of the
 opaque hex against white text. That is not what renders: `_pill_tile()` draws
 the pill at `badge_opacity` alpha, so whatever is behind it shows through. This
-script renders real `_pill_tile()` output over flat backdrops and samples the
-badge interior, so the number it prints is the number a viewer actually sees.
+script renders real pill tiles over flat backdrops and samples the badge
+interior, so the number it prints is the number a viewer actually sees.
+
+Roadmap item B2 moved the renderer, sampler and formula into `app/contrast.py`,
+which is also what the Settings page's contrast warnings are computed by. The
+`worst` column is the figure shown beside each colour picker.
 
     python3 scripts/measure_badge_contrast.py                 # shipped defaults
     python3 scripts/measure_badge_contrast.py --config FILE   # a real config.yml
@@ -29,76 +33,23 @@ from PIL import Image
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
+# The formula, the renderer and the sampler live in app/contrast.py -- the same
+# code the Settings page's contrast warning is computed by (roadmap B2). The
+# probe re-exports them so tests and later sessions can keep importing here.
 from app.config import ImageConfig  # noqa: E402
-from app.overlay import _GLOW_MARGIN, _load_font, _parse_color, _pill_tile, clear_pill_cache  # noqa: E402
-
-# Pixels trimmed off every side of the pill rectangle before sampling, to stay
-# clear of the antialiased rounded-rectangle boundary and the glow bleeding in.
-_INTERIOR_INSET = 5
-
-BACKDROPS: dict[str, tuple[int, int, int]] = {
-    "black": (0, 0, 0),
-    "white": (255, 255, 255),
-    "grey": (128, 128, 128),
-}
-
-
-# ── WCAG 2.x relative luminance / contrast ratio ─────────────────────────────
-def _linearize(channel_8bit: int) -> float:
-    c = channel_8bit / 255.0
-    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-
-def relative_luminance(rgb: tuple[int, int, int]) -> float:
-    r, g, b = (_linearize(c) for c in rgb)
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-
-def contrast_ratio(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
-    la, lb = relative_luminance(a), relative_luminance(b)
-    hi, lo = max(la, lb), min(la, lb)
-    return (hi + 0.05) / (lo + 0.05)
-
-
-# ── Rendering + sampling ─────────────────────────────────────────────────────
-def _pill_box(text: str, font_size: int, pad_h: int, pad_v: int) -> tuple[int, int]:
-    """Return (pill_w, pill_h) exactly as _pill_tile computes them."""
-    font = _load_font(font_size)
-    ref_h = font.getbbox("AgfpQ")[3] - font.getbbox("AgfpQ")[1]
-    bbox = font.getbbox(text)
-    return (bbox[2] - bbox[0] + pad_h * 2, ref_h + pad_v * 2)
-
-
-def render_over(
-    backdrop: tuple[int, int, int],
-    fill_hex: str,
-    text_hex: str = "#ffffff",
-    *,
-    alpha: int = 165,
-    font_size: int = 56,
-    pad_h: int = 8,
-    pad_v: int = 5,
-    text: str = "1080p",
-) -> tuple[Image.Image, tuple[int, int]]:
-    """Composite a real `_pill_tile()` onto a flat backdrop. Returns (image, pill_wh)."""
-    clear_pill_cache()  # the cache is keyed on appearance only; never reuse across runs
-    tile = _pill_tile(text, fill_hex, text_hex, alpha, font_size, pad_h, pad_v)
-    base = Image.new("RGBA", tile.size, (*backdrop, 255))
-    base.alpha_composite(tile)
-    return base.convert("RGB"), _pill_box(text, font_size, pad_h, pad_v)
-
-
-def sample_interior(img: Image.Image, pill_wh: tuple[int, int]) -> tuple[int, int, int]:
-    """Modal pixel of the pill interior, inset clear of the antialiased edge."""
-    pill_w, pill_h = pill_wh
-    gm = _GLOW_MARGIN
-    inset = min(_INTERIOR_INSET, max(1, pill_w // 4), max(1, pill_h // 4))
-    box = (gm + inset, gm + inset, gm + pill_w - inset, gm + pill_h - inset)
-    region = img.crop(box)
-    colors = region.getcolors(maxcolors=region.width * region.height)
-    if not colors:
-        raise RuntimeError("interior region is empty")
-    return max(colors, key=lambda c: c[0])[1]
+from app.contrast import (  # noqa: E402, F401
+    AA,
+    AAA,
+    BACKDROPS,
+    badge_contrast,
+    contrast_ratio,
+    format_ratio,
+    relative_luminance,
+    render_over,
+    rendered_ratio,
+    sample_interior,
+)
+from app.overlay import _GLOW_MARGIN, _parse_color  # noqa: E402
 
 
 def sample_edge(img: Image.Image, pill_wh: tuple[int, int]) -> tuple[int, int, int]:
@@ -107,54 +58,34 @@ def sample_edge(img: Image.Image, pill_wh: tuple[int, int]) -> tuple[int, int, i
     return img.convert("RGB").getpixel((_GLOW_MARGIN, _GLOW_MARGIN + pill_h // 2))
 
 
-def rendered_ratio(
-    backdrop: tuple[int, int, int],
-    fill_hex: str,
-    text_hex: str = "#ffffff",
-    **kw: object,
-) -> float:
-    img, pill_wh = render_over(backdrop, fill_hex, text_hex, **kw)  # type: ignore[arg-type]
-    return contrast_ratio(_parse_color(text_hex), sample_interior(img, pill_wh))
-
-
 # ── Report ───────────────────────────────────────────────────────────────────
-def _badges(cfg: ImageConfig) -> list[tuple[str, str]]:
-    return [
-        ("video", cfg.video_badge_color),
-        ("audio", cfg.audio_badge_color),
-        ("sub", cfg.sub_badge_color),
-        ("rating", cfg.rating_badge_color),
-    ]
-
-
 def report(cfg: ImageConfig, *, show_edge: bool = False) -> int:
-    alpha = int(cfg.badge_opacity * 255)
+    """Print the table. `worst` is the figure the Settings page shows beside
+    each colour picker; the test suite checks the two agree to the digit."""
+    m = badge_contrast(cfg)
     text_rgb = _parse_color(cfg.badge_text_color)
-    print(f"badge_opacity={cfg.badge_opacity} (alpha={alpha})  text={cfg.badge_text_color}")
+    print(f"badge_opacity={cfg.badge_opacity} (alpha={m['alpha']})  text={cfg.badge_text_color}")
     print()
-    header = f"| {'badge':<6} | {'opaque hex':>10} |" + "".join(f" {name:>8} |" for name in BACKDROPS)
+    header = (
+        f"| {'badge':<6} | {'opaque hex':>10} |" + "".join(f" {name:>8} |" for name in BACKDROPS) + f" {'worst':>8} |"
+    )
     print(header)
-    print("|" + "-" * 8 + "|" + "-" * 12 + "|" + ("-" * 10 + "|") * len(BACKDROPS))
+    print("|" + "-" * 8 + "|" + "-" * 12 + "|" + ("-" * 10 + "|") * (len(BACKDROPS) + 1))
 
-    worst = float("inf")
-    for name, hex_ in _badges(cfg):
-        claimed = contrast_ratio(text_rgb, _parse_color(hex_))
-        cells = []
-        for bd in BACKDROPS.values():
-            r = rendered_ratio(bd, hex_, cfg.badge_text_color, alpha=alpha)
-            worst = min(worst, r)
-            cells.append(f" {r:>7.1f}: |")
-        print(f"| {name:<6} | {claimed:>9.1f}: |" + "".join(cells))
+    for name, b in m["badges"].items():
+        cells = "".join(f" {b['rendered'][bd]:>7.1f}: |" for bd in BACKDROPS)
+        print(f"| {name:<6} | {b['opaque']:>9.1f}: |" + cells + f" {b['worst_text']:>7}: |")
         if show_edge:
-            img, wh = render_over(next(iter(BACKDROPS.values())), hex_, cfg.badge_text_color, alpha=alpha)
+            img, wh = render_over(next(iter(BACKDROPS.values())), b["color"], cfg.badge_text_color, alpha=m["alpha"])
             edge = contrast_ratio(text_rgb, sample_edge(img, wh))
             interior = contrast_ratio(text_rgb, sample_interior(img, wh))
             print(f"|   └─ on black: interior {interior:.1f}:1 vs EDGE-SAMPLE {edge:.1f}:1 (the trap)")
 
+    worst = min(b["worst"] for b in m["badges"].values())
     print()
     print(
-        f"worst rendered ratio: {worst:.2f}:1   AA(4.5) {'PASS' if worst >= 4.5 else 'FAIL'}"
-        f"   AAA(7.0) {'PASS' if worst >= 7.0 else 'FAIL'}"
+        f"worst rendered ratio: {format_ratio(worst)}:1   AA({AA}) {'PASS' if worst >= AA else 'FAIL'}"
+        f"   AAA({AAA}) {'PASS' if worst >= AAA else 'FAIL'}"
     )
     return 0
 

@@ -31,6 +31,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from app.config import ImageConfig  # noqa: E402
+from app.contrast import _linearize  # noqa: E402
+from app.contrast import contrast_ratio as _wcag_contrast_ratio  # noqa: E402
 
 CATEGORIES = ("video", "audio", "sub", "rating")
 
@@ -58,33 +60,26 @@ VIEWS = (None, *CVD_MATRICES)
 SAME_COLOUR = 5.0
 
 
-def _to_linear(channel: int) -> float:
-    c = channel / 255
-    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-
 def _from_linear(value: float) -> int:
     c = max(0.0, min(1.0, value))
     s = 12.92 * c if c <= 0.0031308 else 1.055 * (c ** (1 / 2.4)) - 0.055
     return round(s * 255)
 
 
-def hex_to_linear_rgb(colour: str) -> tuple[float, float, float]:
+def hex_to_rgb(colour: str) -> tuple[int, int, int]:
     h = colour.lstrip("#")
     if len(h) == 3:
         h = "".join(c * 2 for c in h)
-    return tuple(_to_linear(int(h[i : i + 2], 16)) for i in (0, 2, 4))  # type: ignore[return-value]
+    return tuple(int(h[i : i + 2], 16) for i in (0, 2, 4))  # type: ignore[return-value]
 
 
-def relative_luminance(colour: str) -> float:
-    r, g, b = hex_to_linear_rgb(colour)
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+def hex_to_linear_rgb(colour: str) -> tuple[float, float, float]:
+    return tuple(_linearize(c) for c in hex_to_rgb(colour))  # type: ignore[return-value]
 
 
 def contrast_ratio(a: str, b: str) -> float:
-    la, lb = relative_luminance(a), relative_luminance(b)
-    hi, lo = max(la, lb), min(la, lb)
-    return (hi + 0.05) / (lo + 0.05)
+    """WCAG ratio of two hexes -- app.contrast's formula, not a copy of it."""
+    return _wcag_contrast_ratio(hex_to_rgb(a), hex_to_rgb(b))
 
 
 def simulate(colour: str, kind: str | None) -> str:

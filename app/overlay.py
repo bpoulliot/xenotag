@@ -76,7 +76,26 @@ def _pill_tile(
     key = (text, fill_hex, text_hex, alpha, font_size, pad_h, pad_v)
     if key in _PILL_CACHE:
         return _PILL_CACHE[key]
+    tile = _render_pill_tile(text, fill_hex, text_hex, alpha, font_size, pad_h, pad_v)
+    _PILL_CACHE[key] = tile
+    return tile
 
+
+def _render_pill_tile(
+    text: str,
+    fill_hex: str,
+    text_hex: str,
+    alpha: int,
+    font_size: int,
+    pad_h: int,
+    pad_v: int,
+) -> Image.Image:
+    """Render one pill tile, bypassing the cache.
+
+    `_pill_tile()` is the only caller on the poster path. The contrast check in
+    `app.contrast` calls this directly, so measuring a colour the operator is
+    only trying out neither reads a cached tile nor leaves one behind.
+    """
     font = _load_font(font_size)
     fill_rgb = _parse_color(fill_hex)
     text_rgb = _parse_color(text_hex)
@@ -120,9 +139,13 @@ def _pill_tile(
     ty = gm + pad_v + (ref_h - text_h) // 2 - bbox[1]
     pd.text((gm + pad_h - bbox[0], ty), text, font=font, fill=(*text_rgb, 255))
 
-    tile = Image.alpha_composite(glow, pill)
-    _PILL_CACHE[key] = tile
-    return tile
+    return Image.alpha_composite(glow, pill)
+
+
+def badge_alpha(opacity: float) -> int:
+    """The fill alpha a `badge_opacity` renders at. One mapping, shared with
+    `app.contrast`, so the measured ratio is the ratio of what renders."""
+    return int(opacity * 255)
 
 
 def _parse_color(hex_str: str) -> tuple[int, int, int]:
@@ -157,7 +180,7 @@ def _compute_layout_params(img_w: int, cfg: ImageConfig) -> dict:
         "col_gap": max(4, round(10 * scale)),
         "row_gap": max(4, round(12 * scale)),
         "margin": max(4, round(12 * scale)),
-        "alpha": int(cfg.badge_opacity * 255),
+        "alpha": badge_alpha(cfg.badge_opacity),
     }
 
 
