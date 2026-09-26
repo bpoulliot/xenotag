@@ -13,11 +13,12 @@ ITEM_FIELDS = (
 
 
 class JellyfinClient:
-    def __init__(self, url: str, api_key: str) -> None:
+    def __init__(self, url: str, api_key: str, transport: httpx.BaseTransport | None = None) -> None:
         self.base = url.rstrip("/")
         self._client = httpx.Client(
             headers={"Authorization": f'MediaBrowser Token="{api_key}"'},
             timeout=30,
+            transport=transport,
         )
 
     def close(self) -> None:

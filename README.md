@@ -4,7 +4,7 @@
 [![CodeQL](https://github.com/bpoulliot/xenotag/actions/workflows/codeql.yml/badge.svg)](https://github.com/bpoulliot/xenotag/actions/workflows/codeql.yml)
 [![Docker](https://img.shields.io/badge/ghcr.io-bpoulliot%2Fxenotag-blue)](https://github.com/bpoulliot/xenotag/pkgs/container/xenotag)
 
-Xenotag scans your Jellyfin library, extracts resolution, codec, HDR, and audio language metadata from media files via `ffprobe`, and writes that metadata back as tags in Jellyfin, Sonarr, and Radarr. It also overlays badge pills directly onto poster images so your library art shows resolution, format, and language at a glance — no manual tagging required.
+Xenotag scans your Jellyfin library, extracts resolution, codec, HDR, and audio language metadata from media files via `ffprobe`, and writes that metadata back as tags in Jellyfin — and in Sonarr and Radarr once you switch those writes on (they ship as a dry run). It also overlays badge pills directly onto poster images so your library art shows resolution, format, and language at a glance — no manual tagging required.
 
 ---
 
@@ -24,11 +24,11 @@ Xenotag scans your Jellyfin library, extracts resolution, codec, HDR, and audio 
 - Extracts **resolution** (480p, 720p, 1080p, 4K), **video codec** (H.264, H.265/HEVC, AV1, VP9, etc.), and **HDR type** (HDR10, HDR10+, Dolby Vision, HLG) via `ffprobe`
 - Extracts **audio track languages** and **codecs** (TrueHD, DTS-HD, AC-3, AAC, etc.)
 - Extracts **subtitle track languages** and formats (PGS, SRT, ASS, embedded vs. external)
-- Reads **content rating** from Jellyfin; falls back to Sonarr/Radarr certification data
+- Reads **content rating** from Jellyfin; optionally falls back to the matched Sonarr/Radarr certification (off by default)
 
 ### Tag Writing
-- Writes `xt-*` prefixed tags to **Jellyfin**, **Sonarr**, and **Radarr** simultaneously
-- Supports multiple Sonarr and Radarr instances (separate 4K/HD instances, etc.)
+- Writes `xt-*` prefixed tags to **Jellyfin**, and to **Sonarr** and **Radarr** once `arr_sync.mode` is `live` — until then the *arr side is a dry run that only counts
+- Supports multiple Sonarr and Radarr instances (separate 4K/HD instances, etc.): each item is matched to its series/movie inside each instance by TVDB/TMDB/IMDb id **and** folder
 - Configurable tag prefix, dual-audio tag, and multi-audio tag
 - Per-destination tag routing — send video tags only to Jellyfin, audio tags only to Sonarr, etc.
 - Preserves existing user-defined tags; only manages its own prefixed set
@@ -160,6 +160,29 @@ radarr:
       url: http://radarr:7878
       api_key: ""
 ```
+
+### Sonarr / Radarr writes
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `arr_sync.mode` | string | `"dry_run"` | `dry_run`: match every item and record what *would* be written; the Sonarr/Radarr clients are built on a transport that refuses anything but GET. `live`: write the managed tags and create missing tag labels. |
+| `arr_sync.certification_fallback` | bool | `false` | Fill a blank Jellyfin rating from the matched series/movie's certification. This writes to **Jellyfin** (the rating field, and the rating tag/badge wherever `tags.destinations.rating` sends them). |
+
+An item is matched to a series/movie **inside each instance** by its TVDB/TMDB/IMDb id, and the
+match must also agree on the folder — the *arr object's `path` must be the Jellyfin item's folder.
+That is what keeps the HD and the 4K copy of a title (same id, two instances) from receiving each
+other's tags, and it assumes the *arrs see media at the same paths Jellyfin does (the same
+requirement as the mount-point note above). Ids that point at two titles, and a title two items
+claim, are refused and reported. Writes go through the *arr's bulk editor (`applyTags`
+add/remove, managed tags only), which changes nothing else; every write is read back, and a
+mismatch halts further writes for that scan.
+
+To go live: run the dry run first (Settings → **Sonarr / Radarr writes** → **Run dry run now**, or
+`python -m app.arr_sync --dry-run --db /config/state.db` inside the container), then set
+**Tag writes → Live**. Turning either switch on forces the next scan to be a full re-tag.
+Switching back to dry run stops writes but removes nothing already written. Radarr accepts only
+`a-z`, `0-9` and `-` in a label, so tags such as `xt-h.265` are skipped there and listed in the
+report.
 
 ### Scanning
 
@@ -332,6 +355,8 @@ Configure the webhook URL in your *arr application's Connect settings. Xenotag w
 | GET | `/api/preview/sample-posters` | Yes | Poster sources for badge preview |
 | GET | `/preview/image` | Yes | Render a preview badge overlay image |
 | GET | `/api/badge-contrast` | Yes | Rendered WCAG contrast of the badge colours being chosen (same query parameters as `/preview/image`) |
+| GET | `/api/arr-sync/report` | Yes | The last Sonarr/Radarr sync report (from a scan or a dry run) |
+| POST | `/api/arr-sync/dry-run` | Yes | Start a read-only dry run: match every item and count what a live sync would write |
 | POST | `/webhook/{source}` | No* | Trigger single-item processing from *arr/Jellyfin webhook |
 
 *Webhook endpoint is unauthenticated by design to support *arr's built-in webhook delivery.

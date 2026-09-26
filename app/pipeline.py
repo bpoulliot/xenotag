@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import logging
 import os
 import threading
@@ -8,13 +9,19 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
+from sqlalchemy import create_engine
+from sqlalchemy.orm import Session, sessionmaker
+
+from .arr_sync import MODE_DRY_RUN, MODE_LIVE, ArrTagSync, store_report
 from .clients.jellyfin import JellyfinClient
 from .clients.radarr import RadarrClient
+from .clients.readonly import ReadOnlyTransport
 from .clients.sonarr import SonarrClient
 from .config import AppConfig
 from .overlay import BadgeGroup, apply_overlay
-from .scanner import MediaInfo, probe_file
+from .scanner import AudioTrack, MediaInfo, SubTrack, probe_file
 from .state import (
+    MediaState,
     clear_scan_errors,
     finish_scan_run,
     get_meta,
@@ -105,13 +112,46 @@ def _tag_config_hash(cfg: AppConfig) -> str:
         f"|subtitles:{','.join(sorted(dest.subtitles))}"
         f"|rating:{','.join(sorted(dest.rating))}"
     )
+    # Appended only when switched ON, so the shipped defaults hash exactly as
+    # before and an upgrade does not force a full rescan. Turning either on
+    # does: the next scan re-tags everything, which is what going live means.
+    if cfg.arr_sync.mode == MODE_LIVE:
+        raw += "|arr:live"
+    if cfg.arr_sync.certification_fallback:
+        raw += "|cert-fallback"
     return hashlib.sha256(raw.encode()).hexdigest()[:16]
 
 
-def _clients_from_config(cfg: AppConfig) -> tuple[JellyfinClient, list[SonarrClient], list[RadarrClient]]:
-    jf = JellyfinClient(cfg.jellyfin.url, cfg.jellyfin.api_key)
-    sonarrs = [SonarrClient(inst.url, inst.api_key, inst.name) for inst in cfg.sonarr.instances]
-    radarrs = [RadarrClient(inst.url, inst.api_key, inst.name) for inst in cfg.radarr.instances]
+def _clients_from_config(
+    cfg: AppConfig, *, read_only: bool = False, guards: list[ReadOnlyTransport] | None = None
+) -> tuple[JellyfinClient, list[SonarrClient], list[RadarrClient]]:
+    """Build the clients. Unless *arr writes are live, the *arr clients can only read.
+
+    The *arr guard is the transport, not an ``if``: while ``arr_sync.mode`` is
+    not ``live``, a Sonarr/Radarr client physically cannot send a POST or PUT.
+    ``read_only`` extends that to Jellyfin too (the dry run). Every guard made
+    is appended to ``guards``, so a caller can report what went over the wire.
+    """
+    arr_guarded = read_only or cfg.arr_sync.mode != MODE_LIVE
+
+    def guard(on: bool) -> ReadOnlyTransport | None:
+        if not on:
+            return None
+        transport = ReadOnlyTransport()
+        if guards is not None:
+            guards.append(transport)
+        return transport
+
+    def arr_transport() -> ReadOnlyTransport | None:
+        return guard(arr_guarded)
+
+    jf = JellyfinClient(cfg.jellyfin.url, cfg.jellyfin.api_key, transport=guard(read_only))
+    sonarrs = [
+        SonarrClient(inst.url, inst.api_key, inst.name, transport=arr_transport()) for inst in cfg.sonarr.instances
+    ]
+    radarrs = [
+        RadarrClient(inst.url, inst.api_key, inst.name, transport=arr_transport()) for inst in cfg.radarr.instances
+    ]
     return jf, sonarrs, radarrs
 
 
@@ -125,8 +165,7 @@ def _close_clients(jf: JellyfinClient, sonarrs: list[SonarrClient], radarrs: lis
 
 def _process_one_item(
     jf: JellyfinClient,
-    sonarrs: list[SonarrClient],
-    radarrs: list[RadarrClient],
+    arr: ArrTagSync,
     session: object,
     cfg: AppConfig,
     item: dict,
@@ -142,7 +181,8 @@ def _process_one_item(
     legacy_prefixes = cfg.tags.legacy_prefixes
 
     jf_rating = item.get("OfficialRating") or ""
-    arr_cert = _get_arr_certification(item, sonarrs, radarrs) if not jf_rating else ""
+    # Counted either way; non-empty only when arr_sync.certification_fallback is on.
+    arr_cert = arr.fallback_rating(item) if not jf_rating else ""
     content_rating = jf_rating or arr_cert or None
 
     jf_tags = build_tags(
@@ -181,21 +221,8 @@ def _process_one_item(
     except Exception as exc:
         log.warning("Jellyfin tag error for %s: %s", name, exc)
 
-    sonarr_id = _find_arr_id(item, "Sonarr")
-    if sonarr_id and sonarrs:
-        for client in sonarrs:
-            try:
-                client.set_managed_tags(sonarr_id, prefix, sonarr_tags, legacy_prefixes=legacy_prefixes)
-            except Exception as exc:
-                log.debug("Sonarr tag error [%s] %s: %s", client.name, name, exc)
-
-    radarr_id = _find_arr_id(item, "Radarr")
-    if radarr_id and radarrs:
-        for client in radarrs:
-            try:
-                client.set_managed_tags(radarr_id, prefix, radarr_tags, legacy_prefixes=legacy_prefixes)
-            except Exception as exc:
-                log.debug("Radarr tag error [%s] %s: %s", client.name, name, exc)
+    # Resolved per instance by provider id + folder; a dry run only counts.
+    arr.sync_item(item, {"sonarr": sonarr_tags, "radarr": radarr_tags})
 
     item_folder = Path(item_root) if item_root else Path(file_path).parent
     if not item_folder.is_dir():
@@ -246,47 +273,17 @@ def _passes_path_filter(file_path: str, filters: list[str]) -> bool:
     return any(file_path.startswith(f) for f in filters)
 
 
-def _get_arr_certification(
-    item: dict,
-    sonarrs: list[SonarrClient],
-    radarrs: list[RadarrClient],
-) -> str | None:
-    """Fetch certification from Sonarr/Radarr as fallback for content rating."""
-    provider_ids = item.get("ProviderIds") or {}
-
-    sonarr_id_raw = provider_ids.get("Sonarr")
-    if sonarr_id_raw and sonarrs:
-        try:
-            sid = int(sonarr_id_raw)
-        except (ValueError, TypeError):
-            sid = None
-        if sid:
-            for client in sonarrs:
-                try:
-                    data = client._get(f"/series/{sid}")
-                    cert = (data.get("certification") or "").strip()
-                    if cert:
-                        return cert
-                except Exception:  # noqa: S110
-                    pass
-
-    radarr_id_raw = provider_ids.get("Radarr")
-    if radarr_id_raw and radarrs:
-        try:
-            rid = int(radarr_id_raw)
-        except (ValueError, TypeError):
-            rid = None
-        if rid:
-            for client in radarrs:
-                try:
-                    data = client._get(f"/movie/{rid}")
-                    cert = (data.get("certification") or "").strip()
-                    if cert:
-                        return cert
-                except Exception:  # noqa: S110
-                    pass
-
-    return None
+def _filter_items(items: list[dict], cfg: AppConfig) -> list[dict]:
+    if not cfg.scan.path_filters:
+        return items
+    return [
+        i
+        for i in items
+        if _passes_path_filter(
+            (i.get("MediaSources") or [{}])[0].get("Path", i.get("Path", "")),
+            cfg.scan.path_filters,
+        )
+    ]
 
 
 def _make_badge_groups(
@@ -384,17 +381,9 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
         progress.finish(error=str(exc))
         return
 
-    path_filters = cfg.scan.path_filters
-    if path_filters:
+    if cfg.scan.path_filters:
         before = len(items)
-        items = [
-            i
-            for i in items
-            if _passes_path_filter(
-                (i.get("MediaSources") or [{}])[0].get("Path", i.get("Path", "")),
-                path_filters,
-            )
-        ]
+        items = _filter_items(items, cfg)
         progress.emit(f"[xenotag] Path filter: {before} → {len(items)} items")
 
     progress.total = len(items)
@@ -403,18 +392,14 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
     tagged = 0
     images_modified = 0
 
-    # Preload Sonarr/Radarr series and movie catalogues in parallel so Phase 3
-    # can use dict lookups instead of per-item API GETs.
+    # Preload the Sonarr/Radarr catalogues (GETs) and resolve every item to its
+    # series/movie on each instance up front -- the claim check needs them all.
+    arr = ArrTagSync(cfg, sonarrs, radarrs, source=f"{scan_type} scan", emit=progress.emit)
     if sonarrs or radarrs:
-        progress.emit("[xenotag] Preloading Sonarr/Radarr catalogues…")
-        workers = max(1, len(sonarrs) + len(radarrs))
-        with ThreadPoolExecutor(max_workers=workers) as pool:
-            futures = {pool.submit(c.preload): c for c in sonarrs + radarrs}  # type: ignore[arg-type]
-            for future in as_completed(futures):
-                try:
-                    future.result()
-                except Exception as exc:
-                    log.warning("Preload failed for %s: %s", futures[future].name, exc)
+        mode = "LIVE — tags will be written" if arr.live else "dry run — nothing is written"
+        progress.emit(f"[xenotag] Preloading Sonarr/Radarr catalogues ({mode})…")
+        arr.prepare()
+        arr.resolve_all(items)
 
     # Phase 1a: pre-resolve episode paths for ALL series in parallel.
     # We always resolve regardless of whether the series folder exists locally — the folder
@@ -532,9 +517,7 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
                 progress.current_item = name
                 progress.emit(f"  scanning: {name}")
                 try:
-                    image_modified = _process_one_item(
-                        jf, sonarrs, radarrs, session, cfg, item, fp, item_root, mtime, info
-                    )
+                    image_modified = _process_one_item(jf, arr, session, cfg, item, fp, item_root, mtime, info)
                     tagged += 1
                     images_modified += image_modified
                     progress.emit(
@@ -549,6 +532,10 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
     finish_scan_run(session, run, scanned=items_count, tagged=tagged, images=images_modified)
     session.close()
     _close_clients(jf, sonarrs, radarrs)
+    if sonarrs or radarrs:
+        store_report(arr.report())
+        for line in arr.summary_lines():
+            progress.emit(line)
     progress.finish()
     progress.emit(f"[xenotag] Scan complete — scanned={items_count}, tagged={tagged}, images={images_modified}")
 
@@ -577,15 +564,92 @@ def _get_first_episode_path(jf: JellyfinClient, series_id: str) -> str | None:
         return None
 
 
-def _find_arr_id(item: dict, provider: str) -> int | None:
-    provider_ids: dict = item.get("ProviderIds") or {}
-    raw = provider_ids.get(provider)
-    if raw:
+def _tracks_from_row(row: MediaState) -> tuple[list[AudioTrack], list[SubTrack]]:
+    audio = [
+        AudioTrack(lang=t.get("lang") or "", codec=t.get("codec") or "") for t in json.loads(row.audio_tracks or "[]")
+    ]
+    subs = [
+        SubTrack(lang=t.get("lang") or "", format=t.get("format") or "", embedded=bool(t.get("embedded")))
+        for t in json.loads(row.subtitle_tracks or "[]")
+    ]
+    return audio, subs
+
+
+def _read_only_session(db_path: str | Path) -> Session:
+    """A session on ``db_path`` opened ``mode=ro`` -- for a copied production index."""
+    engine = create_engine(f"sqlite:///file:{db_path}?mode=ro&uri=true")
+    return sessionmaker(bind=engine)()
+
+
+arr_dry_run_state: dict = {"running": False, "error": None}
+
+
+def run_arr_dry_run(
+    cfg: AppConfig,
+    *,
+    db_path: str | Path | None = None,
+    store: bool = True,
+    emit: Callable[[str], None] | None = None,
+) -> dict:
+    """Match every Jellyfin item and count what a live *arr sync would do. Writes nothing.
+
+    Every client -- Jellyfin included -- sits behind a read-only transport, and
+    the tags are computed from the local index (each item's last probe), so no
+    media file is read either. ``db_path`` opens a copied index read-only
+    instead of the app's own.
+    """
+    guards: list[ReadOnlyTransport] = []
+    jf, sonarrs, radarrs = _clients_from_config(cfg, read_only=True, guards=guards)
+    sync = ArrTagSync(cfg, sonarrs, radarrs, mode=MODE_DRY_RUN, source="index", emit=emit)
+    items: list[dict] = []
+    try:
+        sync.prepare()
+        items = _filter_items(jf.get_items(cfg.jellyfin.library_ids or None), cfg)
+        sync.resolve_all(items)
+        session = _read_only_session(db_path) if db_path else get_session()
         try:
-            return int(raw)
-        except ValueError:
-            pass
-    return None
+            for item in items:
+                jf_rating = item.get("OfficialRating") or ""
+                arr_cert = sync.fallback_rating(item) if not jf_rating else ""
+                row = session.get(MediaState, f"jellyfin:{item.get('Id', '')}")
+                if row is None:
+                    sync.note_no_probe(item)
+                    continue
+                audio, subs = _tracks_from_row(row)
+                rating = jf_rating or arr_cert or None
+                tags = {
+                    kind: build_tags(
+                        row.resolution or "unknown", row.video_codec, row.hdr_type, audio, subs, rating, cfg.tags, kind
+                    )
+                    for kind in ("sonarr", "radarr")
+                }
+                sync.sync_item(item, tags)
+        finally:
+            session.close()
+    finally:
+        _close_clients(jf, sonarrs, radarrs)
+    report = sync.report()
+    report["items"]["jellyfin_items"] = len(items)
+    sent: dict[str, int] = {}
+    for g in guards:
+        for method, n in g.sent.items():
+            sent[method] = sent.get(method, 0) + n
+    report["guard"] = {"transports": len(guards), "sent": sent, "blocked": [b for g in guards for b in g.blocked]}
+    if store:
+        store_report(report)
+    return report
+
+
+def run_arr_dry_run_background(cfg: AppConfig) -> None:
+    """Thread target for the Settings button: one dry run at a time, report stored."""
+    arr_dry_run_state.update(running=True, error=None)
+    try:
+        run_arr_dry_run(cfg)
+    except Exception as exc:
+        log.error("*arr dry run failed: %s", exc, exc_info=True)
+        arr_dry_run_state["error"] = str(exc)
+    finally:
+        arr_dry_run_state["running"] = False
 
 
 def run_full_scan(cfg: AppConfig) -> None:
@@ -657,10 +721,18 @@ def handle_webhook(cfg: AppConfig, source: str, payload: dict) -> None:
             log.warning("Webhook %s: ffprobe failed for %s", source, name)
             return
 
+        # The full catalogue per instance is the price of resolving the item
+        # per instance; skip it when nothing *arr-side would use it.
+        arr = ArrTagSync(cfg, sonarrs, radarrs, source=f"webhook/{source}")
+        if arr.live or arr.cert_fallback:
+            arr.prepare()
+            arr.resolve_all([item])
         session = get_session()
-        image_modified = _process_one_item(jf, sonarrs, radarrs, session, cfg, item, file_path, item_root, mtime, info)
+        image_modified = _process_one_item(jf, arr, session, cfg, item, file_path, item_root, mtime, info)
         session.close()
         log.info("Webhook %s: processed %s | image_modified=%s", source, name, image_modified)
+        for line in arr.summary_lines() if (arr.live or arr.cert_fallback) else ():
+            log.info("Webhook %s: %s", source, line.removeprefix("[xenotag] "))
     except Exception as exc:
         log.error("Webhook %s handler error: %s", source, exc)
     finally:

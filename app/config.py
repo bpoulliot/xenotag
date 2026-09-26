@@ -31,6 +31,23 @@ class RadarrConfig(BaseModel):
     instances: list[ArrInstance] = Field(default_factory=list)
 
 
+class ArrSyncConfig(BaseModel):
+    # Roadmap B5. Until this existed nothing had ever been written to a
+    # Sonarr/Radarr instance (the match key was one Jellyfin never sets), so
+    # both switches below ship OFF and turning either on is a behaviour change
+    # the operator makes on purpose, after reading the dry-run report.
+    #
+    #   "dry_run": match every item to its series/movie on each instance and
+    #       record what WOULD be written. Nothing is sent to an *arr but GETs --
+    #       the *arr clients are given a transport that refuses anything else.
+    #   "live": write the managed tags (and create missing tag labels).
+    mode: Literal["dry_run", "live"] = "dry_run"
+    # Fill a blank Jellyfin rating from the matched series/movie's
+    # certification. This writes to JELLYFIN (OfficialRating, and the rating
+    # tag/badge wherever tags.destinations.rating sends them), not to an *arr.
+    certification_fallback: bool = False
+
+
 class ScanConfig(BaseModel):
     schedule: str = "0 3 * * *"
     incremental: bool = True
@@ -179,6 +196,7 @@ class AppConfig(BaseModel):
     jellyfin: JellyfinConfig = Field(default_factory=JellyfinConfig)
     sonarr: SonarrConfig = Field(default_factory=SonarrConfig)
     radarr: RadarrConfig = Field(default_factory=RadarrConfig)
+    arr_sync: ArrSyncConfig = Field(default_factory=ArrSyncConfig)
     scan: ScanConfig = Field(default_factory=ScanConfig)
     tags: TagsConfig = Field(default_factory=TagsConfig)
     image: ImageConfig = Field(default_factory=ImageConfig)

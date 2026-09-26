@@ -27,8 +27,70 @@ to do is go work on that one.
 | B2 | **A configured badge colour is never checked for contrast.** Any hex the settings UI or `config.yml` supplies is used as-is; the live deployment's palette renders at 2.6:1. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | **FIXED 2026-09-24** | — |
 | B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | **FIXED 2026-09-24** | — |
-| B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | READY | — |
+| B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **FIXED 2026-09-25 — writes ship OFF; go-live is the operator's step** | — |
 | B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | NEEDS DECISION | — |
+| B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | NEEDS DECISION | — |
+| B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. | 3 | 2 | NEEDS MEASUREMENT | — |
+| B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | NEEDS DECISION | — |
+
+**B9 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
+
+Measured on the dev instances, which run production's exact versions: **Radarr 6.3.0.10514
+answers `400 "Allowed characters a-z, 0-9 and -"`** for `xt-H.265`, `xt-DD+ Atmos`, `xt-HDR10+`
+and `xt-TrueHD Atmos`; **Sonarr 4.0.18.2978 accepts all of them** (it lowercases, as both do).
+B5 ships the measured rule (`RadarrClient.LABEL_PATTERN`): a label Radarr would refuse is
+reported and skipped, never attempted, and a 400 at create time is handled the same way — so
+nothing breaks, but those tags never reach Radarr. The production dry run (below, in B5) puts a
+number on it — label applications refused:
+
+| label | radarr/general | radarr/4k |
+|---|---:|---:|
+| `xt-h.264` | 3,062 | — |
+| `xt-h.265` | 981 | 67 |
+| `xt-dd+` | 468 | 10 |
+| `xt-"e` (that is B7) | 1 | — |
+
+So the video-codec tag would be missing from roughly 3 in 5 films on radarr/general (4,043 of 6,862). NEEDS DECISION because every fix
+changes the tag vocabulary and there is a trap in the obvious one: stripping the illegal
+characters turns `xt-hdr10+` into `xt-hdr10`, **colliding with HDR10**, and `xt-dd+` into
+`xt-dd`, **colliding with Dolby Digital**. The choices are (a) an explicit map (`+` → `plus`,
+`.` → `-`: `xt-hdr10plus`, `xt-ddplus`, `xt-h-264`) applied to Radarr only, so Radarr's labels
+differ from Jellyfin's and Sonarr's; (b) the same map applied everywhere, which renames tags
+already on ~9,400 Jellyfin items; or (c) leave Radarr without them.
+
+**B8 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
+
+Two defects in `handle_webhook()`'s item resolution, both latent — the production container
+logged **0** webhooks in the 30 days to 2026-09-25:
+
+ 1. **Sonarr/Radarr payloads resolve to the wrong item.** `find_item_by_provider_id()` asks
+    `/Items?AnyProviderIdEquals=Tvdb.<id>`. Jellyfin 10.11.10 ignores the parameter: a read-only
+    GET on production for The Expanse (`Tvdb.280619`) returned `TotalRecordCount` **9,419** —
+    the whole library — with *Accident Man* first, and the function returns `items[0]`. Reproduced
+    end to end on dev: a Sonarr `Download` webhook for Firefly (tvdb 78874) probed, tagged and
+    re-badged **"Anime Show (2023)"**. The wrong item is processed *consistently* (its own file's
+    tags go to its own Jellyfin item, and B5's sync derives the \*arr owner from that item, so no
+    \*arr is cross-tagged) — but the item the webhook was about is not processed at all.
+ 2. **Jellyfin `ItemAdded` payloads resolve to an item with no path.** `get_item_by_id()` asks for
+    `Fields=Tags,Genres,Studios,ProviderIds,Overview,OfficialRating` — no `Path`, no
+    `MediaSources` (checked on dev: neither key is in the response) — so `handle_webhook()` always
+    logs "no accessible file" and returns.
+
+NEEDS MEASUREMENT: which Jellyfin 10.11 query filters by provider id server-side (or whether a
+client-side filter over a `ProviderIds`-only listing is the fix), measured on dev before choosing.
+
+**B7 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
+
+`scanner._lang3_to_lang2()` maps 42 ISO 639-2 codes and, for anything else, returns
+`lang3[:2].upper()`. Evidence from the production index (copied 2026-09-25): *The Uncomfortable
+Truth (2018)* (`jellyfin:cea75ca2…`) has an audio track whose language is recorded as `"E`, and
+`xt-"E` is in its `tags_applied` — so it is on the Jellyfin item. The B5 dry run's label list also
+carries eleven codes that are not values of `LANG_MAP` and can only have come from the fallback:
+`ZX KH MA PE BU EG BO ZU TA TE GL`. Some coincide with the right ISO 639-1 code by luck (`tam`→`TA`,
+`tel`→`TE`, `glg`→`GL`, `bod`→`BO`, `zul`→`ZU`); the others name no language or the wrong one
+(`zxx` is "no linguistic content"; Khmer is `km`, Persian `fa`). The source codes behind `MA`,
+`BU` and `EG` were not traced. NEEDS DECISION: extend the map and send the rest to `UND`, or keep
+unknown codes as their uppercase 3-letter form — either renames tags already written.
 
 **B6 — FILED 2026-09-25, found while fixing B2. Not fixed here.**
 
@@ -51,6 +113,114 @@ NEEDS DECISION rather than READY because there are two defensible fixes and they
 they do to a config that loads today: **expand** `#rgb` and reject the rest at validation (a
 config with `red` would then fail to load — or be migrated), or **validate only** and refuse the
 save. Either is a small change; which one is the operator's call.
+
+**B5 — FIXED 2026-09-25. Sonarr/Radarr writes ship OFF (dry run); going live is the operator's step.**
+
+Matching now uses what Jellyfin supplies — `Tvdb` / `Tmdb` / `Imdb` against the `tvdbId` /
+`tmdbId` / `imdbId` of the catalogue `preload()` already fetched — in `app/arr_sync.py`. Nothing
+was written to any production \*arr: the only production run was the read-only dry run below.
+
+### What production looks like, measured (dry run, 2026-09-26 02:37Z)
+
+A throwaway container from this branch's code on `docker_frontend` + `docker_vpn`, production's
+`config.yml` mounted read-only, a copy of `state.db` (+ `-wal`/`-shm`) opened `mode=ro`, and
+every client — Jellyfin included — behind `ReadOnlyTransport`. Guard self-test **PASS** (a GET
+reaches the inner transport; POST/PUT/DELETE/PATCH raise before it, and a POST through a real
+transport at a closed port raises the guard's error, not a connection error). The run sent
+**39 GETs, 0 blocked**. 9,420 Jellyfin items: 2,477 series, 6,943 films.
+
+| instance | objects | labels (xt-) | id-matched (by) | owned | same id, other folder | ambiguous | claimed twice | WOULD change | tags to add | labels to create | label applications refused |
+|---|---:|---:|---|---:|---:|---:|---:|---:|---:|---:|---|
+| sonarr/general | 1,095 | 12 (0) | Tvdb 1,092 | 1,086 | 6 | 1 | 0 | 1,085 | 4,376 | 33 | 0 |
+| sonarr/4k | 7 | 0 (0) | Tvdb 13 | 7 | 6 | 0 | 0 | 7 | 34 | 8 | 0 |
+| sonarr/anime | 1,356 | 10 (0) | Tvdb 1,361, Tmdb 1 | 1,355 | 7 | 0 | 0 | 1,355 | 7,339 | 35 | 0 |
+| radarr/general | 7,105 | 20 (0) | Tmdb 6,929 | 6,863 | 66 | 0 | 0 | 6,862 | 23,460 | 47 | 4,512 (B9) |
+| radarr/4k | 75 | 3 (0) | Tmdb 136 | 69 | 67 | 0 | 0 | 69 | 283 | 19 | 77 (B9) |
+
+"By" is the most authoritative key that hit; no match anywhere needed `Imdb`. **Going live would
+write 35,492 tags onto 9,378 series/films and create 142 labels**; nothing would be removed (no
+managed tag exists anywhere). Items that match no instance — **series 29**: AniDB-only 13, same
+id in another folder 7, not in any instance 8, ambiguous 1; **films 11**: not in any instance 6,
+no provider id 3, AniDB-only 2. Two owned items have no probe record yet. After the run,
+`GET /api/v3/tag` on all five: **zero `xt-`/`mf-` labels**, totals 12 / 0 / 10 / 20 / 3 — the
+baseline above, unchanged.
+
+### The traps, and what each turned out to be
+
+ 1. **An \*arr id is per instance** — and the trap is bigger than the id. **The same title lives
+    in two instances**: 133 films match by id in both radarr/general and radarr/4k, 12 series in
+    both sonarr/general and sonarr/4k (the HD and the 4K copy). Id-only matching, even resolved
+    per instance, would write the 4K file's tags onto the HD copy and back again every scan. So a
+    match must also agree on the **folder**: the object's `path` must be the Jellyfin item's
+    folder. Every container here mounts media at the same `/media/...` paths, so they compare
+    directly — and with that check **no item has more than one owner**. (A deployment whose
+    \*arrs see different paths gets "same id, other folder" for everything; the report says so.)
+ 2. **`_get_or_create_tag()` POSTs** — the dry run counts "labels to create" from the preloaded
+    label list and never calls it. Belt and braces: while `arr_sync.mode` is not `live`, every
+    \*arr client is built on `ReadOnlyTransport`, so no code path *can* send a write.
+ 3. **Whole-object PUT from a cache** — demonstrated on dev: after an operator edit, the old
+    `PUT /series/{id}` of the preloaded copy **reverted `monitored` and the quality profile**. The
+    old `set_managed_tags()` is deleted. Writes now use the bulk editor (`PUT /series/editor`,
+    `PUT /movie/editor`) with `applyTags: add` / `remove` and the managed tag ids only — verified
+    on dev: add unions, remove removes exactly the listed ids, a user tag survives every step, and
+    **no other field changes** (HTTP 202). Before writing, the object is re-fetched and its id and
+    folder re-checked; afterwards it is read back.
+ 4. **Match quality** — the table. Ids pointing at two series in one instance (production:
+    *Cunk on Britain*, whose ids name both it and *Cunk on Earth*) and an object claimed by two
+    items (0 today) are refused and reported, never guessed.
+ 5. **The certification fallback** — **would fill 0 ratings today.** 1,361 of the 9,420 live
+    items have no Jellyfin rating (the 1,497 above counted orphan index rows); 1,333 of them have
+    an owner, and **none of those owners carries a certification** — the \*arrs take it from the
+    same TMDB/TVDB data Jellyfin does. 40 single-object GETs agreed with the list response (0 of
+    40 carry one). It still ships **off** (`arr_sync.certification_fallback`), because turning it
+    on writes to Jellyfin (the rating field, and the rating tag/badge where `destinations.rating`
+    sends them — production sends it to `poster` and `jellyfin`).
+ 6. **Default off** — `arr_sync.mode: dry_run`. The tag-config hash only changes when a switch is
+    turned *on*, so a release forces no rescan (production's config hashes `20142cb0e93c4394`
+    before and after this change). The Tag destinations grid marks the Sonarr/Radarr columns
+    "dry run — not written" until writes are live.
+ 7. **No schema change.** The report lives in memory and in `arr-sync-report.json` beside
+    `state.db`.
+
+Two more defects in the old dead code, which would have fired had the key ever matched — both
+measured on dev and fixed here: labels are **stored lowercase** and re-POSTing `xt-HEVC` when
+`xt-hevc` exists is a **409**, so the old case-sensitive cache would have failed every scan after
+the first; and Radarr's charset (B9) would have thrown on the first `H.264` film and abandoned
+that item's whole write.
+
+**The read-back** ships in the live path: managed tags exactly as intended, non-managed tags
+unchanged, no other field changed (ignoring `statistics`, `lastInfoSync`, `lastSearchTime`,
+`ratings`, `images`, `popularity`, which the \*arr rewrites itself). A mismatch or a write error
+is logged at ERROR and **halts every further \*arr write in that scan**.
+
+**Dev end to end** (Sonarr 4.0.18.2978 + Radarr 6.3.0.10514, production's versions; Jellyfin-dev
+identified a copied fixture as *Firefly* / *Serenity* on its own): a dry-run scan changed nothing;
+a live scan removed a stale `xt-hevc`, kept the user tag, created the missing labels, and an
+independent before/after diff found **no field changed but `tags`**; a second live scan wrote 0
+(current 1); and a real concurrent edit injected between write and read-back (`monitored`) was
+caught — `READ-BACK MISMATCH … field changed: .monitored`, writes halted, the next item skipped.
+The dev instances keep the seeded series/film.
+
+### Going live — the operator's steps
+
+ 1. Release and deploy as usual. Nothing changes: writes are off and no rescan is forced.
+ 2. Settings → **Sonarr / Radarr writes** → **Run dry run now**, and read the report — or
+    `docker exec xenotag python -m app.arr_sync --dry-run --db /config/state.db` (read-only).
+ 3. Decide **B9** first if the codec tags matter on Radarr; going live without it just skips them.
+ 4. Set **Tag writes → Live** and save. That changes the tag-config hash, so the **next scan is a
+    full re-tag** (every item re-probed and re-written on Jellyfin, as for any tag change) — the
+    03:00 scan, or **Full scan** now. Expect ~35,500 tags on ~9,400 objects and 142 new labels.
+ 5. Read the report afterwards: `written`, `read-back / errors`, and any **HALTED** line. After a
+    halt, fix the cause and run a **Full scan** — an incremental scan does not revisit the items.
+ 6. To back out: switching back to dry run **stops writes but removes nothing**. To strip what was
+    written, untick Sonarr/Radarr in every Tag destinations row *while live*, run a full scan (the
+    managed set becomes empty, so the managed tags are removed), then switch to dry run.
+
+**Not done here:** the webhook path now resolves owners too, but it can only check the one item
+it has, so the "claimed twice" refusal needs a scan; B8 means it would process the wrong item
+anyway. Radarr's refused labels (B9) and the odd language labels (B7) are filed, not fixed.
+
+*(original filing, 2026-09-24, follows)*
 
 **B5 — FILED 2026-09-24, found while auditing U1's outward destinations. Not fixed here.**
 
