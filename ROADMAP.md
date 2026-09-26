@@ -7,13 +7,20 @@ behavior, **I** = infrastructure, **P** = polish/UX.
 **Readiness** (adopted 2026-09-22, matching van1sh/abtidy/sightline): every item is
 **READY** (spec is complete, can be built as written), **NEEDS DECISION** (a human choice is
 open — never start one), or **NEEDS MEASUREMENT** (a number has to be taken first; measure,
-record, re-label — do not implement in the same pass). Unlabelled items predate this and are
-unassessed.
+record, re-label — do not implement in the same pass). Finished items carry **FIXED /
+SHIPPED / LIVE** (built here) or **CLOSED** (not built: premise wrong, superseded, or declined).
 
 **BLOCKED on \<ID\>** (added 2026-09-23): the spec is settled and no human choice is open, but
 another item must land first. Distinct from NEEDS DECISION, where the holdup is a person, and
 from NEEDS MEASUREMENT, where it is a number — here the holdup is *another item*, so the thing
 to do is go work on that one.
+
+**Readiness sweep, 2026-09-26.** Every open item now carries exactly one label — there are no
+unassessed items left, including the far-term tables. The per-item reasons are in each item's
+note (search "Sweep 2026-09-26"); a NEEDS DECISION item states its question, the options and a
+recommendation there, and a NEEDS MEASUREMENT item states what to measure, on what, and roughly
+how long. Five items turned out to be **already built** (U3, U4, P3, I4) or **decided away**
+(U8) and are relabelled rather than left open.
 
 **Tier 0 comes first.** Correctness defects outrank features regardless of Value score.
 
@@ -52,6 +59,16 @@ nominal class from the larger dimension): how many items sit just under a thresh
 item `MediaStreams` already carry `Width`/`Height` (`ITEM_FIELDS` requests them), so it is a
 read-only sweep, no probing. Any fix renames tags already on Jellyfin and the \*arrs.
 
+*Sweep 2026-09-26 — **NEEDS MEASUREMENT**, confirmed; queueable as written.* **What:** for every
+video item in the 17 configured libraries, the first video stream's `Width`×`Height` from one
+paginated read-only `/Items` sweep of production Jellyfin (the same kind of sweep U1 and B5 ran),
+bucketed by how far below each threshold it falls (0–1%, 1–5%, 5–10% of 3840/1920/1280/854) and by
+aspect (scope, flat, 4:3, open matte). **Record** the table, the width/height pairs that each
+candidate rule (width tolerance; height-or-width; the larger of `W/16` and `H/9` rounded to the
+nearest class) classifies differently from today, and how many live tags each rule would rename.
+**On:** production Jellyfin, GET only. **Roughly 1 h**, no code shipped. The rule choice after it
+is then a NEEDS DECISION with numbers attached.
+
 **B12 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
 
 Measured during the go-live: for every item it planned (9,356), Jellyfin's current `xt-` tags
@@ -70,6 +87,31 @@ NEEDS MEASUREMENT: *what* rewrites them — a Jellyfin metadata refresh that rep
 provider keywords, or an outside writer (the `nav1s`/`av1` tags point at the AV1 batch script,
 `/mnt/media/xtor/encodes/nav1s.sh`) — measured by watching one item's `Tags` across a refresh
 and across an encode, before choosing between a reconciliation pass and fixing the writer.
+
+*Sweep 2026-09-26 — **NEEDS MEASUREMENT**, confirmed, with two leads the filing did not have.*
+
+ - **`nav1s.sh` never calls Jellyfin.** It has no HTTP call at all; it writes only container
+   and stream metadata (`title=`, per-stream `language=`) into the file it muxes (grep of the
+   script, 2026-09-26). So if the `av1`/`nav1s` tags come from the encode, they arrive through
+   Jellyfin's own metadata refresh of the new file, not from the script.
+ - **A host job issues exactly such refreshes, hourly.** `jellyfin-refresh-transcoded.timer`
+   (`~/docker/scripts/jellyfin-refresh-items.py`, see `~/docker/MAINTENANCE.md`) POSTs
+   `/Items/{Id}/Refresh?metadataRefreshMode=FullRefresh&replaceAllMetadata=false` for every file
+   Tdarr transcoded since its last run — 1 to 53 items an hour between 2026-09-24 16:00 and
+   09-25 11:00 (journal; it logs counts, not names). Whether a FullRefresh with
+   `replaceAllMetadata=false` still replaces `Tags` with the TMDB provider's keywords is the
+   question. All five films also live under `/media/luxe/movies/…`, which is the likeliest
+   source of the `luxe` tag.
+
+**What to measure:** (1) on **jellyfin-dev** with a copied fixture: write `xt-` tags to the item,
+issue the same `FullRefresh` call the host script sends, and read `Tags` back — once with
+`replaceAllMetadata=false`, once `true`; (2) read-only on production: whether any of the five
+paths appear in the Tdarr job history or the refresh script's state file between 2026-09-24
+22:51Z and 09-26; (3) after the 2026-09-27 03:00 full re-tag restores them, re-read the five
+items' `Tags` once a day for a week (GET only) and note when, if ever, they go again. **Roughly
+1–2 h** of active work plus the passive week. The fix is then a decision between a reconciliation
+pass in xenotag, a tag-preserving change to the refresh script (a `~/docker` change, not this
+repo), or both.
 
 **B11 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
 
@@ -91,6 +133,33 @@ was seen by the latest scan, and report them as their own category ("owned, but 
 cannot reach it") instead of as "would change" — the rule the go-live driver used. Not
 covered: why Jellyfin keeps a series with no episodes (the \*arr side keeps it too — it is the
 library's choice, not xenotag's), and whether such rows should also go from the index (U2).
+
+*Sweep 2026-09-26 — **READY**, with "seen by the latest scan" pinned down from the code so the
+implementer does not have to rediscover it:*
+
+ - `scan_errors` is **cleared at the start of every full scan** (`pipeline.py`,
+   `clear_scan_errors()` when `not incremental`) and **never cleared when an item later
+   succeeds** on an incremental scan. So "has a `scan_errors` row" is the wrong test — it would
+   skip an item that failed once and has since been tagged.
+ - "Seen by the latest scan" is not quite right either, and *Frontier War* (U1, 2026-09-23)
+   shows why: it was `probe_failed`, but its May row carried the file's current mtime, so **incremental scans skip
+   it at the mtime filter** and its `last_seen` only moves on a full scan. After an incremental
+   run it would look reachable and be planned from its May row.
+ - **The rule that covers every case is per item:** unreachable if it has a `scan_errors` row
+   whose `last_seen` is **later than its `media_state.last_scanned`** (or it has no row at all —
+   today's `no_probe_record`). Failed-then-fixed: the fresh row is later, so it is planned.
+   *Frontier War* and B11's nine: every row is older than its error, so all are reported as
+   unreachable. No dependence on `scan_runs`. (Checked on a read-only copy taken 2026-09-26:
+   all nine errors are from 09-26 09:00; **four of the nine rows were last written 2026-09-24
+   23:2x**, not "between 2026-06-02 and 2026-08-09" as filed above — the rule holds either way.) (`no_path`/`no_file` are
+   recorded before the mtime filter, on every scan.)
+ - `error_type` takes **four** shapes, not the two the `ScanError` comment names: `no_path`,
+   `no_file`, `probe_failed`, and `process_error: <exception text>`. Count all four in the new
+   category; fix the model comment in the same PR (stale prose).
+ - Acceptance: a unit test with one item per `error_type` whose error is newer than its row
+   (all four reported as unreachable, none as "would change"), one whose row is newer than its
+   error (planned normally), and one *Frontier War* case (row older than the error, same
+   mtime). No live step; the production re-run is the operator's.
 
 **B9 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
@@ -117,6 +186,21 @@ characters turns `xt-hdr10+` into `xt-hdr10`, **colliding with HDR10**, and `xt-
 differ from Jellyfin's and Sonarr's; (b) the same map applied everywhere, which renames tags
 already on ~9,400 Jellyfin items; or (c) leave Radarr without them.
 
+*Sweep 2026-09-26 — **NEEDS DECISION**, confirmed.* **Question:** which spelling do the codec
+tags take, and where? **Recommendation: (b), one vocabulary legal in every destination** — e.g.
+drop `.`, `+` → `plus`, space → `-` (`xt-h264`, `xt-h265`, `xt-ddplus`, `xt-ddplus-atmos`,
+`xt-hdr10plus`, `xt-truehd-atmos`). Why: every cross-destination comparison (B5's read-back
+cross-check, B12's drift, any future reconciliation) then compares strings directly instead of
+through a map, and (c) hides metadata, which the 2026-09-23 P7+U8 direction rejects. What it
+costs, checked in code: tag strings are built in `tagger.py` from the scanner's display names
+(`"H.265"`, `"DD+"`), so a map applied in `build_tags()` renames **tags only — poster badge text
+is unaffected**; the map must enter `_tag_config_hash()`, which makes the next scan a full
+re-tag (~1 h) that replaces the old tags on Jellyfin and Sonarr by itself; Sonarr keeps the old
+labels (`xt-h.264`…) as unused entries in its tag list. **Also ask:** does anything outside
+xenotag — a Jellyfin smart collection, a filter, a script — select on the dotted spellings? If
+yes, (a) is the safer choice. Acceptance for whichever spelling: a test over the full emitted
+vocabulary that no two source labels map to the same output (the `hdr10+`/`hdr10` trap).
+
 **B8 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
 Two defects in `handle_webhook()`'s item resolution, both latent — the production container
@@ -138,6 +222,20 @@ logged **0** webhooks in the 30 days to 2026-09-25:
 NEEDS MEASUREMENT: which Jellyfin 10.11 query filters by provider id server-side (or whether a
 client-side filter over a `ProviderIds`-only listing is the fix), measured on dev before choosing.
 
+*Sweep 2026-09-26 — **NEEDS MEASUREMENT**, confirmed; queueable.* **What:** on **jellyfin-dev**
+(production's 10.11.10) with the seeded *Firefly* / *Serenity*: (1) whether any `/Items` filter
+narrows by provider id server-side — the `AnyProviderIdEquals` spellings, `HasTvdbId`/`HasTmdbId`
+plus a client-side check — recording `TotalRecordCount` for each; (2) the **folder** route, which
+needs no provider query at all: Sonarr's payload carries `series.path`, Radarr's
+`movie.folderPath`, and B5 already matches \*arr objects to Jellyfin items by folder — measure
+whether a path match resolves both fixtures; (3) on production, read-only, the time and bytes of
+one `/Items?Recursive=true&IncludeItemTypes=Series,Movie&Fields=ProviderIds,Path` listing (the
+client-side fallback's cost); (4) read-only `GET /api/v3/notification` on all five \*arrs — does
+any of them even have a webhook pointed at xenotag? (0 webhooks logged in 30 days suggests none;
+if none, B8's value is nil until one is added, which is itself worth recording.) **Roughly 1–2 h.**
+Part 2 of the defect (`get_item_by_id()` requests no `Path`/`MediaSources`) needs no
+measurement — it rides along with whichever fix follows.
+
 **B7 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
 `scanner._lang3_to_lang2()` maps 42 ISO 639-2 codes and, for anything else, returns
@@ -150,6 +248,20 @@ carries eleven codes that are not values of `LANG_MAP` and can only have come fr
 (`zxx` is "no linguistic content"; Khmer is `km`, Persian `fa`). The source codes behind `MA`,
 `BU` and `EG` were not traced. NEEDS DECISION: extend the map and send the rest to `UND`, or keep
 unknown codes as their uppercase 3-letter form — either renames tags already written.
+
+*Sweep 2026-09-26 — **NEEDS DECISION**, confirmed.* **Question:** what does an audio language
+code outside today's 42-entry map become? Options: **(a)** extend the map with the codes seen and
+send everything else to `UND`; **(b)** keep any unmapped code as its uppercase 3-letter form
+(`KHM`, `PER`); **(c)** a complete static ISO 639-2 (bibliographic *and* terminologic) → 639-1
+table, with the 3-letter form only for languages that have no 2-letter code, and `zxx`
+("no linguistic content") and anything malformed (`"e`, not 2–3 ASCII letters) → `UND` with a
+WARNING naming the item. **Recommendation: (c).** It is the only one where every emitted code
+names the right language: (a) turns real languages into `UND`, which hides metadata — the
+2026-09-23 direction — and (b) keeps `PER` where every other Persian track says `FA`. Only the
+wrong tags rename (`KH`→`KM`, `PE`→`FA`, `ZX`→`UND`, plus whatever `MA`/`BU`/`EG` trace to), and
+the change must enter `_tag_config_hash()` so a full re-tag applies it. No new dependency: the
+table is ~190 lines of constants. Acceptance: a test that no 3-letter fallback collides with a
+codec tag in the emitted vocabulary.
 
 **B6 — FILED 2026-09-25, found while fixing B2. Not fixed here.**
 
@@ -172,6 +284,17 @@ NEEDS DECISION rather than READY because there are two defensible fixes and they
 they do to a config that loads today: **expand** `#rgb` and reject the rest at validation (a
 config with `red` would then fail to load — or be migrated), or **validate only** and refuse the
 save. Either is a small change; which one is the operator's call.
+
+*Sweep 2026-09-26 — **NEEDS DECISION**, confirmed.* **Question:** what happens to a colour that is
+not `#rrggbb`? Options: **(a)** normalise every colour Pillow's `ImageColor.getrgb()` parses
+(`#fff`, `red`, `rgb(…)`) to `#rrggbb` at validation; anything unparseable loads as that field's
+**default with a WARNING** naming the field and value, and a Settings or raw-YAML save of it is
+refused with a message; **(b)** expand `#rgb` only and fail validation on anything else, so such
+a config stops the app loading; **(c)** validate on save only, so hand-edits keep rendering black.
+**Recommendation: (a).** Every spelling that looks right then renders right, nothing renders
+black silently, and it follows the precedent B10 set: an unknown `rating_position` in
+`config.yml` falls back with a warning rather than stopping the app. (b) turns a cosmetic typo
+into an outage; (c) leaves the defect in the only path that produces it.
 
 **B5 — LIVE 2026-09-26 (release v1.7.0). All five instances written and read back; `arr_sync.mode: live` since 11:28Z.**
 
@@ -804,13 +927,51 @@ decide whether this is a default change or a migration.
 
 ---
 
-## In Progress
+## Formerly "In Progress"
 
-| ID | Feature | Issue |
-|----|---------|-------|
-| P1 | Audio language override (fix UND tracks via ffmpeg metadata) | [#21](https://github.com/bpoulliot/xenotag/issues/21) |
-| P2 | Media browser: name column, codec columns | [#10](https://github.com/bpoulliot/xenotag/issues/10) |
-| P3 | Scan history in web UI | [#9](https://github.com/bpoulliot/xenotag/issues/9) |
+*Sweep 2026-09-26: nothing here was in progress.* No branch, local or remote, carries P1 or P2
+work; P3 shipped on 2026-05-05. The heading is kept so older references resolve.
+
+| ID | Feature | Readiness | Issue |
+|----|---------|-----------|-------|
+| P1 | Audio language override (fix UND tracks via ffmpeg metadata) | NEEDS DECISION | [#21](https://github.com/bpoulliot/xenotag/issues/21) |
+| P2 | Media browser: name column, codec columns | NEEDS DECISION | [#10](https://github.com/bpoulliot/xenotag/issues/10) |
+| P3 | Scan history in web UI | **SHIPPED 2026-05-05** (`fc7563d`) | [#9](https://github.com/bpoulliot/xenotag/issues/9) (closed) |
+
+**P1 — NEEDS DECISION (sweep 2026-09-26), and the size of the problem changes the question.**
+Nothing is built: no route, no UI action, no branch. Measured on a read-only copy of production
+`state.db` (2026-09-26): **3,411 of 10,583 index rows carry at least one `UND` audio track, and
+3,406 of those have *only* `UND` tracks** — 11,866 audio tracks in all, 3,411 undetermined. By
+container: **mp4 3,071**, mkv 283, avi 45, other 12. (Rows include the ~1,160 orphans U2
+describes, so the live figure is somewhat lower; the shape is not.) Issue #21 specifies a
+per-item form that remuxes the file with `ffmpeg -c copy -metadata:s:a:N language=…` and
+atomically replaces it. At ~3,000 items a one-at-a-time form is not a fix, and the remux is a
+write to the media file itself — the project's asymmetry, with the \*arrs' `recycleBin` empty.
+**Question:** should xenotag ever rewrite media files? Options:
+
+ 1. **As specified** — per-item remux, replacing the file. Works for every container; every use
+    rewrites a whole file in the library.
+ 2. **Header-only edit where possible** — `mkvpropedit` sets an MKV track's language in place,
+    without a remux (needs `mkvtoolnix` in the image); MKV only, so it reaches 283 of 3,411.
+ 3. **A per-item override stored by xenotag** — the file is untouched and the *tags* say `EN`;
+    needs a new table, so **BLOCKED on I3**, and it is U9's option 2 in another form.
+ 4. **Out of scope** — xenotag reports `UND` (it already does, in yellow, in the media browser)
+    and the operator fixes files with their own tools, then rescans.
+
+**Recommendation: 4 now, 3 later if wanted.** A tagger that rewrites 3,000 media files is a
+different product with a different risk profile, and the tagging side of the question is
+already answered by 3. If the operator wants files fixed, the bulk case belongs in the encode
+pipeline (`nav1s.sh` already writes per-stream `language=` when it muxes), not in a web form.
+
+**P2 — NEEDS DECISION (sweep 2026-09-26): two of its three asks already shipped.** The media
+browser's `Item` column shows the item's folder name (falling back to the file name, then the
+id), and its `Video` and `Audio` columns show resolution, codec and HDR, and each track's
+language and codec — checked in `index.html`. **What is left is issue #10's third ask, "remove
+the rating column"**, filed when "rating" was read as a review score. U7 (2026-09-23) settled
+that rating here means the certification (`R`, `TV-MA`) — the same value the rating badge draws.
+**Question:** keep the `Rating` column? Options: (a) keep it and close P2 as shipped;
+(b) remove it as #10 asked. **Recommendation: (a)** — the column is the certification, which the
+operator's own U7 framing treats as meaningful, and it is the only place the browser shows it.
 
 ---
 
@@ -821,12 +982,45 @@ decide whether this is a default change or a migration.
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
-| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | — | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
-| U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | — | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
-| U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | — | [#11](https://github.com/bpoulliot/xenotag/issues/11) |
+| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | NEEDS DECISION | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
+| U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution broken, see [B8] | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
+| U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
-| U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted and collapse what is redundant or never queried. | 4 | 3 | **MEASURED 2026-09-22 → READY** | — |
+| U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted and collapse what is redundant or never queried. | 4 | 3 | **CLOSED 2026-09-23** — measured, then the operator ruled out cutting tags; what remains is [P7] | — |
 | U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | NEEDS DECISION | — |
+
+**Sweep 2026-09-26 — U2, U3, U4.**
+
+ - **U3 — SHIPPED 2026-05-05** (`53c9f3f`, "HTTP connection pooling and webhook event-driven
+   processing"): `POST /webhook/{source}` with the shared-secret check, Sonarr/Radarr `Download`
+   and `Rename`, Jellyfin `ItemAdded`, and `handle_webhook()` running the single-item pipeline.
+   It does not *work*, and that is **B8**, which owns the defect now — don't reopen U3 for it.
+   GitHub #22 is still open.
+ - **U4 — SHIPPED** before this roadmap existed: `tagger._subtitle_tags()` emits `xt-sub-<LANG>`
+   (as `mf-sub-*` in v1.0.0), and `tags.destinations.subtitles` sends them wherever the operator
+   ticks — the default is `[poster, jellyfin]`, and Sonarr/Radarr are one tick away in the Tag
+   destinations grid. GitHub #11 was closed 2026-05-05. U8's worry that U4 "widens the tail" is
+   answered by the P7+U8 redirect: the tail is not cut.
+ - **U2 — NEEDS DECISION.** Two halves, and the premise moved under both of them:
+   - *Deleted items.* When #36 was written, xenotag had never written to an \*arr (B5), so the
+     "stale tags on the \*arr" half was hypothetical; since 2026-09-26 it is real. What is
+     measured: **1,162 of 10,575 index rows (11%) describe a Jellyfin item that no longer
+     exists** (U1, 2026-09-24), and B11 found 9 series whose folders hold no file. **Question:**
+     when a Jellyfin item is gone, what does a scan do? Options: **(a)** delete its `state.db`
+     row only (local, reversible from a backup, and it removes the stale input B11's dry run
+     reads); **(b)** (a) plus strip the managed tags from the \*arr object it owned, if that
+     object still exists; **(c)** (b) plus a report-only first release that lists what it
+     *would* remove. **Recommendation: (c)**, i.e. (b) behind one dry-run release — the \*arr
+     strip is the first automatic *removal* xenotag would make on an \*arr, and it gets the same
+     staged rollout B5's writes got. (b)'s ownership rule is B5's: an object is xenotag's to
+     strip only if its folder matched the deleted item's.
+   - *mtime-preserving re-encodes.* NEEDS MEASUREMENT before anything is chosen: does any tool
+     here replace a file's content and keep its mtime? Tdarr and `nav1s.sh` write new files (the
+     latter a new *name*, so a new item), and \*arr renames preserve content. Measure by
+     comparing, on a copy of `state.db`, each row's `file_mtime` and stored codec against a
+     fresh `stat` + ffprobe of a random 200 files (~1 h, read-only). If the count is zero, this
+     half closes; if not, the size check #36 proposes needs a `file_size` column — **BLOCKED
+     on I3**.
 
 **U1 — FIXED 2026-09-24, and the premise was half wrong in a way worth recording.**
 
@@ -994,7 +1188,9 @@ What the tail is made of (of the 221 rare tags): **105 codec/HDR/misc, 72 subtit
    narrowed. That is not an argument against U4; it is an argument that U4 and U8 are one
    decision, not two.
 
-**What remains for U8 to decide (why it is READY, not DONE):** whether a tag on <1% of items is
+*(Superseded 2026-09-23 by the P7+U8 redirect below: the operator ruled that no tag is cut for
+being rare, so U8 is CLOSED and the per-destination idea that follows was not taken up. Kept
+for provenance.)* ~~**What remains for U8 to decide (why it is READY, not DONE):**~~ whether a tag on <1% of items is
 noise or precision. A `xt-sub-HU` on 100 items is useless as a *badge* and may be valuable as a
 *query* — which is [U9]. So the cut is not "delete the tail"; it is **per-destination**: the
 poster overlay takes the head, the tag destinations can take the tail. `TagDestinations`
@@ -1043,6 +1239,22 @@ choosing, measure how often an `xt-*` tag is actually wrong** — that is the ev
 nobody has it. The operator also raised whether this is really Jellyfin metadata editing rather
 than xenotag's job; if the answer is (1), it is neither — it is a xenotag derivation bug.
 
+*Sweep 2026-09-26 — **NEEDS DECISION**, and the measurement this note asked for now exists.* The
+B5 go-live compared, for all **9,356** items it planned, Jellyfin's current `xt-` tags with
+`state.db`'s `tags_applied`: **9,346 match exactly**, and the 10 that do not have *lost* their
+tags (B11, B12) rather than carrying a corrected one. Because scans are mtime-driven, a hand edit
+would survive until its file changed, so it would have shown up there. **No one has corrected an
+`xt-` tag by hand.** Meanwhile every *wrong* tag found this month was a derivation bug, fixed or
+filed upstream: B7 (language codes), B13 (cropped 2160p called 1080p). **Question:** which does
+U9 become? Options: **(1)** close it — wrong tags are derivation bugs, and the README says in one
+line that `xt-` tags are owned by xenotag and hand edits are replaced; **(2)** an override store
+(needs a table — BLOCKED on I3; overlaps P1's option 3); **(3)** (1) plus **drift detection**: before
+writing, compare the item's current `xt-` tags with `tags_applied` and log a WARNING when they
+differ — no schema, and the same check names B12's five films the next time a scan reaches
+them (only then: it runs where the write runs, so an unchanged file is not re-checked).
+**Recommendation: (3)** — it removes the "silently" from the defect title without building an
+override nobody has needed, and it is a cheap first detector for B12's class of loss.
+
 ~~**U9 note.** There is currently **no tag query surface at all**~~ *(superseded)* — no `def` in `state.py`,
 `pipeline.py` or `web/routes.py` searches or filters by tag. Tags are written outward to
 Jellyfin/\*arr and never read back for browsing. So this is new construction, not an
@@ -1055,23 +1267,90 @@ create a third owner for one behaviour. Re-tagging when a file changes is U2's "
 mtime-preserving re-encodes" (the detection half: a re-encode that preserves mtime is invisible
 to an incremental scan) plus U3's per-item rescan on Sonarr/Radarr/Jellyfin `Download` events
 (the trigger half). **Do U3 then U2** — the webhook is Complexity 2 and delivers most of the
-benefit; the mtime problem is the residue for files that change without an event.
+benefit; the mtime problem is the residue for files that change without an event. *(Sweep
+2026-09-26: U3 had in fact shipped on 2026-05-05; the trigger half is B8 now, since the shipped
+webhook resolves the wrong item.)*
 
 ### I — Infrastructure
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| I1 | CSRF protection: form token validation on login and settings forms | 4 | 1 | — | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
-| I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | — | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
-| I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | — | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
-| I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | — | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
-| I5 | Prometheus metrics endpoint | 3 | 2 | — | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
-| I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | — | — |
+| I1 | CSRF protection: form token validation on login and settings forms | 4 | 1 | NEEDS DECISION | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
+| I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | NEEDS DECISION — premise does not hold here | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
+| I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | READY | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
+| I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | **SHIPPED 2026-05-05** (`53c9f3f`) | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
+| I5 | Prometheus metrics endpoint | 3 | 2 | NEEDS DECISION | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
+| I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | NEEDS DECISION (one question with I5) | — |
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
 | I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | NEEDS DECISION | — |
 | I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
 | I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | NEEDS MEASUREMENT | — |
-| I12 | **`datetime.utcnow()` is deprecated** — `app/state.py:137` stamps `last_scanned` with it (Python 3.12 `DeprecationWarning`) | 1 | 1 | NEEDS MEASUREMENT | — |
+| I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | READY | — |
+| I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure | 3 | 2 | NEEDS MEASUREMENT | — |
+
+**Sweep 2026-09-26 — I1–I6.**
+
+ - **I4 — SHIPPED 2026-05-05** (`53c9f3f`). `JellyfinClient` and the \*arr base client each hold
+   one `httpx.Client` for their lifetime and close it (`_close_clients()` at the end of a scan),
+   which is issue #19's scope exactly. GitHub #19 is still open.
+ - **I3 — READY.** The decisions are pre-made below; nothing is left for the operator. Facts
+   measured on a read-only copy of production `state.db` (2026-09-26): four tables
+   (`media_state`, `app_meta`, `scan_runs`, `scan_errors`), columns and the one explicit index
+   (`ix_scan_errors_item_id`) **identical to the SQLAlchemy models**, `PRAGMA user_version` 0,
+   no version table. Today's schema management is `create_all()` plus `_migrate_schema()`, an
+   unversioned `ALTER TABLE … ADD COLUMN` for five columns — the debt this item exists to stop
+   growing. Spec:
+   1. **Alembic** (named by #15 and by the standing rules), with `render_as_batch=True` so later
+      SQLite `ALTER`s work.
+   2. **Baseline revision = today's schema, exactly**, including `_migrate_schema()`'s five
+      columns. Its `upgrade()` must be safe on a database `create_all()` already built.
+   3. **Run it from `init_db()`**, not a Docker entrypoint: `init_db()` is the one path shared by
+      the app, the tests and the scratch-uvicorn recipe. An **unversioned** database (no
+      `alembic_version`) whose tables exist is checked against the baseline and **stamped**;
+      a mismatch refuses to start with a message naming the difference — never a guess. A fresh
+      database is `upgrade head`. `create_all()` and `_migrate_schema()` then go.
+   4. **Rollback:** an older image against a migrated database must still work for additive
+      changes (SQLAlchemy ignores the version table and unknown columns); say so in the README,
+      and say that a non-additive migration needs a backup first.
+   5. **Acceptance:** a copy of production `state.db` (+ `-wal`/`-shm`) upgrades to head with every
+      table's rows byte-identical (`.dump` diff); a fresh database's schema equals the models'
+      (`alembic check` passes, run in CI); a deliberately drifted database is refused. No live
+      step — prod picks it up at the next release, as with any change.
+ - **I1 — NEEDS DECISION.** The issue's own threat model is out of date. The session cookie is
+   `SameSite=lax` (`routes.py`), which already withholds it from cross-site POSTs — including
+   top-level form posts, which #14 says it "does not cover" — and production sits behind
+   Authentik forward-auth at SWAG. The residual risk is **same-site**: every other
+   `*.bitmapserv.org` app is the same *site*, so a compromised sibling could POST to xenotag with
+   the cookie attached. **Question:** is that worth closing? Options: **(a)** reject any
+   `POST`/`PUT`/`DELETE` whose `Origin` (or, absent that, `Referer`) is not the request's own
+   origin — ~30 lines of middleware, `/webhook/*` exempt (it authenticates by token), and no
+   frontend change; **(b)** the synchronizer/double-submit token #14 proposes — every mutating
+   `fetch` in `index.html` changes; **(c)** close: `SameSite=lax` + Authentik is enough for a
+   single-admin deployment. **Recommendation: (a)** — it closes the same-site hole at a
+   fraction of (b)'s surface. The implementer must verify behind SWAG that the proxied `Host`
+   matches the browser's `Origin`, in a throwaway container, before claiming it.
+ - **I2 — NEEDS DECISION; the premise does not hold for this deployment.** "Prevents a full
+   rescan after container upgrades" assumes the upgrade loses `state.db`. It does not: production
+   bind-mounts `~/docker/xenotag/config` at `/config`, `state.db` lives there, and restic backs up
+   `~/docker` nightly. I8 already answered the `config.yml` half (back it up only through
+   `_persistable()`'s strip). **Question:** keep I2 for other deployments, or close? Options:
+   (a) close it as not needed; (b) keep it as download-only (`GET /api/backup` via SQLite's
+   `.backup()`, which is safe against a live WAL — see the docker TODO's I33); (c) keep the full
+   download + restore. **Recommendation: (a)**, moved to Deferred with this reason. Restore is the
+   risky half (swapping the DB under a live engine) and nothing here needs it.
+ - **I5 and I6 — NEEDS DECISION, one question for both:** how should xenotag tell the operator
+   something happened (a scan finished, failed, or **HALTED** its \*arr writes)? The host already
+   runs Prometheus → Alertmanager → ntfy (`~/docker/monitoring/ALERTING.md`). Options:
+   **(a)** I5 only — a small `/metrics` (last scan success/failure time, items scanned/tagged,
+   errors, \*arr writes and **halts**) scraped over the Docker network, with the alert rule added
+   in `~/docker/monitoring`; close I6 as superseded; **(b)** I6 only — xenotag posts to ntfy
+   itself, which needs a publish token in its config (an I8-style secret) and duplicates the host
+   pipeline; **(c)** both. **Recommendation: (a)** — one alerting path, no new secret, and a halt
+   is exactly the kind of state a scrape sees and a push can miss. Constraints for the spec if
+   (a): metric names `xenotag_*` (#17 still says `metafin_*`); the app runs **one** uvicorn
+   process, so the plain registry, and **never `PROMETHEUS_MULTIPROC_DIR`** (the
+   `accesslens_metrics` leak of 2026-09-18 is what that costs); `/metrics` unauthenticated on the
+   container port is acceptable because the public hostname is behind Authentik.
 
 **I8 — SHIPPED 2026-09-24.** `jellyfin.api_key`, `auth.secret_key` and `webhooks.secret` can now
 be supplied by `JELLYFIN_API_KEY` / `XENOTAG_SECRET_KEY` / `XENOTAG_WEBHOOK_SECRET`, or by the
@@ -1137,6 +1416,17 @@ obviously right answer, and it is the operator's to make:
 
 Whichever is chosen, the read-only Settings treatment has to extend to a per-row field in the
 instance table, which is more UI work than I8's single input needed — hence complexity 3.
+
+*Sweep 2026-09-26 — **NEEDS DECISION**, confirmed, with a fourth option the note did not list.*
+**(d) Indirection in the instance itself:** `ArrInstance` gains an optional `api_key_file`
+(a path, e.g. `/run/secrets/sonarr_4k`). When set, the key is read from that file at load and
+`api_key` is never written back. The *path* is not a secret, so it saves normally; reordering or
+renaming an instance cannot detach it, because the binding lives in the same row; and it is
+exactly the `_FILE` convention `materialize-secrets.sh` already renders for the rest of the stack.
+**Recommendation: (d).** It has none of by-index's silent-reorder failure or by-name's rename and
+mangling rules, and unlike "don't" it lets the five \*arr keys — now carrying live write access
+since B5 — rotate through the host's SOPS pipeline. The per-row read-only treatment in Settings
+is still needed; I8's fatal-on-unreadable-`_FILE` rule carries over unchanged.
 
 **Original note — measured 2026-09-23, after a credential leak made it concrete.**
 
@@ -1217,12 +1507,54 @@ instead` (Starlette 1.6.0). It is the *test* path only: `httpx` itself is a runt
 whether `httpx2` is a drop-in for the test client at the pinned Starlette, and whether it belongs in
 `requirements.txt` or a test-only install (CI installs `requirements.txt pytest`).
 
+*Sweep 2026-09-26 — **NEEDS MEASUREMENT**, confirmed; queueable.* **What:** in a scratch venv
+built from `requirements.txt` (never the shared tree): install `httpx2`, run the full suite with
+`-W error::DeprecationWarning`, and record (1) whether `TestClient` picks it up with no import
+change, (2) whether the warning is gone, (3) the pass count against the baseline (220 after I10),
+and (4) whether `httpx2` pulls anything that conflicts with the runtime `httpx`. Also check its
+PyPI metadata (maintainer, licence, release history) — a package whose name is one character off
+a popular one deserves a provenance look before it enters CI. **Roughly 30 min.** The
+test-only-install question answers itself from (4).
+
 **I12 — filed 2026-09-26, seen in I10's test output.** `app/state.py:137` sets
 `row.last_scanned = datetime.utcnow()`, deprecated since Python 3.12. NEEDS MEASUREMENT before the
 obvious swap to `datetime.now(UTC)`: that returns an AWARE datetime, and whether the column and every
 comparison against `last_scanned` tolerate aware values (SQLite stores naive) has not been checked.
 
-**I10 — filed 2026-09-25, from the v1.7.0 deploy log. Nothing is broken; this is removal-proofing.**
+*Sweep 2026-09-26 — **READY**; the measurement is unnecessary because the fix can avoid the
+question.* Two corrections to the filing first: `utcnow` appears at **7** sites, all in
+`app/state.py`, not one — three `Column(DateTime, default=datetime.utcnow)` defaults
+(`ScanRun.started_at`, `ScanError.first_seen`, `ScanError.last_seen`) and four calls
+(`last_scanned`, `start_scan_run`, `finish_scan_run`, `upsert_scan_error`). **Spec:** add one
+helper, `_utcnow() -> datetime` returning `datetime.now(UTC).replace(tzinfo=None)`, and use it
+at all seven (the defaults take the function, not a call). It yields the **same naive UTC
+value** `utcnow()` did, so nothing stored or compared changes and the aware-vs-naive question
+never arises. Acceptance: `grep -rn utcnow app/` is empty; a test asserts the helper returns a
+naive value within a second of `datetime.now(UTC)`; the test run logs no `utcnow`
+`DeprecationWarning`.
+
+**I13 — filed 2026-09-26 by the readiness sweep. NEEDS MEASUREMENT.** B2 (2026-09-25) noted seven
+open CodeQL alerts on `main` that "deserve an item of their own, with evidence" and none was
+filed. Re-read on 2026-09-26 via `gh api repos/bpoulliot/xenotag/code-scanning/alerts`: **eight**
+are open, one new since B2 —
+
+| alert | rule | where |
+|---|---|---|
+| #1 | `py/cookie-injection` | `app/web/routes.py:125` |
+| #3, #4, #5 | `py/path-injection` | `app/web/routes.py:758–759` (`preview_image`'s `sample`) |
+| #6, #7 | `py/weak-sensitive-data-hashing` | `app/auth.py:52, 56` |
+| #8 | `py/clear-text-logging-sensitive-data` | `app/auth.py:133` |
+| **#9** | `py/stack-trace-exposure` | `app/web/routes.py:865` — **not in B2's list** |
+
+**What to measure:** for each alert, read the flagged source-to-sink path and decide *real* or
+*false positive*, with the reason written down (B2's untested guess: `Path(sample).name`
+sanitises #3–5 in a way CodeQL does not model). For a real one, a one-line failure scenario;
+for a false positive, the exact dismissal reason to use. **On:** the code and the alert
+details, no running system. **Roughly 1–2 h.** Deliverable: the table above with a verdict
+column, and each real alert filed as its own B item. Dismissing alerts is an outward action on
+GitHub and is **not** part of the measurement.
+
+*(I10's original filing follows; its heading had been pasted twice.)*
 
 **I10 — filed 2026-09-25, from the v1.7.0 deploy log. Nothing is broken; this is removal-proofing.**
 
@@ -1262,7 +1594,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
-| P7 | **Overlay density / simplification** — fewer, clearer badges by default. | 4 | 3 | NEEDS DECISION | — |
+| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. | 4 | 3 | NEEDS MEASUREMENT | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
@@ -1312,6 +1644,20 @@ Does the operator get to see/override the choice, per the constrained-controls p
 elsewhere? The glow question is now answered: B1 kept it, as a halo *around* the pill rather
 than a wash behind it, so P6 does not have to decide its fate.
 
+*Sweep 2026-09-26 — **NEEDS DECISION**, confirmed; the two open questions, with a recommendation.*
+**(1) Selection:** (a) main + backup palette, chosen per badge row by the luminance of the poster
+region under it against one threshold; (b) continuous — derive each fill from the region.
+**Recommend (a):** two palettes can each be *measured* in advance — B2's contrast chips and
+B4's separation probe both work on a fixed palette, and neither works on a colour computed per
+poster — and it keeps the render deterministic and explainable. **(2) Operator control:**
+(a) one checkbox, "adapt badge colours to the poster" (off by default), with the backup palette's
+four pickers carrying the same B2 contrast chips as the main ones; (b) fully automatic, no
+control. **Recommend (a)** — it matches the constrained-controls rule, and default-off means no
+existing poster changes until the operator asks. Scope note for the spec: it only matters below
+100% opacity (B1: an opaque pill hides the poster), so the checkbox should say so, and the
+backup palette must also clear B4's dE 5 under simulated CVD. B3's cross-width test is the one
+that fails if the cache key is not widened with the palette choice.
+
 **P7 + U8 — REDIRECTED 2026-09-23. Hiding metadata is the wrong route.** The operator:
 *"Seems like u8 should not be an app choice. Why hide this for even a poster oversaturated with
 pills? All pills should be limited by poster margins. Maybe choosing the order of pills (e.g.
@@ -1344,6 +1690,33 @@ exactly those 100.
  - **P7 is no longer a density budget.** It becomes layout containment plus ordering — and the
    `show_*` booleans stay as the operator's own switch, since turning a category off is a
    choice they make knowingly rather than one the app makes for them.
+
+*Sweep 2026-09-26 — P7 relabelled **NEEDS MEASUREMENT**: the containment half is queueable now.
+The ordering half carries one open question (below); it can be answered in the same sitting as
+the other decisions and neither half waits on the other.*
+
+**Containment — what to measure.** Whether every pill lands inside the poster at every
+`badge_size` × poster aspect × badge/rating position, or only usually. **Inputs from production**
+(read-only `state.db` copy, 2026-09-26): the heaviest item carries **58** tags, **52** distinct
+subtitle languages and **21** audio languages; the 99th percentile is **12** subtitle languages,
+the 99.9th **35**. **Method:** render through `render_badge_groups()` — never a
+re-implementation — with synthetic tag sets at p50 / p99 / p99.9 / max, over posters of 2:3,
+27:40, 16:9 (backdrops) and a short 1:1, at widths 300 / 600 / 1000 / 2000, all three
+`badge_size`s, and every position combination B10's test uses; take the pill rectangles the real
+render reports (as `tests/test_rating_position.py` does) and count any that cross the poster
+margin, or overlap the rating. **Self-test:** a planted oversized tag set must fail and a
+single short pill must pass. **Roughly 2 h, render-only** — `generate_preview_bytes()` or
+`render_badge_groups()` on synthetic images, no library file touched. Also covers B10's
+"not covered" case (a tag stack reaching a rating on the opposite edge).
+
+**Ordering — the question.** What does a "prefer" setting order, and with what control?
+Options: **(a)** one `prefer_languages` list (e.g. `en, ja, de`) applied to both audio and
+subtitle rows, everything else after it in today's order; **(b)** separate audio and subtitle
+lists; **(c)** a precedence list per category, video and rating included. **Recommendation:
+(a)** — it is the operator's own example, languages are where the long tail lives (the p99.9
+item has 35 subtitle languages), and it is one new control rather than four. Per the
+constrained-controls rule it should be a pick-list of the language codes actually present in the
+index, not a free-text box. It changes pill order only — never which pills exist.
 
 ~~**P7 note.** With `show_video_badges`~~ / `show_audio_badges` / `show_sub_badges` /
 `show_rating_badge` all defaulting `True`, plus U4 adding per-language subtitle badges and U7
@@ -1786,26 +2159,75 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 ### U — User-facing
 
-| ID | Feature | Value | Complexity | Issue |
-|----|---------|:-----:|:----------:|-------|
-| U5 | Extended ffprobe tags: video profile, bitrate tier, interlacing, frame rate | 4 | 3 | [#24](https://github.com/bpoulliot/xenotag/issues/24) |
-| U6 | Extended metadata tags from Jellyfin/\*arr: genres, original language, runtime bands, series status, ratings, custom formats | 4 | 5 | [#25](https://github.com/bpoulliot/xenotag/issues/25) |
+| ID | Feature | Value | Complexity | Readiness | Issue |
+|----|---------|:-----:|:----------:|-----------|-------|
+| U5 | Extended ffprobe tags: video profile, bitrate tier, interlacing, frame rate | 4 | 3 | NEEDS DECISION | [#24](https://github.com/bpoulliot/xenotag/issues/24) |
+| U6 | Extended metadata tags from Jellyfin/\*arr: genres, original language, runtime bands, series status, ratings, custom formats | 4 | 5 | NEEDS DECISION | [#25](https://github.com/bpoulliot/xenotag/issues/25) |
 
 ### P — Polish
 
-| ID | Feature | Value | Complexity | Issue |
-|----|---------|:-----:|:----------:|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
-| P5 | README sample screenshots and overlay examples | 2 | 1 | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
+| ID | Feature | Value | Complexity | Readiness | Issue |
+|----|---------|:-----:|:----------:|-----------|-------|
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | NEEDS MEASUREMENT | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P5 | README sample screenshots and overlay examples | 2 | 1 | READY | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
 
-| ID | Feature | Value | Complexity | Issue |
-|----|---------|:-----:|:----------:|-------|
-| I7 | pillow-simd acceleration (marginal gain; ffprobe is the bottleneck, not PIL) | 2 | 3 | [#20](https://github.com/bpoulliot/xenotag/issues/20) |
+| ID | Feature | Value | Complexity | Readiness | Issue |
+|----|---------|:-----:|:----------:|-----------|-------|
+| I7 | pillow-simd acceleration (marginal gain; ffprobe is the bottleneck, not PIL) | 2 | 3 | NEEDS MEASUREMENT | [#20](https://github.com/bpoulliot/xenotag/issues/20) |
 
 > **Renumbered 2026-09-22:** this was a second `I6`, colliding with the ntfy item in Near-term.
 > Referenced as `I6` in anything predating this date, it means whichever of the two fits context.
+
+**Sweep 2026-09-26 — far-term items, labelled for the first time.** They stay far-term; the
+labels say what would make each one startable.
+
+ - **U5 — NEEDS DECISION.** Four new tag families, each a vocabulary choice: which of profile /
+   bitrate tier / interlacing / frame rate, and in what spelling. Three constraints the decision
+   inherits: every new tag must be legal in Radarr's `[a-z0-9-]` (B9 — `xt-23.976` is not),
+   the tag-config hash makes each addition a full re-tag, and the P7+U8 direction means a new
+   family is never hidden later for being rare, so add only what the operator would query.
+   **Question:** which families, if any? **Recommendation:** interlacing only (`xt-interlaced`,
+   present or absent) — it is the one that changes what the operator does with a file; the
+   others are browsable in Jellyfin's own media info already. Decide after B9, whose spelling
+   rule it must follow.
+ - **U6 — NEEDS DECISION.** Complexity 5 because it is seven unrelated features; "ratings" left
+   it with U7 (already shipped as the certification). Most of the rest is data Jellyfin already
+   holds and indexes (genres, original language, series status), so re-emitting it as `xt-`
+   tags duplicates a query surface — the same reasoning that dropped U9's query half.
+   **Question:** keep U6? **Recommendation:** close it, and re-file any single source the
+   operator actually wants (runtime bands and \*arr custom formats are the two Jellyfin cannot
+   answer) as its own small item.
+ - **P4 — NEEDS MEASUREMENT.** One defect is known (P9, 2026-09-24: at 390 px the header nav runs
+   off the right edge); "full breakpoint coverage" is otherwise unmeasured. **What:** headless
+   Chromium screenshots of login, dashboard, media browser, preview and settings at 360 / 390 /
+   768 / 1024 / 1366 px from a throwaway container on a scratch config (P9's recipe), listing
+   every overflow, clipped control and unreadable table. **Roughly 1 h**, no code. The fix list
+   it produces is then specced — and per the UI rule, any layout change that is not a plain
+   overflow fix goes to the operator first.
+ - **P5 — READY.** README gains (1) overlay examples rendered with `generate_preview_bytes()`
+   over the **synthetic** backgrounds in `app/preview_samples.py` — never real posters, which are
+   copyrighted art and this repo is public — at the shipped defaults, one per `badge_size`, and
+   one with the rating and tags in the same corner (B10's stacking); (2) UI screenshots from a
+   throwaway container on a scratch config with no real library data. Images go under
+   `assets/readme/`, generated by a committed script so they can be regenerated when the
+   palette or layout changes. No live step.
+ - **I7 — NEEDS MEASUREMENT.** The row already says "marginal gain; ffprobe is the bottleneck"
+   without a number behind it. **What:** the share of a full scan's wall time spent in
+   `apply_overlay()`, from a profiled full scan on the **dev** stack (or timing the overlay of a
+   few hundred copied posters against the probe time of the same items). **Roughly 1 h.** If
+   the overlay is under ~5% of scan time, close I7; pillow-simd is also a build-from-source
+   fork, which is a supply-chain cost the gain would have to pay for.
+
+**GitHub issues with no roadmap item** (found by the sweep, not assigned IDs here): **#12**
+*Subtitle cleanup* — deletes subtitle files/streams not on a keep-list, a destructive write to
+the library; **#13** *Jellyfin plugin* — a sidebar iframe, a separate C# repo. Both predate the
+rename. **Question for the operator:** track them (and under which ID), or close them on
+GitHub? **Recommendation:** close both — #12 cuts against this project's "xenotag does not
+destroy library content" rule and belongs with the encode pipeline if anywhere, and #13 is a
+second product. Also stale on GitHub: **#19 (I4) and #22 (U3) are still open** though both
+shipped on 2026-05-05.
 
 ---
 
