@@ -6,7 +6,6 @@ from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
-from fastapi.responses import ORJSONResponse
 from fastapi.staticfiles import StaticFiles
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -95,7 +94,6 @@ app = FastAPI(
     title="Xenotag",
     version=_version,
     lifespan=lifespan,
-    default_response_class=ORJSONResponse,
 )
 
 app.add_middleware(_SecurityHeaders)
