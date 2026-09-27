@@ -4,11 +4,21 @@ import json
 import os
 from collections import Counter
 from collections.abc import Iterable, Sequence
-from datetime import datetime
+from datetime import UTC, datetime
 from pathlib import Path
 
 from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, event, or_, text
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
+
+
+def _utcnow() -> datetime:
+    """Current UTC time as a NAIVE datetime (the deprecated stdlib helper's value).
+
+    Kept naive on purpose: SQLite stores naive values and every stored or compared
+    timestamp here is naive UTC. Column defaults take the function, never a call.
+    """
+    return datetime.now(UTC).replace(tzinfo=None)
+
 
 _engine = None
 _SessionLocal = None
@@ -48,7 +58,7 @@ class ScanRun(Base):
     __tablename__ = "scan_runs"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
-    started_at = Column(DateTime, default=datetime.utcnow)
+    started_at = Column(DateTime, default=_utcnow)
     completed_at = Column(DateTime)
     items_scanned = Column(Integer, default=0)
     items_tagged = Column(Integer, default=0)
@@ -64,8 +74,8 @@ class ScanError(Base):
     item_name = Column(Text)
     file_path = Column(Text)
     error_type = Column(String)  # "no_path" | "no_file" | "probe_failed" | "process_error: <exception text>"
-    first_seen = Column(DateTime, default=datetime.utcnow)
-    last_seen = Column(DateTime, default=datetime.utcnow)
+    first_seen = Column(DateTime, default=_utcnow)
+    last_seen = Column(DateTime, default=_utcnow)
     scan_count = Column(Integer, default=1)
 
 
@@ -134,7 +144,7 @@ def upsert_media_state(
     row.languages = json.dumps(languages)
     row.tags_applied = json.dumps(tags_applied)
     row.image_path = image_path
-    row.last_scanned = datetime.utcnow()
+    row.last_scanned = _utcnow()
     row.file_mtime = file_mtime
     row.video_codec = video_codec
     row.hdr_type = hdr_type
@@ -296,14 +306,14 @@ def set_meta(session: Session, key: str, value: str) -> None:
 
 
 def start_scan_run(session: Session, scan_type: str) -> ScanRun:
-    run = ScanRun(started_at=datetime.utcnow(), scan_type=scan_type)
+    run = ScanRun(started_at=_utcnow(), scan_type=scan_type)
     session.add(run)
     session.commit()
     return run
 
 
 def finish_scan_run(session: Session, run: ScanRun, scanned: int, tagged: int, images: int) -> None:
-    run.completed_at = datetime.utcnow()
+    run.completed_at = _utcnow()
     run.items_scanned = scanned
     run.items_tagged = tagged
     run.items_image_modified = images
@@ -348,7 +358,7 @@ def upsert_scan_error(
     file_path: str,
     error_type: str,
 ) -> None:
-    now = datetime.utcnow()
+    now = _utcnow()
     existing = session.query(ScanError).filter_by(item_id=item_id, error_type=error_type).first()
     if existing:
         existing.last_seen = now
