@@ -6,7 +6,8 @@ from pathlib import Path
 from typing import Literal
 
 import yaml
-from pydantic import BaseModel, Field, field_validator, model_validator
+from PIL import ImageColor
+from pydantic import BaseModel, Field, ValidationInfo, field_validator, model_validator
 
 log = logging.getLogger(__name__)
 
@@ -97,6 +98,43 @@ _PALETTE_1_DEFAULTS = {
 }
 
 
+# Validation-context key: set by the save paths so an unreadable colour is
+# REFUSED there, while loading falls back to the field default (roadmap B6).
+REFUSE_BAD_COLOURS = "refuse_bad_colours"
+
+_COLOUR_FIELDS = (
+    "badge_text_color",
+    "video_badge_color",
+    "audio_badge_color",
+    "sub_badge_color",
+    "rating_badge_color",
+)
+_BARE_HEX6 = frozenset("0123456789abcdefABCDEF")
+
+
+def normalize_color(value: object) -> str | None:
+    """``value`` as lowercase ``#rrggbb``, or None if it is not a usable colour.
+
+    Usable means Pillow's ``ImageColor.getrgb()`` reads it as RGB (``#fff``,
+    ``red``, ``rgb(255,0,0)``, ...). A value Pillow reads WITH an alpha channel
+    (``#rrggbbaa``, ``rgba(...)``) is refused rather than having its alpha
+    dropped: opacity has its own field. One extra spelling is kept that Pillow
+    rejects -- six bare hex digits (``203a30``) -- because the renderer drew it
+    correctly before B6, so refusing it would change a working poster.
+    """
+    if not isinstance(value, str):
+        return None
+    if len(value) == 6 and set(value) <= _BARE_HEX6:
+        return "#" + value.lower()
+    try:
+        rgb = ImageColor.getrgb(value)
+    except ValueError:
+        return None
+    if len(rgb) != 3:
+        return None
+    return "#{:02x}{:02x}{:02x}".format(*rgb)
+
+
 class ImageConfig(BaseModel):
     targets: list[str] = Field(default_factory=lambda: ["poster.jpg", "poster.png", "folder.jpg", "folder.png"])
     backup_suffix: str = ".orig"
@@ -157,6 +195,25 @@ class ImageConfig(BaseModel):
     audio_badge_color: str = "#312c4c"  # deep indigo  opaque 13.2:1
     sub_badge_color: str = "#50532f"  # dark olive     opaque  8.0:1
     rating_badge_color: str = "#73485b"  # muted plum  opaque  7.5:1
+
+    @field_validator(*_COLOUR_FIELDS, mode="before")
+    @classmethod
+    def _normalise_colour(cls, v: object, info: ValidationInfo) -> object:
+        # Roadmap B6: anything but "#rrggbb" used to render BLACK, silently.
+        # Loading must not stop the app over a cosmetic typo (the B10
+        # precedent), so it falls back to the default and says so; a save is
+        # refused instead, so the typo never reaches config.yml from the UI.
+        hex_ = normalize_color(v)
+        if hex_ is not None:
+            return hex_
+        name = f"image.{info.field_name}"
+        if info.context and info.context.get(REFUSE_BAD_COLOURS):
+            raise ValueError(
+                f"{name} {v!r} is not a colour: use #rrggbb, #rgb, a colour name or rgb(r,g,b) -- no alpha"
+            )
+        default = cls.model_fields[info.field_name].default
+        log.warning("%s %r is not a colour; using the default %s", name, v, default)
+        return default
 
     # Which default palette this config has been migrated to. Persisted so the
     # migration below runs ONCE: without it, an operator who later picks one of
@@ -427,7 +484,7 @@ def save_config(new_yaml: str) -> AppConfig:
     """
     data = yaml.safe_load(new_yaml) or {}
     submitted = [path for path in ENV_OVERRIDABLE if _has_nested(data, path)]
-    validated = AppConfig.model_validate(_apply_env_overrides(data))
+    validated = AppConfig.model_validate(_apply_env_overrides(data), context={REFUSE_BAD_COLOURS: True})
     shadowed = [path for path in submitted if path in _env_overrides]
     for path in shadowed:
         log.warning(
@@ -443,7 +500,7 @@ def save_config(new_yaml: str) -> AppConfig:
 
 def save_config_from_dict(data: dict) -> AppConfig:
     """Validate and persist config from a dict (structured settings API)."""
-    validated = AppConfig.model_validate(_apply_env_overrides(data))
+    validated = AppConfig.model_validate(_apply_env_overrides(data), context={REFUSE_BAD_COLOURS: True})
     _write(_dump(_persistable(validated)))
     global _config
     _config = validated
