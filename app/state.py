@@ -46,6 +46,8 @@ class MediaState(Base):
     audio_tracks = Column(Text)  # JSON list of {lang, codec} dicts
     subtitle_tracks = Column(Text)  # JSON list of {lang, format, embedded} dicts
     content_rating = Column(String)
+    # ffprobe's field_order (roadmap U5, revision 0002). NULL = not probed since 0002.
+    field_order = Column(String)
 
 
 class AppMeta(Base):
@@ -137,6 +139,7 @@ def upsert_media_state(
     audio_tracks: list | None = None,
     subtitle_tracks: list | None = None,
     content_rating: str | None = None,
+    field_order: str | None = None,
 ) -> MediaState:
     row = session.get(MediaState, item_id)
     if row is None:
@@ -155,6 +158,7 @@ def upsert_media_state(
     row.audio_tracks = json.dumps(audio_tracks or [])
     row.subtitle_tracks = json.dumps(subtitle_tracks or [])
     row.content_rating = content_rating
+    row.field_order = field_order
     session.commit()
     return row
 
@@ -291,6 +295,7 @@ def _media_to_dict(row: MediaState) -> dict:
         "audio_tracks": json.loads(row.audio_tracks or "[]"),
         "subtitle_tracks": json.loads(row.subtitle_tracks or "[]"),
         "content_rating": row.content_rating,
+        "field_order": row.field_order,
     }
 
 

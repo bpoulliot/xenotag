@@ -3,7 +3,7 @@ from __future__ import annotations
 import logging
 
 from .config import TagsConfig
-from .scanner import AudioTrack, SubTrack
+from .scanner import AudioTrack, SubTrack, is_interlaced
 
 log = logging.getLogger(__name__)
 
@@ -20,8 +20,13 @@ _TAG_SPELLING = str.maketrans({".": "", "+": "plus", " ": "-"})
 # re-tag, which replaces the old spellings on Jellyfin and on every *arr.
 # The language labels count too (scanner._lang3_to_lang2), since they are tags.
 # 1: display names verbatim (`xt-H.264`); 2: the spelling above; 3: the complete
-# ISO 639-2 table (B7: `xt-KH` -> `xt-KM`, `xt-PE` -> `xt-FA`, `xt-ZX` -> `xt-UND`).
-TAG_VOCABULARY = 3
+# ISO 639-2 table (B7: `xt-KH` -> `xt-KM`, `xt-PE` -> `xt-FA`, `xt-ZX` -> `xt-UND`);
+# 4: `xt-interlaced` (U5) -- a new tag, not a respelling, but its value comes from
+# media_state.field_order, which only a re-probe fills, and a full scan re-probes.
+TAG_VOCABULARY = 4
+
+# Present or absent (U5, operator decision 2026-09-26): there is no progressive tag.
+INTERLACED_LABEL = "interlaced"
 
 
 def tag_label(name: str) -> str:
@@ -29,7 +34,9 @@ def tag_label(name: str) -> str:
     return name.translate(_TAG_SPELLING)
 
 
-def _video_tags(prefix: str, resolution: str, video_codec: str | None, hdr_type: str | None) -> list[str]:
+def _video_tags(
+    prefix: str, resolution: str, video_codec: str | None, hdr_type: str | None, field_order: str | None
+) -> list[str]:
     tags = []
     if resolution and resolution != "unknown":
         tags.append(f"{prefix}{resolution}")
@@ -37,6 +44,8 @@ def _video_tags(prefix: str, resolution: str, video_codec: str | None, hdr_type:
         tags.append(f"{prefix}{video_codec}")
     if hdr_type:
         tags.append(f"{prefix}{hdr_type}")
+    if is_interlaced(field_order):
+        tags.append(f"{prefix}{INTERLACED_LABEL}")
     return tags
 
 
@@ -78,12 +87,14 @@ def build_tags(
     content_rating: str | None,
     cfg: TagsConfig,
     destination: str,  # "jellyfin" | "sonarr" | "radarr" | "poster"
+    *,
+    field_order: str | None = None,  # ffprobe's; None/"unknown" (a pre-U5 row) adds nothing
 ) -> list[str]:
     p = cfg.managed_prefix
     d = cfg.destinations
     tags: list[str] = []
     if destination in d.video:
-        tags += _video_tags(p, resolution, video_codec, hdr_type)
+        tags += _video_tags(p, resolution, video_codec, hdr_type, field_order)
     if destination in d.audio:
         tags += _audio_tags(p, audio_tracks, cfg.dual_audio_tag, cfg.multi_audio_tag)
     if destination in d.subtitles:

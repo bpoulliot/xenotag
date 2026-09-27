@@ -84,6 +84,42 @@ def _data(db: Path) -> list[str]:
         con.close()
 
 
+# Columns later revisions added to a table the baseline already had. Upgrading a
+# database adds each one to every existing row as NULL and leaves the rest alone.
+ADDED_SINCE_BASELINE = {"media_state": ("field_order",)}  # 0002 (U5)
+
+
+def _rows(db: Path) -> dict[str, list[dict[str, str]]]:
+    """Every row of every table but the version table, per column as SQLite's ``quote()``.
+
+    ``quote()`` is what ``.dump`` writes, so a value is compared byte for byte, type
+    included, but by column name -- an added column cannot shift the others.
+    """
+    con = sqlite3.connect(db)
+    try:
+        out: dict[str, list[dict[str, str]]] = {}
+        tables = con.execute("SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%'")
+        for (table,) in sorted(tables):
+            if table == migrate.VERSION_TABLE:
+                continue
+            cols = [r[1] for r in con.execute(f'PRAGMA table_info("{table}")')]
+            # Every name here was read from the file's own schema, not from input.
+            select = ", ".join(f'quote("{c}")' for c in cols)
+            query = f'SELECT {select} FROM "{table}" ORDER BY rowid'  # noqa: S608
+            out[table] = [dict(zip(cols, r, strict=True)) for r in con.execute(query)]
+        return out
+    finally:
+        con.close()
+
+
+def _at_head(rows: dict[str, list[dict[str, str]]]) -> dict[str, list[dict[str, str]]]:
+    """``rows`` (read before an upgrade) as the upgrade to head must leave them."""
+    return {
+        table: [{**row, **{c: "NULL" for c in ADDED_SINCE_BASELINE.get(table, ())}} for row in table_rows]
+        for table, table_rows in rows.items()
+    }
+
+
 def _version(db: Path) -> list[tuple]:
     con = sqlite3.connect(db)
     try:
@@ -112,11 +148,11 @@ def test_fresh_database_is_built_at_head(tmp_path):
 
 def test_pre_i3_database_is_stamped_and_its_rows_are_untouched(tmp_path):
     db = _build(tmp_path / "state.db", PRE_I3_DDL)
-    before = _data(db)
-    assert len(before) == len(ROWS)
+    assert len(_data(db)) == len(ROWS)
+    before = _rows(db)
     assert migrate.upgrade_to_head(db) == "stamped"
     assert _version(db) == [(_head(),)]
-    assert _data(db) == before
+    assert _rows(db) == _at_head(before)
 
 
 def test_alter_built_database_is_stamped_although_its_create_text_differs(tmp_path):
@@ -132,9 +168,34 @@ def test_alter_built_database_is_stamped_although_its_create_text_differs(tmp_pa
 
     # The premise: same schema, different stored text. A text comparison would refuse b.
     assert create_text(a) != create_text(b)
-    before = _data(b)
+    before = _rows(b)
     assert migrate.upgrade_to_head(b) == "stamped"
-    assert _data(b) == before
+    assert _rows(b) == _at_head(before)
+
+
+def test_0002_adds_field_order_as_null_and_keeps_every_row(tmp_path):
+    """U5: a database at 0001 -- production since v1.8.0 -- upgrades in place."""
+    db = _build(tmp_path / "state.db", PRE_I3_DDL)
+    engine = migrate._engine(db)
+    try:
+        with engine.connect() as conn, conn.begin():
+            command.stamp(migrate._config(conn), "0001")
+    finally:
+        engine.dispose()
+    before = _rows(db)
+    assert migrate.upgrade_to_head(db) == "upgraded"
+    assert _version(db) == [(_head(),)]
+    after = _rows(db)
+    assert after == _at_head(before)
+    # The comparison can fail both ways: the column really was added, and a changed value shows.
+    assert after != before
+    planted = _at_head(before)
+    planted["media_state"][0]["content_rating"] = "'R'"
+    assert after != planted
+    con = sqlite3.connect(db)
+    column = [r for r in con.execute("PRAGMA table_info(media_state)") if r[1] == "field_order"]
+    con.close()
+    assert column == [(14, "field_order", "VARCHAR", 0, None, 0)]  # nullable, no default, appended
 
 
 def test_second_start_changes_nothing(tmp_path):
@@ -261,7 +322,7 @@ def test_simultaneous_starts_migrate_once(tmp_path, kind):
         con = sqlite3.connect(db)
         con.execute("PRAGMA journal_mode=WAL")
         con.close()
-    before = _data(db)
+    before = _rows(db)
     ctx = multiprocessing.get_context("fork")
     barrier, results = ctx.Barrier(8), ctx.Queue()
     procs = [ctx.Process(target=_start_together, args=(barrier, results, db)) for _ in range(8)]
@@ -273,7 +334,10 @@ def test_simultaneous_starts_migrate_once(tmp_path, kind):
     winner = "created" if kind == "fresh" else "stamped"
     assert sorted(outcomes) == sorted([winner] + ["current"] * 7)
     assert _version(db) == [(_head(),)]
-    assert _data(db) == before
+    if kind == "fresh":
+        assert _data(db) == []
+    else:
+        assert _rows(db) == _at_head(before)
 
 
 def test_check_passes_when_models_match_the_revisions():

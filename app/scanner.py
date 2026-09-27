@@ -89,6 +89,11 @@ _SUB_FORMAT_MAP = {
 
 _EXTERNAL_SUB_EXTS = {".srt", ".ass", ".ssa", ".sub", ".vtt", ".sup"}
 
+# ffprobe's `field_order` values that mean interlaced (roadmap U5): top or bottom
+# field first, coded in the same or the opposite order. `progressive` is not, and
+# `unknown` -- or no field_order at all -- says nothing, so it is never tagged.
+INTERLACED_FIELD_ORDERS = frozenset({"tt", "bb", "tb", "bt"})
+
 
 @dataclass
 class AudioTrack:
@@ -112,6 +117,18 @@ class MediaInfo:
     hdr_type: str | None  # "HDR10", "HLG", "HDR10+", "DV", or None
     audio_tracks: list[AudioTrack]  # deduped: best codec per language
     subtitle_tracks: list[SubTrack]  # all embedded + external subs
+    # ffprobe's, lowercased: "progressive", "tt", "bb", "tb", "bt" or "unknown" (also
+    # when the stream has none); None only when there is no video stream (U5).
+    field_order: str | None = None
+
+    @property
+    def interlaced(self) -> bool:
+        return is_interlaced(self.field_order)
+
+
+def is_interlaced(field_order: str | None) -> bool:
+    """True only for a field order that says interlaced; unknown or missing is not (U5)."""
+    return (field_order or "").lower() in INTERLACED_FIELD_ORDERS
 
 
 def probe_file(path: str | Path) -> MediaInfo | None:
@@ -168,6 +185,7 @@ def probe_file(path: str | Path) -> MediaInfo | None:
         hdr_type=hdr_type,
         audio_tracks=audio_tracks,
         subtitle_tracks=subtitle_tracks,
+        field_order=_detect_field_order(streams),
     )
 
 
@@ -193,6 +211,15 @@ def _detect_video_codec(streams: list[dict]) -> str | None:
         if s.get("codec_type") == "video":
             name = (s.get("codec_name") or "").lower()
             return _VIDEO_CODEC_MAP.get(name)
+    return None
+
+
+def _detect_field_order(streams: list[dict]) -> str | None:
+    # The first video stream, as for the codec. Stored as ffprobe spelled it, so the
+    # index can tell "probed, no answer" (unknown) from "not probed since U5" (NULL).
+    for s in streams:
+        if s.get("codec_type") == "video":
+            return str(s.get("field_order") or "").strip().lower() or "unknown"
     return None
 
 
