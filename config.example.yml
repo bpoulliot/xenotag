@@ -27,6 +27,13 @@ arr_sync:
   mode: dry_run                  # dry_run | live
   certification_fallback: false  # fill a blank Jellyfin rating from the *arr certification
 
+# Items Jellyfin no longer has: every scan works out which index rows, and which
+# managed tags on their Sonarr/Radarr series/movie, are stale. "report" changes
+# nothing -- read Settings -> Deleted items before switching to "remove".
+deleted_items:
+  mode: report                   # report | remove
+  max_fraction: 0.15             # removal refuses when more of the index than this would go
+
 scan:
   schedule: "0 3 * * *"  # cron expression; empty = manual-only
   incremental: true

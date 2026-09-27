@@ -610,3 +610,54 @@ def test_a_scan_runs_the_pass_unless_cancelled(monkeypatch, cancelled):
     # The tag-config hash of a fresh index forces this scan to full; like the *arr
     # report, the label stays the scan's own.
     assert calls == ([] if cancelled else [{"source": "incremental scan", "emit": pipeline.progress.emit}])
+
+
+# ── the Settings routes ─────────────────────────────────────────────────────
+class _RunNow:
+    """Stands in for threading.Thread: runs the target inline, so the test sees its effect."""
+
+    def __init__(self, target, args=(), daemon=None):
+        self.target, self.args = target, args
+
+    def start(self):
+        self.target(*self.args)
+
+
+@pytest.fixture
+def api(monkeypatch):
+    from fastapi.testclient import TestClient
+
+    from app.main import app
+    from app.web import routes
+
+    monkeypatch.setattr(routes, "_require_user", lambda request: "admin")
+    monkeypatch.setattr(routes, "get_config", lambda: cfg("remove", "live", max_fraction=0.2))
+    monkeypatch.setattr(routes.threading, "Thread", _RunNow)
+    return TestClient(app)
+
+
+def test_run_report_now_is_report_only_even_when_removal_is_on(api, monkeypatch):
+    calls = []
+    monkeypatch.setattr(deleted_items, "run_deleted_items", lambda c, **kw: calls.append(kw) or {})
+    resp = api.post("/api/deleted-items/report")
+    assert resp.status_code == 200 and resp.json() == {"status": "started"}
+    assert calls == [{"mode": "report", "source": "manual report"}]
+    assert deleted_items.state == {"running": False, "error": None}
+
+
+def test_run_report_now_refuses_a_second_run(api, monkeypatch):
+    monkeypatch.setitem(deleted_items.state, "running", True)
+    assert api.post("/api/deleted-items/report").status_code == 409
+
+
+def test_the_report_route_returns_the_mode_and_the_last_report(api, monkeypatch):
+    monkeypatch.setattr(deleted_items, "load_report", lambda: {"status": "ok"})
+    body = api.get("/api/deleted-items/report").json()
+    assert body == {
+        "mode": "remove",
+        "max_fraction": 0.2,
+        "arr_writes_live": True,
+        "running": False,
+        "error": None,
+        "report": {"status": "ok"},
+    }

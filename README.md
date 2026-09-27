@@ -53,6 +53,7 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 - Configurable tag prefix, dual-audio tag, and multi-audio tag
 - Per-destination tag routing — send video tags only to Jellyfin, audio tags only to Sonarr, etc.
 - Preserves existing user-defined tags; only manages its own prefixed set
+- Notices items Jellyfin no longer has: reports the stale index rows and the managed tags left on their Sonarr/Radarr series/movie, and removes them once `deleted_items.mode` is `remove` (ships report-only)
 
 ### Poster Badge Overlay
 - Overlays **pill-shaped badges** directly onto poster/folder images
@@ -207,11 +208,33 @@ becomes `plus` and a space `-` (`xt-H264`, `xt-DDplus-Atmos`, `xt-HDR10plus`; th
 them lowercased). Badge text keeps the display names (`H.264`, `DD+ Atmos`). A label Radarr would
 still refuse is skipped there and listed in the report.
 
+### Deleted items
+
+| Key | Type | Default | Description |
+|---|---|---|---|
+| `deleted_items.mode` | string | `"report"` | `report`: every scan works out which index rows and which *arr tags belong to items Jellyfin no longer has, and changes nothing — the index is opened read-only and the Sonarr/Radarr clients are built on a transport that refuses anything but GET. `remove`: delete those rows and strip the managed tags (the tags only while `arr_sync.mode` is `live`). |
+| `deleted_items.max_fraction` | float | `0.15` | Removal refuses when more than this share of the index would go at once; the report still lists everything. |
+
+An item is gone only when a **complete** Jellyfin listing lacks it (the pages must add up to the
+server's `TotalRecordCount` and a recount must agree) **and** a lookup by id does not find it —
+beside live control items that must answer, or the pass is aborted and changes nothing. An item
+Jellyfin still lists but the scan cannot read (file gone, probe failed) is never "gone". Its
+series/movie is found by **folder**, the rule the *arr writes use: the object whose path is the
+folder the scan recorded for the item. An object whose folder still holds a live Jellyfin item is
+never stripped — that item owns it now (a re-encode that replaced the file is the common case).
+Each strip removes managed tags only, is read back like any *arr write (a mismatch halts the
+pass), and is appended to `deleted-items-removed.jsonl` beside `state.db`, so it can be undone;
+a row is deleted only after its object was stripped. Read the report first (Settings →
+**Deleted items** → **Run report now**, which is always report-only, or
+`python -m app.deleted_items --report --db /config/state.db` inside the container), then set
+`deleted_items: {mode: remove}`. The mode is not part of the tag configuration, so switching it
+forces no re-tag.
+
 ### Scanning
 
 | Key | Type | Default | Description |
 |---|---|---|---|
-| `scan.schedule` | string | `"0 3 * * 0"` | Cron expression for automatic scans; empty = manual only |
+| `scan.schedule` | string | `"0 3 * * *"` | Cron expression for automatic scans; empty = manual only |
 | `scan.incremental` | bool | `true` | Skip files unchanged since last scan |
 | `scan.path_filters` | list | `[]` | Only scan paths matching these prefixes; empty = all |
 | `scan.max_workers` | int | `4` | Parallel `ffprobe` workers; lower for slow/spinning disks |
@@ -383,6 +406,8 @@ Configure the webhook URL in your *arr application's Connect settings. Xenotag w
 | GET | `/api/badge-contrast` | Yes | Rendered WCAG contrast of the badge colours being chosen (same query parameters as `/preview/image`) |
 | GET | `/api/arr-sync/report` | Yes | The last Sonarr/Radarr sync report (from a scan or a dry run) |
 | POST | `/api/arr-sync/dry-run` | Yes | Start a read-only dry run: match every item and count what a live sync would write |
+| GET | `/api/deleted-items/report` | Yes | The last deleted-items report (from a scan or a manual report) and the configured mode |
+| POST | `/api/deleted-items/report` | Yes | Start a deleted-items report — always report-only, whatever `deleted_items.mode` says |
 | POST | `/webhook/{source}` | No* | Trigger single-item processing from *arr/Jellyfin webhook |
 
 *Webhook endpoint is unauthenticated by design to support *arr's built-in webhook delivery.

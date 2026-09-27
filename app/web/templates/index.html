@@ -1515,7 +1515,7 @@ function renderDeletedReport(r) {
     + (rep.status === 'refused' ? `<p style="color:var(--red)">Removal REFUSED: ${e(rep.reason)}</p>` : '')
     + `<p>Index rows whose item is gone: <b>${ix.deleted_rows ?? 0}</b> of ${ix.rows ?? 0} (${pct(ix.fraction)}; bound ${pct(ix.max_fraction)})`
     + (ix.over_bound ? ` — <span style="color:var(--red)">over the bound, removal ${acting ? 'refused' : 'would refuse'}</span>` : '')
-    + `. ${acting ? `Deleted ${ix.rows_deleted ?? 0}.` : 'Would delete all of them.'}</p>`
+    + `. ${acting ? `Deleted ${ix.rows_deleted ?? 0}.` : (ix.over_bound ? '' : 'Would delete all of them.')}</p>`
     + `<p class="hint">By what their folder holds now: ${outcomes}.</p>`
     + `<table class="dest-grid"><thead><tr><th>Instance</th><th title="series/movies in a deleted item's folder">In a deleted item's folder</th>`
     + `<th title="a live Jellyfin item sits in the same folder, so it owns the object">Kept (live item)</th>`

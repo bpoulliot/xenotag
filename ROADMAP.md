@@ -1670,7 +1670,7 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
-| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **READY** (decided 2026-09-26) · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
+| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **BUILT 2026-09-27** — ships report-only, removal OFF · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution broken, see [B8] | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
@@ -1741,6 +1741,93 @@ is the operator's call because it decides whether xenotag becomes event-driven a
      fresh `stat` + ffprobe of a random 200 files (~1 h, read-only). If the count is zero, this
      half closes; if not, the size check #36 proposes needs a `file_size` column — an Alembic
      revision (I3, SHIPPED 2026-09-26).
+
+**U2, deleted items — BUILT 2026-09-27. Ships report-only (`deleted_items.mode: report`); removal is built, tested on dev, and OFF.**
+
+The operator's option (c): when a Jellyfin item is gone, a scan deletes its index row and strips
+the managed tags from the \*arr object it owned — behind one report-only release first. The
+re-encode half below is untouched and still NEEDS MEASUREMENT.
+
+**What shipped** — `app/deleted_items.py`, run at the end of every scan (not a cancelled one),
+from Settings → **Deleted items** → **Run report now**, and as
+`python -m app.deleted_items --report --db <copy>`; the last two are report-only whatever the
+config says.
+
+ - **"Gone" needs two independent reads, and any doubt aborts the pass with nothing changed.**
+   A complete listing of every Movie/Series on the server — not only the configured libraries,
+   because an item outside them still exists: every page must carry the same `TotalRecordCount`,
+   no id may come twice, a page may not come back empty before the total, and a `Limit=0`
+   recount after the last page must agree. Then every row missing from it is looked up with
+   `/Items?Ids=` in batches of 100, each beside 5 live control ids from the listing; one control
+   not answering aborts the pass (a lookup that answers nothing would "confirm" everything), and
+   a candidate that answers is not gone.
+ - **Deleted is not unreachable (B11).** An item Jellyfin still lists — file gone, probe failed —
+   is in the listing, so it is never a candidate, whatever `scan_errors` says (tested both ways).
+ - **Ownership is B5's folder rule.** The deleted item's folder is the one the scan recorded: the
+   folder of the poster it overlaid (every row with a poster has it in the item's own folder —
+   10,535 of 10,585 in production), else the file's folder, then its parent; the object at the
+   deepest such folder across every instance is the owner, and two objects claiming one folder in
+   one instance are refused. **An object whose folder still holds any live Jellyfin item is never
+   stripped** — that item owns it now (a superset of B5's id-and-folder ownership), which is the
+   re-encode-in-place case U1 found most orphans to be.
+ - **The bound: `deleted_items.max_fraction`, default 0.15.** Removal refuses when more than 15%
+   of the index would go; the report still lists all of it. Chosen because the first production
+   pass faces a backlog nobody ever cleared — 11.2% (below) — while the flow afterwards is small
+   (orphans by `last_scanned` month: 29 May, 947 June, 90 July, 94 August, 27 September), and
+   losing a whole media mount exceeds it (the largest library is 1,383 of 9,399 items, on top of
+   the backlog). It cannot catch one small library vanishing — the listing and the lookup are for
+   that. A deliberate mass deletion needs it raised for one scan.
+ - **Report mode cannot change anything, structurally.** The index is opened `mode=ro`, every
+   \*arr client sits behind `ReadOnlyTransport`, and Jellyfin is read-only in both modes (U2 never
+   writes it). Tests prove a strip attempted in report mode raises before the PUT is sent, and a
+   row delete through the report session is refused by SQLite.
+ - **Remove mode** strips tags only while `arr_sync.mode` is `live` too (otherwise a row that
+   still needs a strip is kept). Each strip re-fetches the object, re-checks its folder, removes
+   managed/legacy tags only through the bulk editor, and is read back like a B5 write; a mismatch
+   or an error halts the pass and **no row is deleted after a halt**. A row goes only after every
+   object it owned is stripped. Each strip is appended to `deleted-items-removed.jsonl` beside
+   `state.db` (instance, object id, tag ids, labels), so it can be undone by hand.
+ - **No schema change and no re-tag:** the report is `deleted-items-report.json` beside `state.db`
+   (like B5's), and the mode is not in `_tag_config_hash()`.
+
+**Measured before the release** (2026-09-27 11:20Z, read-only: a throwaway container from the
+v1.8.0 image with this branch's `app/`, production's `config.yml` read-only, a copy of `state.db`
+with its `-wal`/`-shm`; 42 GETs, 0 blocked):
+
+| step | production |
+|---|---|
+| listing | 9,399 items = `TotalRecordCount` 9,399 = recount; 19 pages |
+| rows missing from it | 1,187 of 10,585; 12 lookups by id: **1,187 confirmed gone**, 0 answered, 60/60 controls answered |
+| would delete | 1,187 rows (11.2%, under the 15% bound) |
+| folder holds a live item → row only | 314 rows (297 radarr/general objects kept) |
+| no \*arr object in the folder → row only | 873 rows |
+| \*arr tags to strip | **0**, on all five instances |
+
+Why 0: B5 went live on 2026-09-26 and writes only to objects a live item owns, and nothing it has
+tagged has left Jellyfin since. **Cross-checked from the other end**, independently of the pass: a
+GET snapshot of all five \*arrs (11:26Z) holds 9,350 objects with a managed label, and all 9,350
+sit in a folder holding a live Jellyfin item — 0 do not. So enabling removal today would delete
+1,187 index rows and strip nothing; the strip half starts to matter as tagged items are deleted.
+
+**Dev end to end** (Jellyfin 12.1.0, Sonarr 4.0.18.2978, Radarr 6.3.0.10514; scratch config and
+index): Serenity's folder moved out of the library and Jellyfin refreshed (item gone, the Radarr
+movie kept, as in production). **report** — 1 row, 4 `xt-` tags on 1 movie, 7 GETs, and an
+independent before/after snapshot equal on every field; **remove at 15%** — REFUSED (1 of 6 rows is
+16.7%), nothing changed; **remove at 50%** — the 4 tags stripped and read back, `user-keep` kept, no
+other field or label definition changed, the row deleted, the removal log written. Folder restored:
+Jellyfin re-added it under a new id, the next scan re-tagged the movie (B5 `written 1`) and the
+pass found nothing.
+
+**Tests:** `tests/test_deleted_items.py`. Seven mutants — no live-folder keep, no lookup by id, no
+recount, a writable report session, \*arr clients always writable, no bound, deleting after a halt
+— each turn at least one test red.
+
+**To enable (the operator):** read the production report (Settings → Deleted items, or
+`deleted-items-report.json` beside `state.db`), then set `deleted_items: {mode: remove}` in the YAML
+editor or `config.yml`. The next scan acts; no re-tag is forced. Back out: `mode: report`.
+
+**Not covered:** an \*arr object carrying managed tags whose folder holds no live item and that no
+index row points at (a row removed by hand) is never found — 0 exist today (the cross-check above).
 
 **U1 — FIXED 2026-09-24, and the premise was half wrong in a way worth recording.**
 
