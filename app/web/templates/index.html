@@ -737,6 +737,24 @@
     </div>
   </div>
 
+  <!-- Deleted items (roadmap U2) -->
+  <div class="settings-section">
+    <div class="section-header" onclick="toggleSection(this)">
+      🧹 Deleted items <span class="chevron">▾</span>
+    </div>
+    <div class="section-body">
+      <p class="hint" style="margin-bottom:10px">When Jellyfin no longer has an item, its index row is stale, and so are the managed xt- tags on the Sonarr/Radarr series/movie that lived in its folder. Every scan works out what to remove. "Gone" needs a complete Jellyfin listing and a lookup by id that finds nothing; an item Jellyfin still lists but cannot read is never gone. A series/movie whose folder still holds a live Jellyfin item is left alone — that item owns it now.</p>
+      <div class="hint" id="del-mode-line" style="margin-bottom:8px"></div>
+      <div class="btn-row">
+        <button class="btn sm" onclick="runDeletedReport()">Run report now</button>
+        <button class="btn sm" onclick="loadDeletedReport()">Refresh report</button>
+        <span id="del-report-status" style="font-size:12px;color:var(--muted)"></span>
+      </div>
+      <p class="hint" style="margin-top:6px">Run report now is always report-only: it reads Jellyfin, every instance and the local index, and changes nothing. A scan also leaves a report here.</p>
+      <div id="del-report" style="margin-top:10px;font-size:12px;overflow-x:auto"></div>
+    </div>
+  </div>
+
   <div class="save-bar">
     <button class="btn primary" onclick="saveSettings()">💾 Save settings</button>
     <span class="save-status" id="save-status"></span>
@@ -1335,6 +1353,7 @@ function populateForm(s) {
   setChk('s-arr-certfb', s.arr_sync?.certification_fallback ?? false);
   updateArrModeUI();
   loadArrReport();
+  loadDeletedReport();
 
   scheduleContrastCheck();
 }
@@ -1428,6 +1447,83 @@ function renderArrReport(r) {
     + ` Owned, but the scan cannot reach it: ${it.unreachable ?? 0}${unreachable ? ' (' + unreachable + ')' : ''} — not planned.</p>`
     + `<p class="hint">Rating fallback (${c.enabled ? 'ON' : 'off'}): ${c.blank_rating ?? 0} items have no Jellyfin rating; `
     + `${c.would_fill ?? 0} would be filled${cv ? ' (' + cv + ')' : ''}.</p>`;
+}
+
+async function runDeletedReport() {
+  const st = document.getElementById('del-report-status');
+  try {
+    await apiFetch('/api/deleted-items/report', {method: 'POST'});
+    st.textContent = 'Report started — reading Jellyfin and every instance…';
+    st.style.color = 'var(--muted)';
+    for (let i = 0; i < 180; i++) {
+      await sleep(2000);
+      const r = await apiFetch('/api/deleted-items/report');
+      if (!r.running) { renderDeletedReport(r); return; }
+    }
+    st.textContent = 'Still running — use Refresh report.';
+  } catch (e) {
+    st.textContent = '✗ ' + e;
+    st.style.color = 'var(--red)';
+  }
+}
+
+async function loadDeletedReport() {
+  try { renderDeletedReport(await apiFetch('/api/deleted-items/report')); } catch {}
+}
+
+function renderDeletedReport(r) {
+  const st = document.getElementById('del-report-status');
+  const box = document.getElementById('del-report');
+  const modeLine = document.getElementById('del-mode-line');
+  if (!st || !box) return;
+  const e = v => esc(String(v ?? ''));
+  const pct = v => (100 * (v || 0)).toFixed(1) + '%';
+  if (modeLine) {
+    modeLine.innerHTML = r.mode === 'remove'
+      ? `<b style="color:var(--yellow)">Removal is ON</b> (<code>deleted_items.mode: remove</code>): scans delete the rows`
+        + (r.arr_writes_live ? ' and strip the tags, reading every strip back.' : ', but strip no tag while Sonarr/Radarr tag writes are in dry run — rows that need a strip are kept until they are live.')
+        + ` Refused when more than ${pct(r.max_fraction)} of the index would go.`
+      : `<b>Report only</b> (<code>deleted_items.mode: report</code>): nothing is removed — the index is opened read-only and the Sonarr/Radarr clients cannot send a write.`
+        + ` To enable removal, set <code>deleted_items: {mode: remove}</code> in the YAML editor below; tags are stripped only while Tag writes are Live.`;
+  }
+  if (r.error) { st.textContent = '✗ Last report failed: ' + r.error; st.style.color = 'var(--red)'; }
+  else if (r.running) { st.textContent = 'Report running…'; st.style.color = 'var(--muted)'; }
+  const rep = r.report;
+  if (!rep) { box.innerHTML = '<span style="color:var(--muted)">No report yet — run one.</span>'; return; }
+  if (!r.error && !r.running) {
+    st.textContent = `Report: ${rep.mode === 'remove' ? 'REMOVE' : 'report only'} from ${rep.source}, ${new Date(rep.generated_at).toLocaleString()}`;
+    st.style.color = 'var(--muted)';
+  }
+  if (rep.status === 'aborted') {
+    box.innerHTML = `<p style="color:var(--red)">Pass ABORTED — ${e(rep.reason)}. Nothing was changed.</p>`;
+    return;
+  }
+  const acting = rep.mode === 'remove';
+  const ix = rep.index || {};
+  const rows = Object.entries(rep.instances || {}).map(([label, i]) => {
+    if (!i.available) return `<tr><td>${e(label)}</td><td colspan="6" style="color:var(--red)">unavailable — ${e(i.error)}</td></tr>`;
+    const labels = Object.entries(i.labels || {}).slice(0, 8).map(([k, v]) => `${e(k)} (${v})`).join(', ') || '—';
+    const flagged = i.readback_failures || i.write_errors ? ' style="color:var(--red)"' : '';
+    return `<tr${flagged}><td>${e(label)}</td><td>${i.matched}</td><td>${i.kept_live_item}</td>`
+      + `<td>${i.strip_objects} / ${i.strip_tags}</td><td style="text-align:left">${labels}</td>`
+      + `<td>${acting ? `${i.stripped_objects} / ${i.stripped_tags}` : '—'}</td>`
+      + `<td>${i.readback_failures} / ${i.write_errors}</td></tr>`;
+  }).join('');
+  const outcomes = Object.entries(rep.rows || {}).map(([k, v]) => `${e(k.replace(/_/g, ' '))} ${v}`).join(' · ') || 'none';
+  const x = rep.existence || {};
+  box.innerHTML = (rep.halted ? `<p style="color:var(--red)">Removal HALTED: ${e(rep.halted)}</p>` : '')
+    + (rep.status === 'refused' ? `<p style="color:var(--red)">Removal REFUSED: ${e(rep.reason)}</p>` : '')
+    + `<p>Index rows whose item is gone: <b>${ix.deleted_rows ?? 0}</b> of ${ix.rows ?? 0} (${pct(ix.fraction)}; bound ${pct(ix.max_fraction)})`
+    + (ix.over_bound ? ` — <span style="color:var(--red)">over the bound, removal ${acting ? 'refused' : 'would refuse'}</span>` : '')
+    + `. ${acting ? `Deleted ${ix.rows_deleted ?? 0}.` : 'Would delete all of them.'}</p>`
+    + `<p class="hint">By what their folder holds now: ${outcomes}.</p>`
+    + `<table class="dest-grid"><thead><tr><th>Instance</th><th title="series/movies in a deleted item's folder">In a deleted item's folder</th>`
+    + `<th title="a live Jellyfin item sits in the same folder, so it owns the object">Kept (live item)</th>`
+    + `<th>${acting ? 'To strip' : 'Would strip'}: objects / tags</th><th>Labels (objects)</th><th>Stripped</th><th>Read-back / errors</th></tr></thead>`
+    + `<tbody>${rows}</tbody></table>`
+    + `<p class="hint" style="margin-top:6px">Jellyfin listed ${rep.listing?.jellyfin_items ?? '?'} items (TotalRecordCount ${rep.listing?.total_record_count ?? '?'}, recount ${rep.listing?.recount ?? '?'});`
+    + ` ${x.candidates ?? 0} index rows were missing from it, ${x.answered_by_id ?? 0} of them still answered a lookup by id`
+    + ` (${x.controls_answered ?? 0}/${x.controls_sent ?? 0} live controls answered). The full list is in deleted-items-report.json beside state.db.</p>`;
 }
 
 // Fields the environment supplies are read-only here: the app never writes them

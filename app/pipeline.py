@@ -9,8 +9,7 @@ from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
-from sqlalchemy import create_engine
-from sqlalchemy.orm import Session, sessionmaker
+from sqlalchemy.orm import Session
 
 from .arr_sync import MODE_DRY_RUN, MODE_LIVE, ArrTagSync, store_report
 from .clients.jellyfin import JellyfinClient
@@ -18,6 +17,7 @@ from .clients.radarr import RadarrClient
 from .clients.readonly import ReadOnlyTransport
 from .clients.sonarr import SonarrClient
 from .config import AppConfig
+from .deleted_items import run_deleted_items
 from .overlay import BadgeGroup, apply_overlay
 from .scanner import AudioTrack, MediaInfo, SubTrack, probe_file
 from .state import (
@@ -27,6 +27,7 @@ from .state import (
     finish_scan_run,
     get_meta,
     get_session,
+    read_only_session,
     set_meta,
     start_scan_run,
     upsert_media_state,
@@ -540,6 +541,16 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
         store_report(arr.report())
         for line in arr.summary_lines():
             progress.emit(line)
+    # Roadmap U2: items Jellyfin no longer has. Its own clients and session --
+    # read-only unless deleted_items.mode is "remove" -- and its own listing.
+    if progress.cancelled:
+        progress.emit("[xenotag] Deleted items: skipped (scan cancelled)")
+    else:
+        try:
+            run_deleted_items(cfg, source=f"{scan_type} scan", emit=progress.emit)
+        except Exception as exc:
+            log.error("Deleted-items pass failed: %s", exc, exc_info=True)
+            progress.emit(f"[xenotag] Deleted items: pass failed — {exc}")
     progress.finish()
     progress.emit(f"[xenotag] Scan complete — scanned={items_count}, tagged={tagged}, images={images_modified}")
 
@@ -581,8 +592,7 @@ def _tracks_from_row(row: MediaState) -> tuple[list[AudioTrack], list[SubTrack]]
 
 def _read_only_session(db_path: str | Path) -> Session:
     """A session on ``db_path`` opened ``mode=ro`` -- for a copied production index."""
-    engine = create_engine(f"sqlite:///file:{db_path}?mode=ro&uri=true")
-    return sessionmaker(bind=engine)()
+    return read_only_session(db_path)
 
 
 def _unreachable_errors(session: Session) -> dict[str, tuple]:
