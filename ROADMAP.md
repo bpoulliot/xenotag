@@ -2191,11 +2191,11 @@ webhook resolves the wrong item.)*
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| I1 | CSRF protection: ~~form token validation on login and settings forms~~ **decided 2026-09-26: an `Origin`/`Referer` check on every state-changing request** | 4 | 1 | **SHIPPED 2026-09-27** (merged, not released) | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
+| I1 | CSRF protection: ~~form token validation on login and settings forms~~ **decided 2026-09-26: an `Origin`/`Referer` check on every state-changing request** | 4 | 1 | **SHIPPED 2026-09-27; LIVE (v1.10.0)** — proxy-shape smoke passed; browser save owed | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
 | I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | **CLOSED 2026-09-26** — moved to [Deferred / Out of Scope](#deferred--out-of-scope) | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
 | I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | **SHIPPED 2026-09-26** | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
 | I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | **SHIPPED 2026-05-05** (`53c9f3f`) | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
-| I5 | Prometheus metrics endpoint | 3 | 2 | **SHIPPED 2026-09-27** — `/metrics` + host alert rules | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
+| I5 | Prometheus metrics endpoint | 3 | 2 | **SHIPPED 2026-09-27; LIVE (v1.10.0)** — scraped, three alert rules on the host | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
 | I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | **CLOSED 2026-09-26** — superseded by I5 | — |
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
 | I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | READY (decided 2026-09-26) | — |
@@ -2349,6 +2349,15 @@ Serenity would have to be re-identified). The sibling trap is already known: `so
    - **Post-deploy smoke (the releasing session or the operator):** through
      `https://xenotag.bitmapserv.org`, save Settings once. It must say saved, and
      `docker logs xenotag` must carry no `Rejected cross-origin` line for it.
+   - **Released in v1.10.0, 2026-09-27 (the I5 session).** The browser save above needs the
+     operator's Authentik login, so it is **still owed**. What the session could do without it:
+     from inside the `swag` container (the real upstream peer), `PUT /api/settings` to production
+     with SWAG's header set (`Host`, `X-Forwarded-Host: xenotag.bitmapserv.org:443`,
+     `X-Forwarded-Proto: https`) and **no session**: `Origin: https://xenotag.bitmapserv.org` →
+     **401** (passed the check and reached the route, which refused the missing session — nothing
+     was written); `https://evil.example.org` → **403**; `http://xenotag.bitmapserv.org` → **403**.
+     The app's computed origin was `https://xenotag.bitmapserv.org:443`. The two
+     `Rejected cross-origin` lines at 08:10:44 MDT are those two negative controls, not a save.
  - **I2 — NEEDS DECISION → CLOSED 2026-09-26 (below); the premise does not hold for this deployment.** "Prevents a full
    rescan after container upgrades" assumes the upgrade loses `state.db`. It does not: production
    bind-mounts `~/docker/xenotag/config` at `/config`, `state.db` lives there, and restic backs up
@@ -2408,6 +2417,20 @@ the package metadata: `License-Expression: Apache-2.0 AND BSD-2-Clause` (its NOT
 `decorator` 4.0.10 is 2-clause BSD). pip-audit clean. The host side — the scrape job and three
 alert rules (no successful scan in 26 h, last scan failed, \*arr sync halted) — lives in the
 operator's monitoring config, not this repo. Found while building it: **B22**.
+
+**I5 — LIVE 2026-09-27 (v1.10.0).** Released with `bump=minor`; v1.10.0 carried I5, I1, P7's
+ordering half and the B21 filing — no tag-vocabulary change (`tagger.py`, `iso639.py` and
+`_tag_config_hash()` identical to v1.9.0), so no re-tag. Deployed 14:09Z; `state.db` backed up
+after a clean stop as `state.db.bak-20260927-pre-i5` (WAL checkpointed, no `-wal`/`-shm`);
+`:1.9.0` is still local for a back-out. At startup the seed read scan 148 back exactly
+(completed 12:52:11Z, 9,399 scanned / 9,389 tagged / 9,341 images, 4,241 s) and no halt. The
+host's Prometheus scrapes `xenotag:7755` as job `xenotag` over `docker_frontend` (a network both
+were already on); target UP. Rules `XenotagNoSuccessfulScan` (> 26 h), `XenotagLastScanFailed`,
+`XenotagArrSyncHalted` (critical) were proven with `promtool test rules` — a must-fire and a
+must-not-fire case each, and six mutated expressions each fail the tests — and each selector
+returns the one live series. Smoke checks: I1 as recorded under its item; P7 — production has no
+`prefer_languages` (`[]`, the byte-identical default), `/api/languages` and `/preview/image` answer
+200. A 200 scrape is absent from `docker logs xenotag` as designed.
 
 **I8 — SHIPPED 2026-09-24.** `jellyfin.api_key`, `auth.secret_key` and `webhooks.secret` can now
 be supplied by `JELLYFIN_API_KEY` / `XENOTAG_SECRET_KEY` / `XENOTAG_WEBHOOK_SECRET`, or by the
@@ -2748,7 +2771,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **BLOCKED on [B21]** (decided 2026-09-26; work held in PR #95) | — |
-| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **NEEDS DECISION** (wrap / shrink / count) · ordering: **SHIPPED 2026-09-27** (merged, not released) | — |
+| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **NEEDS DECISION** (wrap / shrink / count) · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
