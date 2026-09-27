@@ -42,6 +42,7 @@ from pathlib import Path
 
 import httpx
 
+from . import metrics
 from .clients.arr import ArrClient
 from .config import AppConfig
 
@@ -336,6 +337,8 @@ class ArrTagSync:
         self.items: Counter = Counter()
         self.unowned_examples: dict[str, list] = {}
         self.cert = {"blank_rating": 0, "would_fill": 0, "conflicts": 0, "by_value": Counter(), "examples": []}
+        if self.live:
+            metrics.arr_instances(list(self.stats))
 
     @property
     def live(self) -> bool:
@@ -486,6 +489,7 @@ class ArrTagSync:
                 st.write_errors += 1
                 log.error("[%s] %s: tag sync error: %s", owner.client.label, item.get("Name"), exc)
                 if self.live:
+                    metrics.arr_write(owner.client.label, metrics.WRITE_ERROR)
                     self._halt(f"{owner.client.label}: {type(exc).__name__}: {exc}")
 
     def _account(self, plan: TagPlan, st: _InstanceStats, item: dict) -> None:
@@ -504,6 +508,7 @@ class ArrTagSync:
     def _halt(self, reason: str) -> None:
         if self.halted is None:
             self.halted = reason
+            metrics.arr_halt()
             log.error("*arr tag writes HALTED for the rest of this scan: %s", reason)
             self._emit(f"[xenotag] *arr tag writes HALTED for the rest of this scan: {reason}")
 
@@ -556,6 +561,7 @@ class ArrTagSync:
         problems = readback_problems(before, after, intended, lambda t: by_id.get(t, "").startswith(self.prefixes))
         if problems:
             st.readback_failures += 1
+            metrics.arr_write(client.label, metrics.READBACK_MISMATCH)
             st.example(
                 "readback_failures", {"item": item.get("Name"), "object_id": owner.object_id, "problems": problems}
             )
@@ -566,6 +572,7 @@ class ArrTagSync:
             return
         client.objects[owner.object_id] = after
         st.written += 1
+        metrics.arr_write(client.label, metrics.WRITTEN)
 
     def _still_owned(self, obj: dict, item: dict, owner: _Owner) -> bool:
         field_name = dict(owner.client.MATCH_KEYS)[owner.by]
