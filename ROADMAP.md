@@ -37,7 +37,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | **FIXED 2026-09-24** | — |
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **LIVE 2026-09-26** (v1.7.0) — all five instances written and read back | — |
 | B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | READY (decided 2026-09-26) | — |
-| B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | READY (decided 2026-09-26) | — |
+| B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | **FIXED 2026-09-27** (merged, not released) | — |
 | B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | READY | — |
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27; LIVE (v1.8.0)** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged; production re-tagged 2026-09-27 09:00–10:15Z | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
@@ -49,6 +49,46 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | NEEDS DECISION | — |
 | B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | NEEDS DECISION | — |
 | B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | READY | — |
+| B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | NEEDS DECISION | — |
+| B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | NEEDS DECISION | — |
+
+**B20 — FILED 2026-09-27, found while fixing B7. Not fixed here. NEEDS DECISION.**
+
+B7's operator decision sends a language tag that is not 2–3 ASCII letters to `UND` with a
+WARNING naming the file; its example was `"e`. A census of production's `jellyfin.db` (copied
+2026-09-27; every embedded audio and subtitle stream in the library) found **six** such values,
+and only one is garbage: `"eng"` (1 audio stream, *The Uncomfortable Truth*). The others come
+from old `.ogm` episodes — `English[eng]` (28 audio + 28 subtitle streams), `Japanese[jpn]` (28
+audio), `English` (25 audio + 25 subtitle), `Japanese` (25 audio) — in **3 series** on the
+index: *Power Dolls*, *Hyper Police*, *Tenchi in Tokyo*. The pre-B7 rule cut them to `EN`/`JA`,
+right by accident; B7 makes each series `xt-UND` and drops `xt-EN`, `xt-JA`, `xt-dual-audio`
+and `xt-sub-EN` (audio goes to the \*arrs too). Nothing is silent: every scan logs a WARNING per
+track naming the file. **Question:** fix the files' metadata (remux; the warnings are the list),
+or teach the rule one more shape? Options: **(a)** leave B7's rule, fix the metadata; **(b)**
+accept `Name[xxx]` and read the bracketed code (it is then an ordinary 3-letter code); **(c)**
+(b) plus English language names (`English`, `Japanese`) looked up in the ISO table's names —
+the generated table would need to carry them. **Recommendation: (b).** The bracketed code is an
+ISO 639-2 code already, so nothing is guessed; bare names (c) are a lookup by English spelling,
+which is a new vocabulary. The census: `scripts/measure_language_renames.py`.
+
+**B19 — FILED 2026-09-27, found while fixing B7. Not fixed here. NEEDS DECISION.**
+
+B7 made every language tag its ISO 639-1 code, from the complete table. Three of those codes
+are also tags xenotag emits for something else, in the same `xt-` namespace: **Sindhi `SD`**
+(the resolution tag), **Divehi `DV`** (Dolby Vision) and **South Ndebele `NR`** (the rating
+"NR"). Before B7 they were `SN`, `DI` and `NB` (the first-two-letters fallback), which were
+wrong but distinct. B7's acceptance test (no 3-letter fallback collides with any other tag)
+holds; this is the 2-letter half, and the test pins the three
+(`tests/test_language_codes.py::test_the_2_letter_codes_that_are_also_other_tags_are_known`) so a
+new one is seen. **Latent:** the 2026-09-27 census of production's `jellyfin.db` found no
+stream in `snd`, `div`, `nbl`, `sd`, `dv` or `nr` (0 of 257,545 audio and subtitle streams; the
+same query finds the 10 `khm`/`gla` streams). **Question:** does a language that spells
+another tag keep its standard code? Options: **(a)** yes — accept the overlap, it is 0 items;
+**(b)** those three take their 3-letter form (`SND`, `DIV`, `NBL`), a hand-kept exception list
+next to the generated table; **(c)** give language tags their own namespace (`xt-lang-EN`, as
+subtitles already have `sub-`) — a full vocabulary rename on every item. **Recommendation:
+(a)**, revisited only if a library ever carries one of them; (c) is the only clean fix and costs
+a re-tag of everything for no item today.
 
 **B18 — FILED 2026-09-27, found while reading back B9's re-tag. Not fixed here. READY.**
 
@@ -756,7 +796,91 @@ accessible file". Both fail safe and are left for the nightly scan. The import-t
 production's media mounts was not measured. It matters only if U11 wires a webhook, so it belongs
 to U11.
 
-**B7 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
+**B7 — FIXED 2026-09-27 (merged, not released).** Takes effect at the next release, and **that
+release's first scan is a full re-tag with live \*arr writes**: `TAG_VOCABULARY` went 2 → 3, so
+`_tag_config_hash()` changes for every install (defaults `09d02a2ffe47df66` → `d0c577fe5620e689`).
+
+**What shipped.** Operator decision (c), as written:
+- `app/iso639.py` — **all 506 ISO 639-2 codes**, bibliographic and terminologic (20 B/T pairs),
+  → ISO 639-1; **203** have a 2-letter code. **Generated, never typed:**
+  `scripts/generate_iso639_table.py` reads the Library of Congress list
+  (`https://www.loc.gov/standards/iso639-2/ISO-639-2_utf-8.txt`, retrieved 2026-09-27, sha256
+  in the module header), validates it (five fields a line, 3-letter codes, 2-letter alpha2, no
+  duplicates, known pairs both ways) and refuses to write otherwise; `--check` compares with the
+  committed module. Cross-checked once against `pycountry` 26.2.16 in a scratch venv (not a
+  dependency): all 440 codes both carry agree; the 66 it lacks are collective/special codes with
+  no 639-1. No runtime dependency, nothing downloads at runtime.
+- `scanner._lang3_to_lang2()` — 639-1 uppercase where one exists (`khm` → `KM`, `per`/`fas` →
+  `FA`); else the 3-letter code uppercase (`egy` → `EGY`, `mul` → `MUL`, an ISO 639-3 `yue` →
+  `YUE`); a 2-letter code as itself; `und`/`unknown`/empty → `UND` quietly; **`zxx` and anything
+  not 2–3 ASCII letters → `UND` with a WARNING naming the file**. One guard the decision implies:
+  a 3-letter code *outside* the table that would spell a scanner tag (`aac`, `dts`, `hlg`) →
+  `UND` with a WARNING — the table's own 301 three-letter labels collide with nothing (tested).
+- `MediaInfo.languages` now comes from the audio tracks: `_detect_languages()` carried a second
+  copy of the old fallback (it fed the index's `languages` column and the media filter), so it
+  is gone, and a bad track warns once, not twice.
+- External subtitle names: only a letters-only part is a language, so `Movie.10.srt` (a track
+  number) is `UND`, no longer `xt-sub-10`. This is the one behaviour beyond the decision's
+  letter: a number in a file name is not a malformed language tag, so it does not warn either.
+- Every emitted language tag is legal in Radarr's `[a-z0-9-]` (tested over the whole table).
+
+**Acceptance.** `tests/test_language_codes.py` (70 tests): the table's size and shape; every one
+of the 42 pre-B7 mappings keeps its output (all 42 agree with the LoC table — **no existing
+mapping renames**); every code traced on production, old → new; the malformed/`zxx`/quiet
+cases, with the WARNING's file name asserted; **no 3-letter fallback collides with any other
+emitted tag**, and the check is shown to fail on the old rule (9 red) and without the guard (5
+red); the committed module is the generator's output unedited (a one-code edit is caught).
+`tests/test_tag_vocabulary.py` now runs over every language label the table can emit; it
+builds the non-language vocabulary separately, because subtracting the language set from the
+whole had hidden exact overlaps. That is how B19 was found.
+
+**The renames, measured** (`scripts/measure_language_renames.py`, `--self-test` in CI). Instrument:
+copies of production `state.db` and `jellyfin.db` (+`-wal`/`-shm`, 2026-09-27 ~04:40Z).
+`MediaStreamInfos.Language` is ffprobe's raw tag (it holds `"eng"` with its quotes, and `bos`,
+`gla` where a direct ffprobe of those files did). External subtitles are read from the file names
+beside each video. Each index row is labelled by the pre-B7 rule and by the new function,
+imported. **Self-check:** the pre-B7 rule reproduces the index's stored labels on **9,380 of
+9,390** rows it can see (the probe refuses below 95%). Of the 10,585 rows, 1,194 have no Jellyfin
+item at their path (orphans) and 1 has no file, so they were not measured. A scan never reaches
+them either. **57 rows change:** 16 in audio (Jellyfin, \*arrs, poster) and 41 in subtitles only
+(Jellyfin, poster). That is 131 tag removals and 93 additions.
+
+| raw code | was | now | tracks | | raw code | was | now | tracks |
+|---|---|---|--:|---|---|---|---|--:|
+| `dut` | `DU` | `NL` | 19 | | `kan` | `KA` | `KN` | 2 |
+| `gre` | `GR` | `EL` | 12 | | `mal` | `MA` | `ML` | 2 |
+| `enm` | `EN` | `ENM` | 10 | | `mao` | `MA` | `MI` | 1 |
+| `nob` | `NO` | `NB` | 10 | | `bur` | `BU` | `MY` | 1 |
+| `may` | `MA` | `MS` | 8 | | `bos` | `BO` | `BS` | 1 |
+| `ben` | `BE` | `BN` | 5 | | `gla` | `GL` | `GD` | 1 |
+| `per` | `PE` | `FA` | 3 | | `her` | `HE` | `HZ` | 1 |
+| `ice` | `IC` | `IS` | 3 | | `fil` | `FI` | `FIL` | 1 |
+| `khm` | `KH` | `KM` | 2 | | `mac` | `MA` | `MK` | 1 |
+| `egy` | `EG` | `EGY` | 2 | | `kaz` | `KA` | `KK` | 1 |
+| `baq` | `BA` | `EU` | 2 | | `kir` | `KI` | `KY` | 1 |
+| `zxx` | `ZX` | `UND` | 1 | | `mon` | `MO` | `MN` | 1 |
+| `"eng"` | `"E` | `UND` | 1 | | `English[eng]`, `English` | `EN` | `UND` | 6 |
+| file `.10.`…`.30.` | `10`…`30` | — (UND) | 44 | | `Japanese[jpn]`, `Japanese` | `JA` | `UND` | 3 |
+
+Audio tags by row: `PE`→`FA` 3, `EG`→`EGY` 2, `KH`→`KM`, `MA`→`MI`, `BU`→`MY`, `BO`→`BS`,
+`GL`→`GD`, `HE`→`HZ` 1 each, `ZX`→`UND` 1, `"E`→`UND` 1, and 3 `.ogm` series lose `EN JA
+dual-audio sub-EN` for `UND` (B20). Subtitle tags: `sub-DU`→`sub-NL` 17, `sub-GR`→`sub-EL` 12,
+`sub-NO`→`sub-NB` 10, `sub-MA`→`sub-MS`/`ML`/`MK` 9, `sub-BE`→`sub-BN` 5, `sub-IC`→`sub-IS` 3,
+`sub-BA`→`sub-EU` 2; `sub-ENM` added on 10 rows beside their `sub-EN`; `sub-10`…`sub-30` removed
+from 5 rows (44 tag applications). **Two the filing thought right by luck were wrong:** audio `GL` was
+`gla` (Scottish Gaelic, `GD`), not Galician, and `BO` was `bos` (Bosnian, `BS`), not Tibetan. And
+`HE` on *Her Body* was `her` (Herero), not Hebrew, and one episode's `fil` subtitle (Filipino) was
+read as Finnish `FI`. **The three untraced codes:** `MA` ← `mao` (Māori → `MI`) in audio, and in subtitles
+`may`/`mal`/`mac` (→ `MS`/`ML`/`MK`); `BU` ← `bur` (Burmese → `MY`); `EG` ← `egy` (Egyptian
+(Ancient), which has no 639-1 → `EGY`).
+
+**Worth knowing before the release:** `enm` is *Middle* English; the 10 files are surely
+mislabelled English, but the table is literal, so they gain `xt-sub-ENM`. Norwegian now splits
+by the code the muxer wrote (`nor` → `NO`, `nob` → `NB`). The WARNING lines name every
+`"eng"`/`zxx`/`.ogm` file on each scan that probes it. Filed: **B19** (Sindhi/Divehi/South
+Ndebele spell `SD`/`DV`/`NR`; 0 streams) and **B20** (the `.ogm` spellings).
+
+**B7 — FILED 2026-09-25, found while fixing B5. Fixed 2026-09-27 (above).**
 
 `scanner._lang3_to_lang2()` maps 42 ISO 639-2 codes and, for anything else, returns
 `lang3[:2].upper()`. Evidence from the production index (copied 2026-09-25): *The Uncomfortable
@@ -901,7 +1025,7 @@ restart (stops writes, removes nothing); to strip the tags, the recipe in step 6
 
 **Still open:** B9 (Radarr refuses `xt-h.264`/`xt-h.265`/`xt-dd+` — 4,591 applications skipped,
 so ~3 in 5 radarr/general films have no codec tag there; FIXED and LIVE 2026-09-27), B7 (odd language labels such as
-`xt-zx`, `xt-ma` now exist as \*arr labels), B8 (a webhook would process the wrong item; now
+`xt-zx`, `xt-ma` now exist as \*arr labels; FIXED 2026-09-27, merged, not released), B8 (a webhook would process the wrong item; now
 live, but 0 webhooks in 30 days and B8 cannot cross-tag), B11 (FIXED 2026-09-26), B12, B13.
 
 **B5 — FIXED 2026-09-25. Sonarr/Radarr writes shipped OFF (dry run); going live was the operator's step (done 2026-09-26, above).**

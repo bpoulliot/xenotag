@@ -20,6 +20,7 @@ import httpx
 from app import pipeline, scanner
 from app.clients.jellyfin import JellyfinClient
 from app.config import AppConfig, TagsConfig
+from app.iso639 import ISO639_2_TO_1
 from app.scanner import AudioTrack, MediaInfo, SubTrack
 from app.tagger import build_tags, tag_label
 
@@ -66,20 +67,29 @@ def _audio_codecs() -> set[str]:
     return driven | set(scanner._AUDIO_CODEC_MAP.values()) | set(scanner._AUDIO_QUALITY_RANK)
 
 
-def emitted_vocabulary(tags: TagsConfig) -> set[str]:
-    """Every label (the part after the prefix) the tagger can emit from its own tables."""
-    langs = set(scanner.LANG_MAP.values()) | {"UND"}
+def language_labels() -> set[str]:
+    """Every language label the scanner can emit from its ISO 639-2 table (B7)."""
+    return {scanner._lang3_to_lang2(code) for code in ISO639_2_TO_1}
+
+
+def non_language_vocabulary(tags: TagsConfig) -> set[str]:
+    """Every label that is not a language: built on its own, so a language label that
+    spells the same string as one of these is still visible (B7)."""
     return (
         {label for _, label in scanner.RESOLUTION_THRESHOLDS}
         | {"SD"}
         | set(scanner._VIDEO_CODEC_MAP.values())
         | _hdr_types()
         | _audio_codecs()
-        | langs
-        | {f"sub-{lang}" for lang in langs - {"UND"}}
         | {tags.dual_audio_tag, tags.multi_audio_tag}
         | set(RATINGS)
     )
+
+
+def emitted_vocabulary(tags: TagsConfig) -> set[str]:
+    """Every label (the part after the prefix) the tagger can emit from its own tables."""
+    langs = language_labels()
+    return non_language_vocabulary(tags) | langs | {f"sub-{lang}" for lang in langs - {"UND"}}
 
 
 def collisions(spell, vocabulary) -> dict[str, set[str]]:
