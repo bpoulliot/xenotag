@@ -37,7 +37,7 @@ how long. Five items turned out to be **already built** (U3, U4, P3, I4) or **de
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **LIVE 2026-09-26** (v1.7.0) — all five instances written and read back | — |
 | B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | NEEDS DECISION | — |
 | B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | NEEDS DECISION | — |
-| B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. | 3 | 2 | NEEDS MEASUREMENT | — |
+| B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | READY | — |
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | NEEDS DECISION | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
@@ -383,7 +383,7 @@ NEEDS MEASUREMENT: which Jellyfin 10.11 query filters by provider id server-side
 client-side filter over a `ProviderIds`-only listing is the fix), measured on dev before choosing.
 
 *Sweep 2026-09-26 — **NEEDS MEASUREMENT**, confirmed; queueable.* **What:** on **jellyfin-dev**
-(production's 10.11.10) with the seeded *Firefly* / *Serenity*: (1) whether any `/Items` filter
+(which runs **12.1.0**, not production's 10.11.10 — see I14) with the seeded *Firefly* / *Serenity*: (1) whether any `/Items` filter
 narrows by provider id server-side — the `AnyProviderIdEquals` spellings, `HasTvdbId`/`HasTmdbId`
 plus a client-side check — recording `TotalRecordCount` for each; (2) the **folder** route, which
 needs no provider query at all: Sonarr's payload carries `series.path`, Radarr's
@@ -395,6 +395,95 @@ any of them even have a webhook pointed at xenotag? (0 webhooks logged in 30 day
 if none, B8's value is nil until one is added, which is itself worth recording.) **Roughly 1–2 h.**
 Part 2 of the defect (`get_item_by_id()` requests no `Path`/`MediaSources`) needs no
 measurement — it rides along with whichever fix follows.
+
+**B8 — MEASURED 2026-09-27 (04:07–04:40Z), relabelled READY.** Instrument:
+`scripts/measure_webhook_resolution.py` (`--self-test` runs first on every invocation and fails
+on a sabotaged classifier, filter verdict or path normaliser; the resolver it scores against is
+B5's own `InstanceIndex`/`item_folders()`, imported rather than copied). Only GETs reached
+production Jellyfin and the five live \*arrs; prod xenotag was idle and its next scan is 09:00Z.
+The dev \*arrs got two throwaway webhooks and a throwaway film and series, all removed again.
+
+ 1. **No `/Items` parameter filters by provider id, on either version.** Production's own
+    OpenAPI document (10.11.10) lists **86** `/Items` query parameters: none is a provider-id
+    equality and none is a path filter; the only provider parameters are the booleans
+    `hasTvdbId`/`hasTmdbId`/`hasImdbId`. Eight spellings were sent anyway, each for an id in the
+    library and for one that is not (`987654321`, checked absent first):
+    `AnyProviderIdEquals=` `Tvdb.id` (today's) / `tvdb.id` / `Tvdb:id` / `Tvdb=id`,
+    `ProviderIds.Tvdb=`, `TvdbId=`, `tvdbId=`, `HasAnyProviderId=` — and the same eight for Tmdb.
+    **Production: all 16 return `TotalRecordCount` 9,399 for the present id AND the absent one** —
+    the whole library, i.e. ignored. jellyfin-dev (12.1.0): the same, 6 of 6 every time, so a
+    Jellyfin upgrade does not fix this. `searchTerm=<id>` returns 0 both ways (it searches names).
+ 2. **The folder route resolves everything B5 can own, and nothing wrong.** Every object in every
+    production catalogue (9,618: radarr 7,106, radarr-4k 75, sonarr-general 1,074, sonarr-4k 7,
+    sonarr-anime 1,356) was turned into the payload its webhook would carry and resolved against
+    one production listing, scored against B5's ownership (id AND folder agree):
+
+    | Route | right | wrong | more than one | none | one item, no B5 owner |
+    |---|---:|---:|---:|---:|---:|
+    | **folder** (`item_folders()` of the payload path) | **9,359** | **0** | **0** | 257 | 2 |
+    | provider id, filtered client-side | 9,209 | 0 | 150 | 257 | 2 |
+    | folder, then provider id if folder finds none | 9,359 | 0 | 0 | 256 | **3** |
+
+    **HD/4K twins:** all 133 films and 12 series that exist in both instances resolve to their own
+    copy by folder (145/145); by provider id, 1 of 145 is right and 144 return both copies. The 6
+    other provider-id multiples are unrelated items sharing an id (e.g. *Heavenly Chronicles* and
+    *Utsu no Miko* on one Tvdb id). **The provider-id fallback adds 0 right answers and 1 wrong
+    one:** radarr-4k's *Mission: Impossible – Rogue Nation* has no Jellyfin item, and its Tmdb id
+    finds the HD film, which a 4K webhook must not process. The 257 folder misses are all objects
+    with no Jellyfin item: 247 films with `hasFile: false` and 10 series with 0 episode files (9
+    sonarr-general, 1 sonarr-anime; none has a Jellyfin series of its name either). The 2 "no B5 owner" cases are right for a webhook: *Laughing Target*'s
+    Jellyfin item has **no provider ids at all** (only the folder can find it), and *Cunk on
+    Britain* is B5-ambiguous (Jellyfin's Tmdb id is also *Cunk on Earth*'s), so B5 still refuses
+    the \*arr write. Dev fixtures: Firefly and Serenity both resolve by folder and by id (1/1 each).
+ 3. **Payload fields, captured from real events on the dev \*arrs** (Sonarr 4.0.18.2978 and Radarr
+    6.3.0.10514, production's versions; `SeriesAdd`/`SeriesDelete`, `MovieAdded`/`MovieDelete`,
+    `Test`): Sonarr sends `series.path`, Radarr `movie.folderPath`, and each **equals the object's
+    `path`**. Both also carry `instanceName`, but all five production instances are named plain
+    "Sonarr"/"Radarr", so it cannot tell HD from 4K; the folder does.
+ 4. **Cost of the listing:** `/Items?Recursive=true&IncludeItemTypes=Series,Movie&Fields=ProviderIds,Path`
+    on production returned 9,399 items (6,944 films, 2,455 series) in **14,592,300 bytes**, in
+    0.213 / 0.314 / 0.235 s over three consecutive calls from the host (warm; a cold cache was not
+    measured). Adding `MediaSources` makes it **38.7 MB and 17.1 s**, so the listing must not ask
+    for it. For scale: a webhook already fetches the whole radarr catalogue (37 MB) when \*arr sync
+    is on.
+ 5. **Part 2, confirmed on production:** `get_item_by_id()`'s fields return neither `Path` nor
+    `MediaSources` (a film and a series checked); adding `Path` returns it. `MediaSources` is not
+    needed: 138 films have more than one media source (the *Merge Versions* plugin), and for **all**
+    of them `MediaSources[0].Path` is the item's own file (0 mismatches of 6,944 films).
+ 6. **Is any webhook pointed at xenotag? No.** `GET /api/v3/notification` returns an **empty list on
+    all five** production \*arrs (0 notifications of any kind). The reader was checked both ways:
+    it lists the webhook on the dev \*arrs while one exists and 0 after it is removed. Production
+    Jellyfin has **no Webhook plugin** (16 plugins, none a webhook sender), so the Jellyfin source
+    is dead too. **B8's value is nil until a webhook is added**, and adding one is a decision (U11).
+
+**Spec (READY).**
+
+ - **Sonarr/Radarr: resolve by folder only.** Take the payload's `series.path` (Sonarr) or
+   `movie.folderPath` (Radarr), list `/Items?Recursive=true&IncludeItemTypes=Series` (or `Movie`)
+   `&Fields=Path`, and keep the items where `_norm_path(payload_path) in item_folders(item)` —
+   B5's two helpers from `app/arr_sync.py`, imported (or moved somewhere both modules can import),
+   **never a second copy**. Exactly one match: fetch it with `get_item_by_id()` and process it.
+   None: log "not in Jellyfin yet" and return; the nightly scan will reach it. More than one: log
+   and return, never guess (none happen in production today). A payload with no path: return None,
+   as a missing id does today.
+ - **No provider-id fallback,** and delete `find_item_by_provider_id()` (its only callers are the
+   two branches being replaced): no parameter can make it work on 10.11.10 or 12.1.0, and as a
+   client-side fallback it only ever added the wrong twin.
+ - **Part 2:** `get_item_by_id()` requests `ITEM_FIELDS` (which carries `Path`) so it returns what
+   the scan's listing does. `MediaSources` is optional (item 5 above).
+ - **Tests:** HD and 4K items with the same Tvdb/Tmdb id resolve to the one in the payload's folder;
+   a trailing slash on the payload path still matches; a film folder never matches a series item
+   or the other way round; a folder with no item returns None without a provider-id lookup; the
+   Jellyfin branch receives an item with `Path`.
+
+**Not measured, and it bounds what the fix buys.** The \*arrs notify nothing, Jellyfin included, so
+Jellyfin learns of an import only from its real-time monitor (on for all 17 media libraries, with
+`LibraryMonitorDelay` 60 s and `LibraryUpdateDuration` 30 s) or its 08:00 library scan. A webhook is
+handled immediately, so a **new** import will usually resolve to nothing yet, and an **upgrade**
+will find the item with its old file still in `Path`, which the handler already turns into "no
+accessible file". Both fail safe and are left for the nightly scan. The import-to-Jellyfin lag on
+production's media mounts was not measured. It matters only if U11 wires a webhook, so it belongs
+to U11.
 
 **B7 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
@@ -1148,6 +1237,34 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
 | U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted and collapse what is redundant or never queried. | 4 | 3 | **CLOSED 2026-09-23** — measured, then the operator ruled out cutting tags; what remains is [P7] | — |
 | U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | NEEDS DECISION | — |
+| U11 | **Nothing sends xenotag a webhook.** 0 notifications on all five production \*arrs and no Jellyfin webhook plugin, so U3's event path (and B8's fix) never runs; wiring one adds an event-driven writer to live \*arrs | 2 | 2 | NEEDS DECISION | — |
+
+**U11 — FILED 2026-09-27, found while measuring B8. Not built here.**
+
+Measured, read-only: `GET /api/v3/notification` is an empty list on sonarr-general, sonarr-4k,
+sonarr-anime, radarr and radarr-4k, and production Jellyfin's 16 plugins include no webhook
+sender, so no event has ever reached `POST /webhook/{source}` (0 logged). **The question:** should
+the \*arrs call xenotag on `Download`/`Rename` at all, given that the nightly scan already reaches
+every item within 24 h? What wiring one involves, measured:
+
+ - **An open endpoint.** Production's `webhooks.secret` is empty, so the route takes any POST.
+   Set it first (`XENOTAG_WEBHOOK_SECRET` or its `_FILE` twin, I8) and put `?token=` in each
+   \*arr's webhook URL.
+ - **An address.** All five \*arrs run in the VPN container's network namespace: `http://xenotag:7755`
+   does not resolve there (curl exit 6), and xenotag's `docker_vpn` IP (172.23.0.4 today) answers
+   `GET /health` 200. That IP is assigned by Docker and can change, so it would need pinning.
+ - **A second writer to live \*arrs.** With B5 live, every webhook runs the \*arr tag sync for its
+   item, so a webhook is a write path outside the scan's schedule.
+ - **Timing.** A webhook is handled immediately, but Jellyfin sees an import only through its
+   real-time monitor (60 s `LibraryMonitorDelay`), so an immediate run mostly finds nothing yet
+   (B8's "not measured" note). A useful build would retry after the monitor's delay. The lag on
+   production's media mounts should be measured before choosing that delay.
+
+**Options:** (1) leave it unwired. The nightly scan is the mechanism, B8 still gets fixed so the
+dormant path is correct, and U3's GitHub #22 closes as built but unused. (2) Wire all five after
+B8 ships: secret, pinned address, `Download`+`Rename`, plus a resolve retry.
+**Recommendation: (1)** unless a day's latency on new imports has actually bothered someone. It
+is the operator's call because it decides whether xenotag becomes event-driven at all.
 
 **Sweep 2026-09-26 — U2, U3, U4.**
 
@@ -1447,6 +1564,23 @@ webhook resolves the wrong item.)*
 | I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | READY (measured 2026-09-26) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
 | I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure | 3 | 2 | NEEDS MEASUREMENT | — |
+| I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | NEEDS DECISION | — |
+
+**I14 — FILED 2026-09-27, found while measuring B8. Not fixed here.**
+
+`jellyfin-dev` reported `"Version":"12.1.0"` on start. `~/.mf-dev/configs/jellyfin/log/log_20260925.log`
+shows 12.1.0 applying 21 database migrations at 2026-09-25 20:12 (the B5 session's start). Production's
+`/System/Info/Public` says 10.11.10. Every dev measurement since then that assumes "dev = production's
+Jellyfin" is off by a major version. B8 was affected, and its answers were re-taken on production by
+GET. B12's measurement plan above ("on **jellyfin-dev** … write `xt-` tags … refresh") is exposed the same
+way: a tag-loss behaviour found on 12.1 may not be 10.11.10's. Jellyfin does not downgrade a migrated
+database, so pinning the image alone would not start on the existing config. **Options:** (1) pin
+`jellyfin-dev` to production's image version and re-seed a fresh `~/.mf-dev/configs/jellyfin`, keeping
+the 12.1 one aside for upgrade testing. (2) Keep 12.1 and write in every dev measurement that it is
+not production's version. **Recommendation: (1)**, since dev exists to reproduce production. It is the
+operator's call because re-seeding replaces the dev library that earlier sessions seeded (Firefly and
+Serenity would have to be re-identified). The sibling trap is already known: `sonarr-dev` pulls
+`:develop` and has to be pinned by an override.
 
 **Sweep 2026-09-26 — I1–I6.**
 

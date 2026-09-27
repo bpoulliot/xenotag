@@ -78,6 +78,11 @@ jobs:
       - name: Resolution threshold probe self-test
         run: python scripts/measure_resolution_thresholds.py --self-test
 
+      # B8: scores webhook routes against B5's own item_folders()/InstanceIndex,
+      # so a fix that moves those helpers breaks this step, not the probe silently.
+      - name: Webhook resolution probe self-test
+        run: python scripts/measure_webhook_resolution.py --self-test
+
       # Two steps: --self-test proves the probe can still see a planted
       # collision, and the bare run is the B3 acceptance criterion itself --
       # it exits non-zero if any poster width is served another width's tile.
