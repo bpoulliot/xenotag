@@ -690,6 +690,11 @@ async def preview_image(
     prefer_languages: str = "",
     item_id: str = "",
     sample: str = "",
+    adapt: str = "false",
+    backup_video_color: str = "",
+    backup_audio_color: str = "",
+    backup_sub_color: str = "",
+    backup_rating_color: str = "",
 ):
     _require_user(request)
     cfg_img = _image_config_from_params(
@@ -707,6 +712,11 @@ async def preview_image(
         show_subs=show_subs,
         show_rating=show_rating,
         prefer_languages=prefer_languages,
+        adapt=adapt,
+        backup_video_color=backup_video_color,
+        backup_audio_color=backup_audio_color,
+        backup_sub_color=backup_sub_color,
+        backup_rating_color=backup_rating_color,
     )
 
     # Build badge groups from preview params
@@ -715,21 +725,21 @@ async def preview_image(
     if cfg_img.show_video_badges:
         video_labels = [x for x in [resolution, video_codec, hdr_type] if x]
         if video_labels:
-            groups.append(BadgeGroup(video_labels, cfg_img.video_badge_color, cfg_img.badge_text_color))
+            groups.append(BadgeGroup(video_labels, cfg_img.video_badge_color, cfg_img.badge_text_color, cfg_img.backup_video_badge_color))
 
     if cfg_img.show_audio_badges:
         audio_labels = _preview_order([a.strip() for a in audio.split(",") if a.strip()], cfg_img.prefer_languages)
         if audio_labels:
-            groups.append(BadgeGroup(audio_labels, cfg_img.audio_badge_color, cfg_img.badge_text_color))
+            groups.append(BadgeGroup(audio_labels, cfg_img.audio_badge_color, cfg_img.badge_text_color, cfg_img.backup_audio_badge_color))
 
     if cfg_img.show_sub_badges:
         sub_labels = _preview_order([s.strip() for s in subtitles.split(",") if s.strip()], cfg_img.prefer_languages)
         if sub_labels:
-            groups.append(BadgeGroup(sub_labels, cfg_img.sub_badge_color, cfg_img.badge_text_color))
+            groups.append(BadgeGroup(sub_labels, cfg_img.sub_badge_color, cfg_img.badge_text_color, cfg_img.backup_sub_badge_color))
 
     rating_group = None
     if cfg_img.show_rating_badge and rating:
-        rating_group = BadgeGroup([rating], cfg_img.rating_badge_color, cfg_img.badge_text_color)
+        rating_group = BadgeGroup([rating], cfg_img.rating_badge_color, cfg_img.badge_text_color, cfg_img.backup_rating_badge_color)
 
     base_image_bytes: bytes | None = None
     if item_id:
@@ -803,6 +813,11 @@ def _image_config_from_params(
     show_subs: str = "true",
     show_rating: str = "true",
     prefer_languages: str = "",
+    adapt: str = "false",
+    backup_video_color: str = "",
+    backup_audio_color: str = "",
+    backup_sub_color: str = "",
+    backup_rating_color: str = "",
 ) -> ImageConfig:
     """The ImageConfig the Badge settings controls describe right now.
 
@@ -831,6 +846,12 @@ def _image_config_from_params(
         show_sub_badges=show_subs.lower() not in ("false", "0"),
         show_rating_badge=show_rating.lower() not in ("false", "0"),
         prefer_languages=prefer_languages,
+        # Roadmap P6: the checkbox and the backup palette's four pickers.
+        adapt_badge_colors=adapt.lower() in ("true", "1"),
+        backup_video_badge_color=backup_video_color or default.backup_video_badge_color,
+        backup_audio_badge_color=backup_audio_color or default.backup_audio_badge_color,
+        backup_sub_badge_color=backup_sub_color or default.backup_sub_badge_color,
+        backup_rating_badge_color=backup_rating_color or default.backup_rating_badge_color,
     )
 
 
@@ -847,6 +868,11 @@ async def badge_contrast_check(
     show_audio: str = "true",
     show_subs: str = "true",
     show_rating: str = "true",
+    adapt: str = "false",
+    backup_video_color: str = "",
+    backup_audio_color: str = "",
+    backup_sub_color: str = "",
+    backup_rating_color: str = "",
 ):
     """Rendered contrast of the badge colours being chosen (roadmap B2).
 
@@ -868,6 +894,11 @@ async def badge_contrast_check(
         show_audio=show_audio,
         show_subs=show_subs,
         show_rating=show_rating,
+        adapt=adapt,
+        backup_video_color=backup_video_color,
+        backup_audio_color=backup_audio_color,
+        backup_sub_color=backup_sub_color,
+        backup_rating_color=backup_rating_color,
     )
     return badge_contrast(cfg_img)
 

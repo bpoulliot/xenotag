@@ -10,6 +10,7 @@ from pathlib import Path
 from PIL import Image, ImageDraw, ImageFilter, ImageFont
 
 from .config import ImageConfig
+from .wcag import LIGHT_DARK_MIDPOINT, LINEAR_8BIT, relative_luminance
 
 log = logging.getLogger(__name__)
 
@@ -48,11 +49,24 @@ _REFERENCE_WIDTH = 1000
 _BADGE_SIZE_PX: dict[str, int] = {"desktop": 56, "tv": 72, "tv_plus": 88}
 
 
+# Roadmap P6: with image.adapt_badge_colors on, a badge row whose poster region
+# is on the LABEL's side of this relative luminance (lighter than it, for a light
+# label) is drawn in the backup palette instead. Measured, not picked: it is the
+# lightest flat region over which the shipped main palette still renders AAA
+# (7:1) at 65% opacity -- and that boundary barely moves with opacity (grey 94
+# at 50%, 98 at 65%, 109 at 80%), which is what lets one threshold serve the
+# whole slider. scripts/measure_adaptive_palette.py re-derives it.
+ADAPT_LUMINANCE_THRESHOLD = 0.12
+
+
 @dataclass
 class BadgeGroup:
     labels: list[str]
     fill_color: str
     text_color: str = "#ffffff"
+    # Roadmap P6: the fill this row uses instead when the poster under it would
+    # wash the main one out. Read only with image.adapt_badge_colors on.
+    backup_fill_color: str | None = None
 
 
 def prefer_order(langs: list[str], prefer: list[str]) -> list[str]:
@@ -217,6 +231,45 @@ def _compute_layout_params(img_w: int, cfg: ImageConfig) -> dict:
     }
 
 
+def region_luminance(img: Image.Image, box: tuple[int, int, int, int]) -> float | None:
+    """Mean WCAG relative luminance of ``img`` inside ``box`` (clipped to the image).
+
+    Averaged in linear light, per channel, from the region's histogram -- exact,
+    and independent of the region's size. None if the box misses the image.
+    """
+    x0, y0 = max(0, box[0]), max(0, box[1])
+    x1, y1 = min(img.width, box[2]), min(img.height, box[3])
+    if x1 <= x0 or y1 <= y0:
+        return None
+    hist = img.crop((x0, y0, x1, y1)).convert("RGB").histogram()
+    n = (x1 - x0) * (y1 - y0)
+    r, g, b = (sum(count * LINEAR_8BIT[v] for v, count in enumerate(hist[i * 256 : (i + 1) * 256])) / n for i in range(3))
+    return 0.2126 * r + 0.7152 * g + 0.0722 * b
+
+
+def adapted_fill(
+    poster: Image.Image,
+    box: tuple[int, int, int, int],
+    fill_color: str,
+    backup_fill_color: str,
+    text_color: str,
+) -> str:
+    """The fill a badge row gets over ``box`` of ``poster`` (roadmap P6).
+
+    The backup palette is for the regions that wash the label out: under a
+    translucent fill the poster pulls the rendered colour toward itself, which
+    hurts exactly when the poster is on the label's side of mid-grey -- light
+    posters for a light label, dark ones for a dark label. One threshold,
+    ADAPT_LUMINANCE_THRESHOLD, decides which side the region is on.
+    """
+    lum = region_luminance(poster, box)
+    if lum is None:
+        return fill_color
+    region_is_light = lum >= ADAPT_LUMINANCE_THRESHOLD
+    label_is_light = relative_luminance(_parse_color(text_color)) >= LIGHT_DARK_MIDPOINT
+    return backup_fill_color if region_is_light == label_is_light else fill_color
+
+
 def _measure_group_height(
     font_size: int,
     pad_v: int,
@@ -258,11 +311,15 @@ def _render_group(
     margin: int,
     y_offset: int = 0,
     reserve_w: int = 0,
+    backup_fill: str | None = None,
+    poster: Image.Image | None = None,
 ) -> tuple[Image.Image, list[tuple[int, int, int, int]]]:
     """Render one badge group as a single row onto base. Overflow replaced with … pill.
 
     ``reserve_w`` narrows the row by that many pixels from the far side, for a row
     that shares its band with another group across the poster (roadmap B10).
+    With ``backup_fill`` and ``poster`` given, the row's fill is chosen by the
+    poster region the laid-out row covers (roadmap P6).
     Returns the image and the ``(x, y, w, h)`` of every pill placed.
     """
     if not labels:
@@ -320,6 +377,14 @@ def _render_group(
     y = (img_h - margin - pill_h - y_offset) if is_bottom else (margin + y_offset)
     x = (img_w - margin - row_w) if is_right else margin
 
+    # Roadmap P6: sample exactly the strip the row's pills will cover, from the
+    # bare poster -- not `base`, where a neighbouring row's glow may already sit.
+    # The choice reaches _pill_tile() as its fill_hex argument, so it is part of
+    # the cache key like every other input and a tile rendered over a light
+    # region is never served over a dark one.
+    if backup_fill is not None and poster is not None:
+        fill_color = adapted_fill(poster, (x, y, x + row_w, y + pill_h), fill_color, backup_fill, text_color)
+
     overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
     gm = _GLOW_MARGIN
     rects = []
@@ -350,6 +415,13 @@ def render_badge_groups(
 
     result = base.convert("RGBA") if base.mode != "RGBA" else base
     common = (p["alpha"], p["font_size"], p["pad_h"], p["pad_v"], p["col_gap"], p["margin"])
+    # Roadmap P6. Off (the default) passes no backup, so no row samples the
+    # poster and every render is byte-identical to one made before P6 existed.
+    adapt = cfg.adapt_badge_colors
+    poster = result
+
+    def backup_of(group: BadgeGroup) -> dict:
+        return {"backup_fill": group.backup_fill_color, "poster": poster} if adapt else {}
     row_h = _measure_group_height(p["font_size"], p["pad_v"])
 
     # Roadmap B10. The rating and the tag rows each have their own corner, and
@@ -370,6 +442,7 @@ def render_badge_groups(
             rating_group.fill_color,
             rating_group.text_color,
             *common,
+            **backup_of(rating_group),
         )
         if placed is not None:
             placed.extend(("rating", r) for r in rating_rects)
@@ -393,6 +466,7 @@ def render_badge_groups(
             *common,
             y_offset=cumulative_offset,
             reserve_w=rating_w + p["col_gap"] if shares_band else 0,
+            **backup_of(group),
         )
         if placed is not None:
             placed.extend(("tags", r) for r in rects)

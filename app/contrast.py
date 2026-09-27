@@ -25,6 +25,7 @@ from PIL import Image
 
 from .config import ImageConfig
 from .overlay import _GLOW_MARGIN, _load_font, _parse_color, _render_pill_tile, badge_alpha
+from .wcag import _linearize, relative_luminance  # noqa: F401 -- re-exported; the probes import both from here
 
 # WCAG 2.x thresholds for normal-size text. The large-text exemption (3:1 /
 # 4.5:1) is not claimed: badges are sized against a 1000px reference poster,
@@ -53,17 +54,7 @@ BADGES: tuple[tuple[str, str, str], ...] = (
 _INTERIOR_INSET = 5
 
 
-# ── WCAG 2.x relative luminance / contrast ratio ─────────────────────────────
-def _linearize(channel_8bit: int) -> float:
-    c = channel_8bit / 255.0
-    return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
-
-
-def relative_luminance(rgb: tuple[int, int, int]) -> float:
-    r, g, b = (_linearize(c) for c in rgb)
-    return 0.2126 * r + 0.7152 * g + 0.0722 * b
-
-
+# ── WCAG 2.x contrast ratio (luminance itself lives in app.wcag) ─────────────
 def contrast_ratio(a: tuple[int, int, int], b: tuple[int, int, int]) -> float:
     la, lb = relative_luminance(a), relative_luminance(b)
     hi, lo = max(la, lb), min(la, lb)
@@ -147,27 +138,17 @@ def badge_contrast(cfg: ImageConfig) -> dict:
     `worst` at the top level is the worst SHOWN badge, or None if none is.
     """
     alpha = badge_alpha(cfg.badge_opacity)
-    text_rgb = _parse_color(cfg.badge_text_color)
-    badges: dict[str, dict] = {}
-    for name, colour_field, show_field in BADGES:
-        fill = getattr(cfg, colour_field)
-        rendered = {bd: rendered_ratio(rgb, fill, cfg.badge_text_color, alpha=alpha) for bd, rgb in BACKDROPS.items()}
-        worst_bd = min(rendered, key=lambda bd: rendered[bd])
-        worst = rendered[worst_bd]
-        opaque = contrast_ratio(text_rgb, _parse_color(fill))
-        badges[name] = {
-            "color": fill,
-            "shown": bool(getattr(cfg, show_field)),
-            "opaque": opaque,
-            "opaque_text": format_ratio(opaque),
-            "rendered": rendered,
-            "worst": worst,
-            "worst_text": format_ratio(worst),
-            # None when every backdrop renders the same (an opaque fill): the
-            # figure then holds on any poster, not on a particular one.
-            "worst_backdrop": (None if len({format_ratio(r) for r in rendered.values()}) == 1 else worst_bd),
-            "grade": grade(worst),
-        }
+    badges = {
+        name: _badge_entry(getattr(cfg, colour_field), bool(getattr(cfg, show_field)), cfg.badge_text_color, alpha)
+        for name, colour_field, show_field in BADGES
+    }
+    # Roadmap P6: the backup palette's pickers carry the same chips, judged the
+    # same way -- worst over black, white and grey -- whether or not the
+    # checkbox is on, so a colour can be checked before it is switched on.
+    backup = {
+        name: _badge_entry(getattr(cfg, f"backup_{colour_field}"), bool(getattr(cfg, show_field)), cfg.badge_text_color, alpha)
+        for name, colour_field, show_field in BADGES
+    }
 
     shown = [(n, b) for n, b in badges.items() if b["shown"]]
     overall = None
@@ -188,4 +169,27 @@ def badge_contrast(cfg: ImageConfig) -> dict:
         "backdrops": list(BACKDROPS),
         "badges": badges,
         "worst": overall,
+        "adapt": cfg.adapt_badge_colors,
+        "backup": backup,
+    }
+
+
+def _badge_entry(fill: str, shown: bool, text_hex: str, alpha: int) -> dict:
+    """One badge's chip: rendered ratio per backdrop, and the worst of them."""
+    rendered = {bd: rendered_ratio(rgb, fill, text_hex, alpha=alpha) for bd, rgb in BACKDROPS.items()}
+    worst_bd = min(rendered, key=lambda bd: rendered[bd])
+    worst = rendered[worst_bd]
+    opaque = contrast_ratio(_parse_color(text_hex), _parse_color(fill))
+    return {
+        "color": fill,
+        "shown": shown,
+        "opaque": opaque,
+        "opaque_text": format_ratio(opaque),
+        "rendered": rendered,
+        "worst": worst,
+        "worst_text": format_ratio(worst),
+        # None when every backdrop renders the same (an opaque fill): the
+        # figure then holds on any poster, not on a particular one.
+        "worst_backdrop": (None if len({format_ratio(r) for r in rendered.values()}) == 1 else worst_bd),
+        "grade": grade(worst),
     }
