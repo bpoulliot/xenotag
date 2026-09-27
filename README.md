@@ -18,6 +18,27 @@ Xenotag scans your Jellyfin library, extracts resolution, codec, HDR, and audio 
 
 ---
 
+## Examples
+
+Rendered by the real overlay code over synthetic backgrounds, at the shipped defaults
+(regenerate with `python3 scripts/generate_readme_images.py`):
+
+| Desktop | TV (default) | 4K | Rating and tags in one corner |
+|:---:|:---:|:---:|:---:|
+| ![Badges at the desktop size](assets/readme/overlay-desktop.jpg) | ![Badges at the TV size](assets/readme/overlay-tv.jpg) | ![Badges at the 4K size](assets/readme/overlay-tv-plus.jpg) | ![Rating and tags sharing the bottom-left corner](assets/readme/overlay-stacked.jpg) |
+| `badge_size: desktop` — subtle, for viewing up close | `badge_size: tv` — readable on a TV from across the room | `badge_size: tv_plus` — for large screens and far seating | `rating_position` = `badge_position`: the two stack, rating nearest the corner |
+
+![Dashboard](assets/readme/ui-dashboard.png)
+*Dashboard: tagged-item and modified-image counts, next scheduled scan, service health, scan history and the media browser (a fresh install on placeholder URLs, hence no items).*
+
+![Badge preview](assets/readme/ui-preview.png)
+*Preview: badge position, size, colours and opacity, with each colour's rendered contrast and live previews over synthetic posters.*
+
+![Settings](assets/readme/ui-settings.png)
+*Settings: credentials, Jellyfin and each Sonarr/Radarr instance, with a YAML editor for everything else.*
+
+---
+
 ## Features
 
 ### Metadata Extraction

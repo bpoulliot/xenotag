@@ -12,24 +12,30 @@ Roadmap item P5. Two halves, because they need different things:
 2. **UI screenshots** (`--screenshots URL`) -- needs Playwright and Chromium,
    which CI does not have, so it is a manual mode. Point it at a THROWAWAY
    instance on a scratch config with placeholder service URLs, never at a real
-   deployment: whatever the dashboard shows ends up in a public README. One way,
-   with nothing reachable from the scratch network but the two containers:
+   deployment: whatever the dashboard shows ends up in a public README. This
+   mode needs only Playwright and Pillow, not the app's dependencies. The way it
+   was done, on an `--internal` network so neither container reaches anything
+   but the other:
 
        docker build -t xenotag:readme .
+       # the playwright image ships browsers, not the Python package
+       docker build -t xt-readme-shots - <<'EOF'
+       FROM mcr.microsoft.com/playwright/python:v1.58.0-noble
+       RUN pip install --break-system-packages playwright==1.58.0 pillow
+       EOF
        docker network create --internal xt-readme
        docker run -d --rm --name xt-readme-app --network xt-readme \\
            -e SECURE_COOKIES=false -e XENOTAG_USERNAME=admin \\
            -e XENOTAG_PASSWORD=readme-screens-only \\
-           -v "$PWD/scratch-config:/config" xenotag:readme
-       docker run --rm --network xt-readme -v "$PWD:/work" -w /work \\
-           -e XENOTAG_USERNAME=admin -e XENOTAG_PASSWORD=readme-screens-only \\
-           mcr.microsoft.com/playwright/python:<tag> \\
-           sh -c "pip install -q pillow && \\
-                  python3 scripts/generate_readme_images.py --screenshots http://xt-readme-app:7755"
+           -v "$SCRATCH/config:/config" xenotag:readme
+       docker run --rm --network xt-readme -u "$(id -u)" -v "$PWD:/work" -w /work \\
+           -e XENOTAG_PASSWORD=readme-screens-only xt-readme-shots \\
+           python3 scripts/generate_readme_images.py \\
+               --screenshots http://xt-readme-app:7755
 
-   The playwright image must match the pip `playwright` version it ships; the
-   scratch config needs only placeholder `jellyfin.url` (e.g.
-   `http://jellyfin.example:8096`) and must not name a real host.
+   `$SCRATCH/config/config.yml` holds placeholder service URLs only (e.g.
+   `http://jellyfin.example:8096`) -- never a real host. The pip `playwright`
+   version must match the image tag, or it cannot find its browsers.
 
 `--check` re-renders the overlay examples and compares bytes, so CI fails when
 the palette or layout moves and the README images were not regenerated. That is
@@ -58,25 +64,8 @@ from PIL import Image
 ROOT = Path(__file__).resolve().parent.parent
 sys.path.insert(0, str(ROOT))
 
-from app.config import AppConfig  # noqa: E402
-from app.overlay import generate_preview_bytes  # noqa: E402
-from app.pipeline import _make_badge_groups  # noqa: E402
-from app.preview_samples import _GENERATORS  # noqa: E402
-from app.scanner import AudioTrack, MediaInfo, SubTrack  # noqa: E402
-
 OUT = ROOT / "assets" / "readme"
 
-# An invented title's worth of streams -- a typical 4K remux with a second
-# audio language, so every badge category shows up.
-_MEDIA = MediaInfo(
-    resolution="4K",
-    languages=["EN", "JA"],
-    raw_audio_langs=["eng", "jpn"],
-    video_codec="H.265",
-    hdr_type="HDR10",
-    audio_tracks=[AudioTrack("EN", "TrueHD Atmos"), AudioTrack("JA", "DTS-HD")],
-    subtitle_tracks=[SubTrack("EN", "PGS", True), SubTrack("JA", "PGS", True), SubTrack("EN", "SRT", False)],
-)
 _RATING = "PG-13"
 
 # (output file, background sample, ImageConfig overrides). Everything not
@@ -93,21 +82,40 @@ _OVERLAYS: list[tuple[str, str, dict]] = [
     ),
 ]
 
-# (output file, page name passed to the UI's switchPage()).
-_SCREENS: list[tuple[str, str]] = [
-    ("ui-dashboard.png", "dashboard"),
-    ("ui-preview.png", "preview"),
-    ("ui-settings.png", "settings"),
+# (output file, page name passed to the UI's switchPage(), whole page?). The
+# preview page's poster grid sits below the fold, and it is the point of it.
+_SCREENS: list[tuple[str, str, bool]] = [
+    ("ui-dashboard.png", "dashboard", False),
+    ("ui-preview.png", "preview", True),
+    ("ui-settings.png", "settings", False),
 ]
 _VIEWPORT = {"width": 1280, "height": 900}
 
 
 def render_overlays() -> dict[str, bytes]:
+    # Imported here so --screenshots runs without the app's dependencies.
+    from app.config import AppConfig
+    from app.overlay import generate_preview_bytes
+    from app.pipeline import _make_badge_groups
+    from app.preview_samples import _GENERATORS
+    from app.scanner import AudioTrack, MediaInfo, SubTrack
+
+    # An invented title's worth of streams -- a typical 4K remux with a second
+    # audio language, so every badge category shows up.
+    media = MediaInfo(
+        resolution="4K",
+        languages=["EN", "JA"],
+        raw_audio_langs=["eng", "jpn"],
+        video_codec="H.265",
+        hdr_type="HDR10",
+        audio_tracks=[AudioTrack("EN", "TrueHD Atmos"), AudioTrack("JA", "DTS-HD")],
+        subtitle_tracks=[SubTrack("EN", "PGS", True), SubTrack("JA", "PGS", True), SubTrack("EN", "SRT", False)],
+    )
     rendered = {}
     for name, sample, overrides in _OVERLAYS:
         cfg = AppConfig()
         cfg.image = cfg.image.model_copy(update=overrides)
-        groups, rating_group = _make_badge_groups(_MEDIA, _RATING, cfg)
+        groups, rating_group = _make_badge_groups(media, _RATING, cfg)
         buf = io.BytesIO()
         _GENERATORS[sample]().save(buf, format="PNG")  # lossless hand-off
         rendered[name] = generate_preview_bytes(groups, rating_group, cfg.image, base_image_bytes=buf.getvalue())
@@ -139,8 +147,7 @@ def check_overlays() -> int:
 
 
 def _optimise_png(path: Path) -> None:
-    # UI chrome is flat colour: a 256-colour palette is visually lossless here
-    # and roughly a third of the size of the RGB screenshot.
+    # UI chrome is flat colour, so a 256-colour palette is visually lossless.
     img = Image.open(path).convert("RGB")
     img.quantize(colors=256, method=Image.Quantize.MEDIANCUT, dither=Image.Dither.NONE).save(path, optimize=True)
 
@@ -161,12 +168,12 @@ def take_screenshots(url: str) -> list[Path]:
             page.fill("input[name=password]", password)
             page.click("button[type=submit]")
             page.wait_for_url(f"{base}/")
-            for name, tab in _SCREENS:
+            for name, tab, whole in _SCREENS:
                 page.evaluate(f"switchPage({tab!r})")
                 page.wait_for_load_state("networkidle")
                 page.wait_for_timeout(1500)  # preview images and health probes settle
                 path = OUT / name
-                page.screenshot(path=str(path), full_page=False)
+                page.screenshot(path=str(path), full_page=whole)
                 _optimise_png(path)
                 written.append(path)
         finally:

@@ -43,6 +43,19 @@ how long. Five items turned out to be **already built** (U3, U4, P3, I4) or **de
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule would put a 1916-wide 1080p crop at `720p`. | 3 | 1 | NEEDS MEASUREMENT | — |
+| B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | READY | — |
+
+**B14 — FILED 2026-09-26, found while screenshotting the Preview page for P5. Not fixed here.**
+
+`PREVIEW_PROFILES` in `index.html` hands `/preview/image` label strings (`audio="EN DTS-HD,JA AAC"`,
+`rating="PG-13"`) and `routes.preview_image()` splits them on commas into `BadgeGroup`s as-is. A scan
+never produces those strings: `pipeline._make_badge_groups()` groups audio by codec (`DTS-HD EN`,
+`AAC JA`), subtitles by format (`PGS EN JA`), and prefixes the rating (`Rated PG-13`). Seen side by
+side in `assets/readme/ui-preview.png` (preview) and `assets/readme/overlay-*.jpg` (the real path).
+The preview is the only place an operator judges a palette or a badge size before a scan rewrites
+every poster, so a narrower pill there is the wrong evidence. **Fix:** have the preview build its
+groups through `_make_badge_groups()` from a synthetic `MediaInfo` per profile, as
+`scripts/generate_readme_images.py` does, so the two cannot drift again.
 
 **B13 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
 
@@ -2240,7 +2253,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | NEEDS MEASUREMENT | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
-| P5 | README sample screenshots and overlay examples | 2 | 1 | READY | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
+| P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
 
@@ -2277,7 +2290,7 @@ labels say what would make each one startable.
    every overflow, clipped control and unreadable table. **Roughly 1 h**, no code. The fix list
    it produces is then specced — and per the UI rule, any layout change that is not a plain
    overflow fix goes to the operator first.
- - **P5 — READY.** README gains (1) overlay examples rendered with `generate_preview_bytes()`
+ - **P5 — SHIPPED 2026-09-26** (`scripts/generate_readme_images.py`; CI runs its `--check`). README gains (1) overlay examples rendered with `generate_preview_bytes()`
    over the **synthetic** backgrounds in `app/preview_samples.py` — never real posters, which are
    copyrighted art and this repo is public — at the shipped defaults, one per `badge_size`, and
    one with the rating and tags in the same corner (B10's stacking); (2) UI screenshots from a
