@@ -20,7 +20,8 @@ unassessed items left, including the far-term tables. The per-item reasons are i
 note (search "Sweep 2026-09-26"); a NEEDS DECISION item states its question, the options and a
 recommendation there, and a NEEDS MEASUREMENT item states what to measure, on what, and roughly
 how long. Five items turned out to be **already built** (U3, U4, P3, I4) or **decided away**
-(U8) and are relabelled rather than left open.
+(U8) and are relabelled rather than left open. **The operator took the sweep's recommendation on all 16 of its questions on 2026-09-26**; each
+is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep note.
 
 **Tier 0 comes first.** Correctness defects outrank features regardless of Value score.
 
@@ -35,10 +36,10 @@ how long. Five items turned out to be **already built** (U3, U4, P3, I4) or **de
 | B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | **FIXED 2026-09-24** | — |
 | B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | **FIXED 2026-09-24** | — |
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **LIVE 2026-09-26** (v1.7.0) — all five instances written and read back | — |
-| B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | NEEDS DECISION | — |
-| B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | NEEDS DECISION | — |
+| B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | READY (decided 2026-09-26) | — |
+| B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | READY (decided 2026-09-26) | — |
 | B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | READY | — |
-| B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | NEEDS DECISION | — |
+| B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | READY (decided 2026-09-26) | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
@@ -397,6 +398,12 @@ xenotag — a Jellyfin smart collection, a filter, a script — select on the do
 yes, (a) is the safer choice. Acceptance for whichever spelling: a test over the full emitted
 vocabulary that no two source labels map to the same output (the `hdr10+`/`hdr10` trap).
 
+**OPERATOR DECISION 2026-09-26:** (b) — one spelling legal in every destination (`xt-h264`, `xt-h265`, `xt-ddplus`,
+`xt-ddplus-atmos`, `xt-hdr10plus`, `xt-truehd-atmos`), tags only with badge text unchanged, the map
+entering `_tag_config_hash()` so the next scan is one full re-tag; first check that nothing outside
+xenotag selects on the dotted names, and if something does, fall back to (a), a Radarr-only map.
+**Release and deploy are authorised** for this item.
+
 **B8 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
 Two defects in `handle_webhook()`'s item resolution, both latent — the production container
@@ -548,6 +555,9 @@ the change must enter `_tag_config_hash()` so a full re-tag applies it. No new d
 table is ~190 lines of constants. Acceptance: a test that no 3-letter fallback collides with a
 codec tag in the emitted vocabulary.
 
+**OPERATOR DECISION 2026-09-26:** (c) — a complete ISO 639-2 (B and T) → 639-1 table, the 3-letter form only where no
+2-letter code exists, and `zxx` and malformed codes → `UND` with a WARNING naming the item.
+
 **B6 — FILED 2026-09-25, found while fixing B2. Not fixed here.**
 
 `ImageConfig`'s five colour fields are plain `str`, so `config.yml` (hand-edited or through the
@@ -580,6 +590,9 @@ a config stops the app loading; **(c)** validate on save only, so hand-edits kee
 black silently, and it follows the precedent B10 set: an unknown `rating_position` in
 `config.yml` falls back with a warning rather than stopping the app. (b) turns a cosmetic typo
 into an outage; (c) leaves the defect in the only path that produces it.
+
+**OPERATOR DECISION 2026-09-26:** (a) — normalise anything Pillow's `ImageColor.getrgb()` parses to `#rrggbb`; an
+unparseable value loads as the field default with a WARNING, and saving it is refused.
 
 **B5 — LIVE 2026-09-26 (release v1.7.0). All five instances written and read back; `arr_sync.mode: live` since 11:28Z.**
 
@@ -1221,11 +1234,11 @@ work; P3 shipped on 2026-05-05. The heading is kept so older references resolve.
 
 | ID | Feature | Readiness | Issue |
 |----|---------|-----------|-------|
-| P1 | Audio language override (fix UND tracks via ffmpeg metadata) | NEEDS DECISION | [#21](https://github.com/bpoulliot/xenotag/issues/21) |
-| P2 | Media browser: name column, codec columns | NEEDS DECISION | [#10](https://github.com/bpoulliot/xenotag/issues/10) |
+| P1 | Audio language override (fix UND tracks via ffmpeg metadata) | **CLOSED 2026-09-26** — moved to [Deferred / Out of Scope](#deferred--out-of-scope) | [#21](https://github.com/bpoulliot/xenotag/issues/21) |
+| P2 | Media browser: name column, codec columns | **CLOSED 2026-09-26** (shipped; Rating column kept) | [#10](https://github.com/bpoulliot/xenotag/issues/10) |
 | P3 | Scan history in web UI | **SHIPPED 2026-05-05** (`fc7563d`) | [#9](https://github.com/bpoulliot/xenotag/issues/9) (closed) |
 
-**P1 — NEEDS DECISION (sweep 2026-09-26), and the size of the problem changes the question.**
+**P1 — NEEDS DECISION (sweep 2026-09-26) → CLOSED by the operator 2026-09-26 (decision at the end of this note), and the size of the problem changes the question.**
 Nothing is built: no route, no UI action, no branch. Measured on a read-only copy of production
 `state.db` (2026-09-26): **3,411 of 10,583 index rows carry at least one `UND` audio track, and
 3,406 of those have *only* `UND` tracks** — 11,866 audio tracks in all, 3,411 undetermined. By
@@ -1250,7 +1263,10 @@ different product with a different risk profile, and the tagging side of the que
 already answered by 3. If the operator wants files fixed, the bulk case belongs in the encode
 pipeline (`nav1s.sh` already writes per-stream `language=` when it muxes), not in a web form.
 
-**P2 — NEEDS DECISION (sweep 2026-09-26): two of its three asks already shipped.** The media
+**OPERATOR DECISION 2026-09-26:** option 4 — out of scope: moved to **Deferred / Out of Scope** (3,411 `UND` rows;
+rewriting media files is a different product). **CLOSED.**
+
+**P2 — NEEDS DECISION (sweep 2026-09-26) → CLOSED (shipped) by the operator 2026-09-26: two of its three asks already shipped.** The media
 browser's `Item` column shows the item's folder name (falling back to the file name, then the
 id), and its `Video` and `Audio` columns show resolution, codec and HDR, and each track's
 language and codec — checked in `index.html`. **What is left is issue #10's third ask, "remove
@@ -1259,6 +1275,8 @@ that rating here means the certification (`R`, `TV-MA`) — the same value the r
 **Question:** keep the `Rating` column? Options: (a) keep it and close P2 as shipped;
 (b) remove it as #10 asked. **Recommendation: (a)** — the column is the certification, which the
 operator's own U7 framing treats as meaningful, and it is the only place the browser shows it.
+
+**OPERATOR DECISION 2026-09-26:** (a) — keep the Rating column; the other two asks shipped, so P2 is **CLOSED (shipped)**.
 
 ---
 
@@ -1269,12 +1287,12 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
-| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | NEEDS DECISION | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
+| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **READY** (decided 2026-09-26) · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution broken, see [B8] | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
 | U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted and collapse what is redundant or never queried. | 4 | 3 | **CLOSED 2026-09-23** — measured, then the operator ruled out cutting tags; what remains is [P7] | — |
-| U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | NEEDS DECISION | — |
+| U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | Override half **CLOSED** · drift-detection half **READY** (decided 2026-09-26) | — |
 | U11 | **Nothing sends xenotag a webhook.** 0 notifications on all five production \*arrs and no Jellyfin webhook plugin, so U3's event path (and B8's fix) never runs; wiring one adds an event-driven writer to live \*arrs | 2 | 2 | NEEDS DECISION | — |
 
 **U11 — FILED 2026-09-27, found while measuring B8. Not built here.**
@@ -1316,7 +1334,7 @@ is the operator's call because it decides whether xenotag becomes event-driven a
    ticks — the default is `[poster, jellyfin]`, and Sonarr/Radarr are one tick away in the Tag
    destinations grid. GitHub #11 was closed 2026-05-05. U8's worry that U4 "widens the tail" is
    answered by the P7+U8 redirect: the tail is not cut.
- - **U2 — NEEDS DECISION.** Two halves, and the premise moved under both of them:
+ - **U2 — NEEDS DECISION → decided 2026-09-26 (deleted-items half READY, below).** Two halves, and the premise moved under both of them:
    - *Deleted items.* When #36 was written, xenotag had never written to an \*arr (B5), so the
      "stale tags on the \*arr" half was hypothetical; since 2026-09-26 it is real. What is
      measured: **1,162 of 10,575 index rows (11%) describe a Jellyfin item that no longer
@@ -1329,6 +1347,10 @@ is the operator's call because it decides whether xenotag becomes event-driven a
      strip is the first automatic *removal* xenotag would make on an \*arr, and it gets the same
      staged rollout B5's writes got. (b)'s ownership rule is B5's: an object is xenotag's to
      strip only if its folder matched the deleted item's.
+
+     **OPERATOR DECISION 2026-09-26:** (c) — when a Jellyfin item is gone, delete its index row and strip
+     the owned \*arr tags (B5's folder-ownership rule), behind one report-only release first. The
+     deleted-items half is **READY**; the mtime-preserving re-encode half below stays NEEDS MEASUREMENT.
    - *mtime-preserving re-encodes.* NEEDS MEASUREMENT before anything is chosen: does any tool
      here replace a file's content and keep its mtime? Tdarr and `nav1s.sh` write new files (the
      latter a new *name*, so a new item), and \*arr renames preserve content. Measure by
@@ -1570,6 +1592,11 @@ them (only then: it runs where the write runs, so an unchanged file is not re-ch
 **Recommendation: (3)** — it removes the "silently" from the defect title without building an
 override nobody has needed, and it is a cheap first detector for B12's class of loss.
 
+**OPERATOR DECISION 2026-09-26:** option (3) — the override store is closed, the README says `xt-` tags are owned by
+xenotag, and drift detection logs a WARNING when an item's current `xt-` tags differ from
+`tags_applied` before a write. So U9's **override half is CLOSED** and its **drift-detection half is
+READY**, specced by option (3) above; no build has been queued for it.
+
 ~~**U9 note.** There is currently **no tag query surface at all**~~ *(superseded)* — no `def` in `state.py`,
 `pipeline.py` or `web/routes.py` searches or filters by tag. Tags are written outward to
 Jellyfin/\*arr and never read back for browsing. So this is new construction, not an
@@ -1590,14 +1617,14 @@ webhook resolves the wrong item.)*
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| I1 | CSRF protection: form token validation on login and settings forms | 4 | 1 | NEEDS DECISION | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
-| I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | NEEDS DECISION — premise does not hold here | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
+| I1 | CSRF protection: form token validation on login and settings forms | 4 | 1 | READY (decided 2026-09-26) | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
+| I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | **CLOSED 2026-09-26** — moved to [Deferred / Out of Scope](#deferred--out-of-scope) | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
 | I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | **SHIPPED 2026-09-26** | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
 | I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | **SHIPPED 2026-05-05** (`53c9f3f`) | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
-| I5 | Prometheus metrics endpoint | 3 | 2 | NEEDS DECISION | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
-| I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | NEEDS DECISION (one question with I5) | — |
+| I5 | Prometheus metrics endpoint | 3 | 2 | READY (decided 2026-09-26) | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
+| I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | **CLOSED 2026-09-26** — superseded by I5 | — |
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
-| I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | NEEDS DECISION | — |
+| I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | READY (decided 2026-09-26) | — |
 | I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
 | I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | READY (measured 2026-09-26) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
@@ -1679,7 +1706,7 @@ Serenity would have to be re-identified). The sibling trap is already known: `so
       table's rows byte-identical (`.dump` diff); a fresh database's schema equals the models'
       (`alembic check` passes, run in CI); a deliberately drifted database is refused. No live
       step — prod picks it up at the next release, as with any change.
- - **I1 — NEEDS DECISION.** The issue's own threat model is out of date. The session cookie is
+ - **I1 — NEEDS DECISION → READY, decided 2026-09-26 (below).** The issue's own threat model is out of date. The session cookie is
    `SameSite=lax` (`routes.py`), which already withholds it from cross-site POSTs — including
    top-level form posts, which #14 says it "does not cover" — and production sits behind
    Authentik forward-auth at SWAG. The residual risk is **same-site**: every other
@@ -1692,7 +1719,10 @@ Serenity would have to be re-identified). The sibling trap is already known: `so
    single-admin deployment. **Recommendation: (a)** — it closes the same-site hole at a
    fraction of (b)'s surface. The implementer must verify behind SWAG that the proxied `Host`
    matches the browser's `Origin`, in a throwaway container, before claiming it.
- - **I2 — NEEDS DECISION; the premise does not hold for this deployment.** "Prevents a full
+
+   **OPERATOR DECISION 2026-09-26:** (a) — reject `POST`/`PUT`/`DELETE` whose `Origin` (else `Referer`) is
+   not the request's own origin, `/webhook/*` exempt, verified behind SWAG. **READY.**
+ - **I2 — NEEDS DECISION → CLOSED 2026-09-26 (below); the premise does not hold for this deployment.** "Prevents a full
    rescan after container upgrades" assumes the upgrade loses `state.db`. It does not: production
    bind-mounts `~/docker/xenotag/config` at `/config`, `state.db` lives there, and restic backs up
    `~/docker` nightly. I8 already answered the `config.yml` half (back it up only through
@@ -1701,7 +1731,10 @@ Serenity would have to be re-identified). The sibling trap is already known: `so
    `.backup()`, which is safe against a live WAL — see the docker TODO's I33); (c) keep the full
    download + restore. **Recommendation: (a)**, moved to Deferred with this reason. Restore is the
    risky half (swapping the DB under a live engine) and nothing here needs it.
- - **I5 and I6 — NEEDS DECISION, one question for both:** how should xenotag tell the operator
+
+   **OPERATOR DECISION 2026-09-26:** (a) — close: `state.db` is bind-mounted and restic-backed; moved to
+   **Deferred / Out of Scope** with that reason. **CLOSED.**
+ - **I5 and I6 — NEEDS DECISION → decided 2026-09-26 (I5 READY, I6 CLOSED; below), one question for both:** how should xenotag tell the operator
    something happened (a scan finished, failed, or **HALTED** its \*arr writes)? The host already
    runs Prometheus → Alertmanager → ntfy (`~/docker/monitoring/ALERTING.md`). Options:
    **(a)** I5 only — a small `/metrics` (last scan success/failure time, items scanned/tagged,
@@ -1714,6 +1747,10 @@ Serenity would have to be re-identified). The sibling trap is already known: `so
    process, so the plain registry, and **never `PROMETHEUS_MULTIPROC_DIR`** (the
    `accesslens_metrics` leak of 2026-09-18 is what that costs); `/metrics` unauthenticated on the
    container port is acceptable because the public hostname is behind Authentik.
+
+   **OPERATOR DECISION 2026-09-26:** (a) — build I5 (`/metrics`, `xenotag_*` names, the plain registry, never
+   `PROMETHEUS_MULTIPROC_DIR`) plus an Alertmanager rule in `~/docker/monitoring`, and close I6 as
+   superseded. **I5 READY, I6 CLOSED.**
 
 **I8 — SHIPPED 2026-09-24.** `jellyfin.api_key`, `auth.secret_key` and `webhooks.secret` can now
 be supplied by `JELLYFIN_API_KEY` / `XENOTAG_SECRET_KEY` / `XENOTAG_WEBHOOK_SECRET`, or by the
@@ -1790,6 +1827,9 @@ exactly the `_FILE` convention `materialize-secrets.sh` already renders for the 
 mangling rules, and unlike "don't" it lets the five \*arr keys — now carrying live write access
 since B5 — rotate through the host's SOPS pipeline. The per-row read-only treatment in Settings
 is still needed; I8's fatal-on-unreadable-`_FILE` rule carries over unchanged.
+
+**OPERATOR DECISION 2026-09-26:** (d) — a per-instance optional `api_key_file`; `api_key` is never written back when it
+is set, and I8's fatal-on-unreadable rule applies.
 
 **Original note — measured 2026-09-23, after a credential leak made it concrete.**
 
@@ -2050,8 +2090,8 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
-| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **NEEDS DECISION** (wrap / shrink / count) · ordering: its own note | — |
+| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | READY (decided 2026-09-26) | — |
+| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **NEEDS DECISION** (wrap / shrink / count) · ordering: **READY** (decided 2026-09-26) | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
@@ -2115,6 +2155,10 @@ existing poster changes until the operator asks. Scope note for the spec: it onl
 backup palette must also clear B4's dE 5 under simulated CVD. B3's cross-width test is the one
 that fails if the cache key is not widened with the palette choice.
 
+**OPERATOR DECISION 2026-09-26:** (1a) main + backup palette chosen per badge row by the luminance of the region
+under it, and (2a) one checkbox, off by default, whose backup pickers carry B2's contrast chips;
+the backup palette must clear B4's dE 5.
+
 **P7 + U8 — REDIRECTED 2026-09-23. Hiding metadata is the wrong route.** The operator:
 *"Seems like u8 should not be an app choice. Why hide this for even a poster oversaturated with
 pills? All pills should be limited by poster margins. Maybe choosing the order of pills (e.g.
@@ -2174,6 +2218,9 @@ lists; **(c)** a precedence list per category, video and rating included. **Reco
 item has 35 subtitle languages), and it is one new control rather than four. Per the
 constrained-controls rule it should be a pick-list of the language codes actually present in the
 index, not a free-text box. It changes pill order only — never which pills exist.
+
+**OPERATOR DECISION 2026-09-26:** (a) — one `prefer_languages` pick-list (codes present in the index) for audio and
+subtitle rows; it orders pills only, never which pills exist. The ordering half is **READY**.
 
 **P7 containment — MEASURED 2026-09-26, relabelled NEEDS DECISION.** Probe
 `scripts/measure_pill_containment.py` (`--self-test` in CI). It renders through the real
@@ -2725,8 +2772,8 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| U5 | Extended ffprobe tags: video profile, bitrate tier, interlacing, frame rate | 4 | 3 | NEEDS DECISION | [#24](https://github.com/bpoulliot/xenotag/issues/24) |
-| U6 | Extended metadata tags from Jellyfin/\*arr: genres, original language, runtime bands, series status, ratings, custom formats | 4 | 5 | NEEDS DECISION | [#25](https://github.com/bpoulliot/xenotag/issues/25) |
+| U5 | Extended ffprobe tags: video profile, bitrate tier, interlacing, frame rate | 4 | 3 | **BLOCKED on B9** (decided 2026-09-26) | [#24](https://github.com/bpoulliot/xenotag/issues/24) |
+| U6 | Extended metadata tags from Jellyfin/\*arr: genres, original language, runtime bands, series status, ratings, custom formats | 4 | 5 | **CLOSED 2026-09-26** | [#25](https://github.com/bpoulliot/xenotag/issues/25) |
 
 ### P — Polish
 
@@ -2747,7 +2794,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 **Sweep 2026-09-26 — far-term items, labelled for the first time.** They stay far-term; the
 labels say what would make each one startable.
 
- - **U5 — NEEDS DECISION.** Four new tag families, each a vocabulary choice: which of profile /
+ - **U5 — NEEDS DECISION → BLOCKED on B9, decided 2026-09-26 (below).** Four new tag families, each a vocabulary choice: which of profile /
    bitrate tier / interlacing / frame rate, and in what spelling. Three constraints the decision
    inherits: every new tag must be legal in Radarr's `[a-z0-9-]` (B9 — `xt-23.976` is not),
    the tag-config hash makes each addition a full re-tag, and the P7+U8 direction means a new
@@ -2756,13 +2803,19 @@ labels say what would make each one startable.
    present or absent) — it is the one that changes what the operator does with a file; the
    others are browsable in Jellyfin's own media info already. Decide after B9, whose spelling
    rule it must follow.
- - **U6 — NEEDS DECISION.** Complexity 5 because it is seven unrelated features; "ratings" left
+
+   **OPERATOR DECISION 2026-09-26:** interlacing only (`xt-interlaced`, present/absent), after B9.
+   **BLOCKED on B9.**
+ - **U6 — NEEDS DECISION → CLOSED 2026-09-26 (below).** Complexity 5 because it is seven unrelated features; "ratings" left
    it with U7 (already shipped as the certification). Most of the rest is data Jellyfin already
    holds and indexes (genres, original language, series status), so re-emitting it as `xt-`
    tags duplicates a query surface — the same reasoning that dropped U9's query half.
    **Question:** keep U6? **Recommendation:** close it, and re-file any single source the
    operator actually wants (runtime bands and \*arr custom formats are the two Jellyfin cannot
    answer) as its own small item.
+
+   **OPERATOR DECISION 2026-09-26:** close; re-file any single source the operator wants as its own item.
+   **CLOSED.**
  - **P4 — NEEDS MEASUREMENT.** One defect is known (P9, 2026-09-24: at 390 px the header nav runs
    off the right edge); "full breakpoint coverage" is otherwise unmeasured. **What:** headless
    Chromium screenshots of login, dashboard, media browser, preview and settings at 360 / 390 /
@@ -2928,6 +2981,9 @@ destroy library content" rule and belongs with the encode pipeline if anywhere, 
 second product. Also stale on GitHub: **#19 (I4) and #22 (U3) are still open** though both
 shipped on 2026-05-05.
 
+**OPERATOR DECISION 2026-09-26:** close **#12** and **#13** on GitHub (no roadmap item: out of scope / a second
+product), and close **#19** (I4) and **#22** (U3), both shipped 2026-05-05.
+
 ---
 
 ## Deferred / Out of Scope
@@ -2937,3 +2993,5 @@ shipped on 2026-05-05.
 | Outbound API rate limiting (Jellyfin/\*arr) | LAN services, no documented limits; natural scan serialization is sufficient |
 | Whisper transcription integration | Out of scope; heavy model dependency; use Bazarr instead |
 | Bare metal install guide | [#16](https://github.com/bpoulliot/xenotag/issues/16) — low demand, Docker is the primary path |
+| P1 — Audio language override (fix `UND` tracks by rewriting media files) | [#21](https://github.com/bpoulliot/xenotag/issues/21) — operator decision 2026-09-26: 3,411 `UND` rows, and rewriting media files is a different product. Evidence in the P1 note under "Formerly In Progress" |
+| I2 — Backup/restore API for `state.db` | [#18](https://github.com/bpoulliot/xenotag/issues/18) — operator decision 2026-09-26: premise does not hold here; `state.db` is bind-mounted at `/config` and restic backs up `~/docker` nightly. Evidence in the I1–I6 sweep note |
