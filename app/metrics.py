@@ -41,6 +41,7 @@ arr_tag_writes_total                            counter  arr_instance, result
 arr_halts_total                                 counter
 arr_sync_halted                                 gauge
 arr_last_halt_timestamp_seconds                 gauge
+tag_drift_total                                 counter
 ==============================================  =======  ==========================
 
 ``outcome`` is ``success`` / ``failed`` / ``cancelled``. ``error_type`` is one of
@@ -49,6 +50,9 @@ the four shapes ``scan_errors.error_type`` stores -- ``no_path``, ``no_file``,
 dropped: a label is never free text) -- or ``other``. ``result`` is
 ``written`` / ``error`` / ``readback_mismatch``, counted only for live writes.
 The label is ``arr_instance``, not ``instance``, which Prometheus owns.
+``tag_drift_total`` is cumulative for the process (roadmap U9): items whose
+Jellyfin ``xt-`` tags differed from what xenotag last wrote, counted when a scan
+or webhook reached them, before the write that replaced them.
 """
 
 from __future__ import annotations
@@ -138,6 +142,11 @@ arr_halted = Gauge(
 arr_last_halt = Gauge(
     "xenotag_arr_last_halt_timestamp_seconds", "Unix time of the last *arr halt; 0 if none.", registry=REGISTRY
 )
+tag_drift_total = Counter(
+    "xenotag_tag_drift",
+    "Items whose Jellyfin managed tags differed from what xenotag last wrote, seen before a write.",
+    registry=REGISTRY,
+)
 
 
 # Every known label set exists from the first scrape, at 0: a series that only
@@ -205,6 +214,10 @@ def arr_instances(labels: list[str]) -> None:
 
 def arr_write(arr_instance: str, result: str) -> None:
     arr_writes.labels(arr_instance=arr_instance, result=result).inc()
+
+
+def tag_drift() -> None:
+    tag_drift_total.inc()
 
 
 def arr_halt(now: float | None = None) -> None:

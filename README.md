@@ -54,6 +54,7 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 - Configurable tag prefix, dual-audio tag, and multi-audio tag
 - Per-destination tag routing — send video tags only to Jellyfin, audio tags only to Sonarr, etc.
 - Preserves existing user-defined tags; only manages its own prefixed set
+- `xt-*` tags are owned by Xenotag: a hand edit to one is replaced the next time Xenotag writes that item. Before the write it logs a `Tag drift` WARNING naming the item and the `xt-` tags that differ from what it last wrote (counted in `xenotag_tag_drift_total`)
 - Notices items Jellyfin no longer has: reports the stale index rows and the managed tags left on their Sonarr/Radarr series/movie, and removes them once `deleted_items.mode` is `remove` (ships report-only)
 
 ### Poster Badge Overlay

@@ -50,6 +50,7 @@ XENOTAG_FAMILIES = {
     "xenotag_arr_halts",
     "xenotag_arr_sync_halted",
     "xenotag_arr_last_halt_timestamp_seconds",
+    "xenotag_tag_drift",
 }
 
 
