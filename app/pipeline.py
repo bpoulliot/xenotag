@@ -312,7 +312,11 @@ def _make_badge_groups(
         if info.hdr_type:
             video_labels.append(info.hdr_type)
         if video_labels:
-            groups.append(BadgeGroup(video_labels, img_cfg.video_badge_color, img_cfg.badge_text_color, img_cfg.backup_video_badge_color))
+            groups.append(
+                BadgeGroup(
+                    video_labels, img_cfg.video_badge_color, img_cfg.badge_text_color, img_cfg.backup_video_badge_color
+                )
+            )
 
     # Audio group — codec-first, languages grouped under each codec
     # e.g. [DTS-HD EN JA] [AC-3 DE] instead of [EN DTS-HD] [JA DTS-HD] [DE AC-3]
@@ -324,7 +328,11 @@ def _make_badge_groups(
                 langs.append(t.lang)
         audio_labels = order_pills_by_language(codec_langs, img_cfg.prefer_languages)
         if audio_labels:
-            groups.append(BadgeGroup(audio_labels, img_cfg.audio_badge_color, img_cfg.badge_text_color, img_cfg.backup_audio_badge_color))
+            groups.append(
+                BadgeGroup(
+                    audio_labels, img_cfg.audio_badge_color, img_cfg.badge_text_color, img_cfg.backup_audio_badge_color
+                )
+            )
 
     # Subtitle group — format-first, languages grouped under each format
     # e.g. [PGS EN JA IT] [SRT EN] instead of [EN PGS] [JA PGS] [IT PGS] [EN SRT]
@@ -341,12 +349,21 @@ def _make_badge_groups(
                 langs.append(t.lang)
         sub_labels = order_pills_by_language(fmt_langs, img_cfg.prefer_languages)
         if sub_labels:
-            groups.append(BadgeGroup(sub_labels, img_cfg.sub_badge_color, img_cfg.badge_text_color, img_cfg.backup_sub_badge_color))
+            groups.append(
+                BadgeGroup(
+                    sub_labels, img_cfg.sub_badge_color, img_cfg.badge_text_color, img_cfg.backup_sub_badge_color
+                )
+            )
 
     # Rating badge -- its own corner, image.rating_position (roadmap B10)
     rating_group: BadgeGroup | None = None
     if img_cfg.show_rating_badge and content_rating and "poster" in dest.rating:
-        rating_group = BadgeGroup([f"Rated {content_rating}"], img_cfg.rating_badge_color, img_cfg.badge_text_color, img_cfg.backup_rating_badge_color)
+        rating_group = BadgeGroup(
+            [f"Rated {content_rating}"],
+            img_cfg.rating_badge_color,
+            img_cfg.badge_text_color,
+            img_cfg.backup_rating_badge_color,
+        )
 
     return groups, rating_group
 

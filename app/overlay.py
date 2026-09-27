@@ -56,6 +56,10 @@ _BADGE_SIZE_PX: dict[str, int] = {"desktop": 56, "tv": 72, "tv_plus": 88}
 # (7:1) at 65% opacity -- and that boundary barely moves with opacity (grey 94
 # at 50%, 98 at 65%, 109 at 80%), which is what lets one threshold serve the
 # whole slider. scripts/measure_adaptive_palette.py re-derives it.
+# PROVISIONAL (HOLD, roadmap B21): measured with B1's instrument, which the
+# poster path does not match below 100% -- _render_group() pastes each tile with
+# itself as the mask, so the fill lands at a^3 over (1 - a^2) of the poster.
+# Re-derive once B21 is resolved.
 ADAPT_LUMINANCE_THRESHOLD = 0.12
 
 
@@ -243,7 +247,9 @@ def region_luminance(img: Image.Image, box: tuple[int, int, int, int]) -> float 
         return None
     hist = img.crop((x0, y0, x1, y1)).convert("RGB").histogram()
     n = (x1 - x0) * (y1 - y0)
-    r, g, b = (sum(count * LINEAR_8BIT[v] for v, count in enumerate(hist[i * 256 : (i + 1) * 256])) / n for i in range(3))
+    r, g, b = (
+        sum(count * LINEAR_8BIT[v] for v, count in enumerate(hist[i * 256 : (i + 1) * 256])) / n for i in range(3)
+    )
     return 0.2126 * r + 0.7152 * g + 0.0722 * b
 
 
@@ -417,11 +423,14 @@ def render_badge_groups(
     common = (p["alpha"], p["font_size"], p["pad_h"], p["pad_v"], p["col_gap"], p["margin"])
     # Roadmap P6. Off (the default) passes no backup, so no row samples the
     # poster and every render is byte-identical to one made before P6 existed.
-    adapt = cfg.adapt_badge_colors
+    # Nor at 100% opacity: an opaque badge hides the poster, so the region
+    # under it cannot change what renders -- which is what the checkbox says.
+    adapt = cfg.adapt_badge_colors and p["alpha"] < 255
     poster = result
 
     def backup_of(group: BadgeGroup) -> dict:
         return {"backup_fill": group.backup_fill_color, "poster": poster} if adapt else {}
+
     row_h = _measure_group_height(p["font_size"], p["pad_v"])
 
     # Roadmap B10. The rating and the tag rows each have their own corner, and

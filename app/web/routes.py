@@ -725,21 +725,35 @@ async def preview_image(
     if cfg_img.show_video_badges:
         video_labels = [x for x in [resolution, video_codec, hdr_type] if x]
         if video_labels:
-            groups.append(BadgeGroup(video_labels, cfg_img.video_badge_color, cfg_img.badge_text_color, cfg_img.backup_video_badge_color))
+            groups.append(
+                BadgeGroup(
+                    video_labels, cfg_img.video_badge_color, cfg_img.badge_text_color, cfg_img.backup_video_badge_color
+                )
+            )
 
     if cfg_img.show_audio_badges:
         audio_labels = _preview_order([a.strip() for a in audio.split(",") if a.strip()], cfg_img.prefer_languages)
         if audio_labels:
-            groups.append(BadgeGroup(audio_labels, cfg_img.audio_badge_color, cfg_img.badge_text_color, cfg_img.backup_audio_badge_color))
+            groups.append(
+                BadgeGroup(
+                    audio_labels, cfg_img.audio_badge_color, cfg_img.badge_text_color, cfg_img.backup_audio_badge_color
+                )
+            )
 
     if cfg_img.show_sub_badges:
         sub_labels = _preview_order([s.strip() for s in subtitles.split(",") if s.strip()], cfg_img.prefer_languages)
         if sub_labels:
-            groups.append(BadgeGroup(sub_labels, cfg_img.sub_badge_color, cfg_img.badge_text_color, cfg_img.backup_sub_badge_color))
+            groups.append(
+                BadgeGroup(
+                    sub_labels, cfg_img.sub_badge_color, cfg_img.badge_text_color, cfg_img.backup_sub_badge_color
+                )
+            )
 
     rating_group = None
     if cfg_img.show_rating_badge and rating:
-        rating_group = BadgeGroup([rating], cfg_img.rating_badge_color, cfg_img.badge_text_color, cfg_img.backup_rating_badge_color)
+        rating_group = BadgeGroup(
+            [rating], cfg_img.rating_badge_color, cfg_img.badge_text_color, cfg_img.backup_rating_badge_color
+        )
 
     base_image_bytes: bytes | None = None
     if item_id:
