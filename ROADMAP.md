@@ -1316,7 +1316,7 @@ webhook resolves the wrong item.)*
 | I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | NEEDS DECISION | — |
 | I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
 | I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | NEEDS MEASUREMENT | — |
-| I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | READY | — |
+| I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
 | I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure | 3 | 2 | NEEDS MEASUREMENT | — |
 
 **Sweep 2026-09-26 — I1–I6.**
@@ -1547,7 +1547,7 @@ PyPI metadata (maintainer, licence, release history) — a package whose name is
 a popular one deserves a provenance look before it enters CI. **Roughly 30 min.** The
 test-only-install question answers itself from (4).
 
-**I12 — filed 2026-09-26, seen in I10's test output.** `app/state.py:137` sets
+**I12 — filed 2026-09-26, seen in I10's test output; FIXED 2026-09-26 (below the sweep note).** `app/state.py:137` sets
 `row.last_scanned = datetime.utcnow()`, deprecated since Python 3.12. NEEDS MEASUREMENT before the
 obvious swap to `datetime.now(UTC)`: that returns an AWARE datetime, and whether the column and every
 comparison against `last_scanned` tolerate aware values (SQLite stores naive) has not been checked.
@@ -1563,6 +1563,15 @@ value** `utcnow()` did, so nothing stored or compared changes and the aware-vs-n
 never arises. Acceptance: `grep -rn utcnow app/` is empty; a test asserts the helper returns a
 naive value within a second of `datetime.now(UTC)`; the test run logs no `utcnow`
 `DeprecationWarning`.
+
+*Fixed 2026-09-26.* `app/state.py` gained `_utcnow()` (naive UTC via `datetime.now(UTC)`), used at
+all 7 sites; the three column defaults take the function. `tests/test_state_utcnow.py` checks the
+helper is naive and within 1 s of `datetime.now(UTC)`, and that every default fires per row (two
+rows 20 ms apart differ) — with a negative control proving a frozen `default=_utcnow()` fails that
+check. Suite 225 → 228 passed; the warnings summary went from 5 (4 `utcnow`: 3 at `state.py:137`, 1
+via a SQLAlchemy column default, attributed to `sqlalchemy.sql.schema` — so a
+`-W error::DeprecationWarning:app.state` filter would have missed it) to 1 (the `httpx2` one, I11).
+The acceptance grep is `datetime\.utcnow`: the helper's own name makes a bare `utcnow` grep non-empty.
 
 **I13 — filed 2026-09-26 by the readiness sweep. NEEDS MEASUREMENT.** B2 (2026-09-25) noted seven
 open CodeQL alerts on `main` that "deserve an item of their own, with evidence" and none was
