@@ -7,7 +7,7 @@ from collections.abc import Iterable, Sequence
 from datetime import UTC, datetime
 from pathlib import Path
 
-from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, event, or_, text
+from sqlalchemy import Column, DateTime, Float, Integer, String, Text, create_engine, event, or_
 from sqlalchemy.orm import DeclarativeBase, Session, sessionmaker
 
 
@@ -86,29 +86,20 @@ def _configure_sqlite(dbapi_conn, _connection_record) -> None:
     cursor.close()
 
 
-def _migrate_schema(engine) -> None:
-    new_cols = {
-        "video_codec": "VARCHAR",
-        "hdr_type": "VARCHAR",
-        "audio_tracks": "TEXT",
-        "subtitle_tracks": "TEXT",
-        "content_rating": "VARCHAR",
-    }
-    with engine.connect() as conn:
-        existing = {row[1] for row in conn.execute(text("PRAGMA table_info(media_state)"))}
-        for col, typ in new_cols.items():
-            if col not in existing:
-                conn.execute(text(f"ALTER TABLE media_state ADD COLUMN {col} {typ}"))
-        conn.commit()
-
-
 def init_db(db_path: str | Path | None = None) -> None:
+    """Migrate ``state.db`` to the current schema, then open the app's engine on it.
+
+    The schema is owned by the Alembic revisions in ``app/migrations`` (roadmap I3),
+    never by ``create_all()``: see ``app.migrate`` for what happens to an empty, a
+    pre-I3 or a drifted database. A drifted one raises and the app does not start.
+    """
     global _engine, _SessionLocal
+    from .migrate import upgrade_to_head
+
     path = db_path or os.environ.get("STATE_DB", "/config/state.db")
+    upgrade_to_head(path)
     _engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
     event.listen(_engine, "connect", _configure_sqlite)
-    Base.metadata.create_all(_engine)
-    _migrate_schema(_engine)
     _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
 
 
