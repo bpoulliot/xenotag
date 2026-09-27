@@ -136,6 +136,11 @@ def schema_signature(conn: Connection) -> dict:
 
 def baseline_signature() -> dict:
     """``schema_signature()`` of a scratch database built by the baseline revision alone."""
+    # Silenced: alembic's "Running upgrade -> 0001" for this scratch file would read,
+    # in a production log, as if the real state.db had been rebuilt before its stamp.
+    alembic_log = logging.getLogger("alembic")
+    level = alembic_log.level
+    alembic_log.setLevel(logging.WARNING)
     with tempfile.TemporaryDirectory() as tmp:
         engine = _engine(Path(tmp) / "baseline.db")
         try:
@@ -144,6 +149,7 @@ def baseline_signature() -> dict:
                 return schema_signature(conn)
         finally:
             engine.dispose()
+            alembic_log.setLevel(level)
 
 
 def schema_differences(expected: dict, actual: dict) -> list[str]:

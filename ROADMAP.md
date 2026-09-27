@@ -985,7 +985,7 @@ write to the media file itself — the project's asymmetry, with the \*arrs' `re
  2. **Header-only edit where possible** — `mkvpropedit` sets an MKV track's language in place,
     without a remux (needs `mkvtoolnix` in the image); MKV only, so it reaches 283 of 3,411.
  3. **A per-item override stored by xenotag** — the file is untouched and the *tags* say `EN`;
-    needs a new table, so **BLOCKED on I3**, and it is U9's option 2 in another form.
+    needs a new table, so an Alembic revision (I3, SHIPPED 2026-09-26), and it is U9's option 2 in another form.
  4. **Out of scope** — xenotag reports `UND` (it already does, in yellow, in the media browser)
     and the operator fixes files with their own tools, then rescans.
 
@@ -1050,8 +1050,8 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
      latter a new *name*, so a new item), and \*arr renames preserve content. Measure by
      comparing, on a copy of `state.db`, each row's `file_mtime` and stored codec against a
      fresh `stat` + ffprobe of a random 200 files (~1 h, read-only). If the count is zero, this
-     half closes; if not, the size check #36 proposes needs a `file_size` column — **BLOCKED
-     on I3**.
+     half closes; if not, the size check #36 proposes needs a `file_size` column — an Alembic
+     revision (I3, SHIPPED 2026-09-26).
 
 **U1 — FIXED 2026-09-24, and the premise was half wrong in a way worth recording.**
 
@@ -1279,7 +1279,7 @@ would survive until its file changed, so it would have shown up there. **No one 
 filed upstream: B7 (language codes), B13 (cropped 2160p called 1080p). **Question:** which does
 U9 become? Options: **(1)** close it — wrong tags are derivation bugs, and the README says in one
 line that `xt-` tags are owned by xenotag and hand edits are replaced; **(2)** an override store
-(needs a table — BLOCKED on I3; overlaps P1's option 3); **(3)** (1) plus **drift detection**: before
+(needs a table — an Alembic revision, I3 SHIPPED 2026-09-26; overlaps P1's option 3); **(3)** (1) plus **drift detection**: before
 writing, compare the item's current `xt-` tags with `tags_applied` and log a WARNING when they
 differ — no schema, and the same check names B12's five films the next time a scan reaches
 them (only then: it runs where the write runs, so an unchanged file is not re-checked).
@@ -1308,7 +1308,7 @@ webhook resolves the wrong item.)*
 |----|---------|:-----:|:----------:|-----------|-------|
 | I1 | CSRF protection: form token validation on login and settings forms | 4 | 1 | NEEDS DECISION | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
 | I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | NEEDS DECISION — premise does not hold here | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
-| I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | READY | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
+| I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | **SHIPPED 2026-09-26** | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
 | I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | **SHIPPED 2026-05-05** (`53c9f3f`) | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
 | I5 | Prometheus metrics endpoint | 3 | 2 | NEEDS DECISION | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
 | I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | NEEDS DECISION (one question with I5) | — |
@@ -1324,7 +1324,38 @@ webhook resolves the wrong item.)*
  - **I4 — SHIPPED 2026-05-05** (`53c9f3f`). `JellyfinClient` and the \*arr base client each hold
    one `httpx.Client` for their lifetime and close it (`_close_clients()` at the end of a scan),
    which is issue #19's scope exactly. GitHub #19 is still open.
- - **I3 — READY.** The decisions are pre-made below; nothing is left for the operator. Facts
+ - **I3 — SHIPPED 2026-09-26.** Every schema change from here on is an Alembic revision in
+   `app/migrations/versions/` (how: `app/migrations/README.md`); `create_all()` and
+   `_migrate_schema()` are gone from `init_db()`, which now calls `app.migrate.upgrade_to_head()`.
+   **Not yet run against production:** prod picks it up at the operator's next release, and that
+   start is the first real-world stamp. Expect one log line `state.db schema: stamped (revision
+   0001)`, then `current` on every later start; a `SchemaMismatchError` means the file is not the
+   baseline and nothing was changed.
+   - **What "exact" compares** (before stamping an unversioned file): per table, every column's
+     name, declared type, NOT NULL, default and primary-key position; every index's columns,
+     uniqueness and partialness (explicit ones by name, SQLite's automatic ones by columns); and
+     the set of tables, views and triggers. Never SQLite's stored `CREATE` text. The reference is
+     the baseline revision run on a scratch file and read back through the same reader.
+   - **Concurrency:** the check-and-stamp runs in one `BEGIN IMMEDIATE` transaction, so a second
+     process waits for the write lock and re-reads the version under it (8 processes on one
+     barrier: one `created`/`stamped`, seven `current`; `tests/test_migrations.py`). Switching a
+     new file into WAL cannot happen inside a transaction and fails fast with "locked", so it
+     retries for up to 60 s.
+   - **Measured** with `scripts/verify_state_db_upgrade.py` (self-test in CI) on two copies of
+     production `state.db` + `-wal`/`-shm`: today's (10,644 rows: `media_state` 10,583,
+     `scan_runs` 50, `scan_errors` 10, `app_meta` 1; empty WAL) and the 2026-09-24 backup
+     (10,636 rows, 4 MB WAL). Both **stamped**, **0** of the `.dump` `INSERT` lines differing,
+     schema outside `alembic_version` unchanged, second start `current`; the same copy with
+     `media_state.content_rating` dropped was **refused**, naming the column, and left unstamped.
+     An image built from the branch started healthy on an empty `/config` (`created`) and on a
+     prod copy (`stamped`, then `current` after a restart); on the drifted copy it exited 3
+     with the message. `python -m app.migrate check` (a CI step) exits 0 on the models and 1 with
+     a column planted in `MediaState`.
+   - **Added:** `alembic==1.20.0` (License-Expression `MIT`, read from the package metadata) and,
+     through it, `Mako` 1.4.3 (`MIT`, same source), unpinned like the other transitive deps.
+     `pip-audit -r requirements.txt`: no known vulnerabilities.
+
+   The spec it shipped against, kept as written: Facts
    measured on a read-only copy of production `state.db` (2026-09-26): four tables
    (`media_state`, `app_meta`, `scan_runs`, `scan_errors`), columns and the one explicit index
    (`ix_scan_errors_item_id`) **identical to the SQLAlchemy models**, `PRAGMA user_version` 0,
