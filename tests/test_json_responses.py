@@ -75,7 +75,7 @@ def _reject_constant(name):
         {"text_color": "#123456", "video_color": "#123456", "audio_color": "#123456"},
         {"text_color": "#ffffff", "sub_color": "#ffffff", "rating_color": "#ffffff", "opacity": "0"},
         {"text_color": "#000000", "video_color": "#000000"},
-        # malformed colours parse to black (roadmap B6)
+        # malformed colours: normalised or defaulted, never black (roadmap B6)
         {"text_color": "#fff", "video_color": "red"},
         {"text_color": "", "audio_color": "zzzzzz"},
         {"text_color": "#gggggg", "sub_color": "#12345"},

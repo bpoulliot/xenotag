@@ -3,6 +3,7 @@ from __future__ import annotations
 import io
 import logging
 import shutil
+import string
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -149,13 +150,16 @@ def badge_alpha(opacity: float) -> int:
 
 
 def _parse_color(hex_str: str) -> tuple[int, int, int]:
-    h = hex_str.lstrip("#")
-    if len(h) != 6:
-        return (0, 0, 0)
-    try:
-        return (int(h[0:2], 16), int(h[2:4], 16), int(h[4:6], 16))
-    except ValueError:
-        return (0, 0, 0)
+    """``#rrggbb`` to an RGB tuple. Anything else raises ValueError.
+
+    It used to return black for every other spelling, silently (roadmap B6).
+    ImageConfig now normalises every colour to ``#rrggbb`` at validation, so a
+    value reaching here in another form is a bug upstream, and a loud one is
+    better than a poster full of black badges.
+    """
+    if not (len(hex_str) == 7 and hex_str[0] == "#" and all(c in string.hexdigits for c in hex_str[1:])):
+        raise ValueError(f"not a #rrggbb colour: {hex_str!r}")
+    return (int(hex_str[1:3], 16), int(hex_str[3:5], 16), int(hex_str[5:7], 16))
 
 
 def _find_image(folder: Path, targets: list[str]) -> Path | None:

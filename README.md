@@ -251,6 +251,8 @@ still refuse is skipped there and listed in the report.
 | `image.badge_palette_version` | int | `2` | Internal: which default palette this config has been migrated to. Leave it alone — it is what stops the migration re-running over a colour you chose. |
 | `image.badge_text_color` | string | `"#ffffff"` | Badge text color (hex) |
 
+The five colour keys accept anything Pillow reads as a plain RGB colour — `#rrggbb`, `#rgb`, a colour name such as `red`, `rgb(255,0,0)` — and store it as `#rrggbb`. A colour with an alpha channel (`#rrggbbaa`, `rgba(…)`) is not accepted, because opacity is `badge_opacity`'s job. An unreadable colour in `config.yml` falls back to that key's default with a warning in the log; saving one from Settings or the raw YAML editor is refused.
+
 ### Auth
 
 | Key | Type | Default | Description |

@@ -36,7 +36,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | **FIXED 2026-09-24** | — |
 | B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | **FIXED 2026-09-24** | — |
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **LIVE 2026-09-26** (v1.7.0) — all five instances written and read back | — |
-| B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | READY (decided 2026-09-26) | — |
+| B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | **FIXED 2026-09-27** (merged, not released) | — |
 | B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | **FIXED 2026-09-27** (merged, not released) | — |
 | B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | READY | — |
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27; LIVE (v1.8.0)** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged; production re-tagged 2026-09-27 09:00–10:15Z | — |
@@ -910,7 +910,37 @@ codec tag in the emitted vocabulary.
 **OPERATOR DECISION 2026-09-26:** (c) — a complete ISO 639-2 (B and T) → 639-1 table, the 3-letter form only where no
 2-letter code exists, and `zxx` and malformed codes → `UND` with a WARNING naming the item.
 
-**B6 — FILED 2026-09-25, found while fixing B2. Not fixed here.**
+**B6 — FIXED 2026-09-27 (merged, not released).** Takes effect at the next release. Option (a) as
+decided, in `ImageConfig._normalise_colour()` (`app/config.py`) over `normalize_color()`:
+
+ - every value Pillow's `ImageColor.getrgb()` reads as **RGB** is stored as lowercase `#rrggbb`
+   (`#fff`, `#FFF`, `red`, `rgb(255,0,0)`, `hsl(…)`);
+ - **bare `fff` is unparseable** — Pillow 12.3.0 rejects it — so it loads as the default; pinned
+   in the tests. **Bare six digits (`203a30`) are kept**, although Pillow rejects them too: the old
+   `_parse_color()` stripped the `#` and drew them correctly, so refusing them would have changed a
+   working poster;
+ - a value Pillow reads **with alpha** (`#ffff`, `#rrggbbaa`, `rgba(…)`) is treated as unparseable,
+   not stripped of its alpha: opacity is `badge_opacity`'s job;
+ - unparseable (including a YAML non-string such as `000000`, which is the int 0 and used to fail
+   the whole load) → the field's default and a WARNING naming `image.<field>` and the value.
+   Loading never writes `config.yml`; the normalised value reaches the file only on a later save;
+ - `save_config()` (raw YAML, `PUT /config`) and `save_config_from_dict()` (Settings,
+   `PUT /api/settings`) validate with the context key `REFUSE_BAD_COLOURS`, so there the same value
+   is a 400 with a message naming the field, and the file is untouched;
+ - `/api/badge-contrast` builds an `ImageConfig`, so the chip goes through the same normaliser and
+   measures what renders;
+ - `overlay._parse_color()` now **raises** `ValueError` for anything but `#rrggbb` instead of
+   returning black: after validation nothing else should reach it, and a loud failure beats a
+   poster of black badges.
+
+`tests/test_colour_validation.py` (41 tests) — the spellings above, caplog on the warning, both
+save paths refused through the HTTP routes with the file byte-identical, and the table below
+re-rendered: `#fc0` fill under each text spelling, modal pixel of the flat interior (inset 5 px)
+`(255, 204, 0)`, the text colour present and **no black pixel** inside the pill, and the tile
+byte-identical to the canonical `#ffcc00`/`#ffffff` render. Mutation-checked: dropping the
+normaliser fails 38, restoring the black fallback in `_parse_color()` fails 1.
+
+*Filed 2026-09-25, found while fixing B2:*
 
 `ImageConfig`'s five colour fields are plain `str`, so `config.yml` (hand-edited or through the
 raw YAML editor) accepts anything, and `overlay._parse_color()` returns `(0, 0, 0)` for every
