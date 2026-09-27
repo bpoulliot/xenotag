@@ -99,7 +99,7 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 - Security headers on every response: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, X-XSS-Protection
 - Changing password immediately invalidates all existing sessions
 - Rotate `auth.secret_key` to force-invalidate all sessions without a password change
-- Secrets can be supplied by the environment (including Docker file-secrets) and are then never written to `config.yml` — see [Externally managed secrets](#externally-managed-secrets)
+- Secrets can be supplied by the environment (including Docker file-secrets), and each Sonarr/Radarr instance can read its key from a file; either way they are never written to `config.yml` — see [Externally managed secrets](#externally-managed-secrets)
 
 ---
 
@@ -178,7 +178,7 @@ sonarr:
       api_key: ""
     - name: sonarr-4k         # multiple instances supported
       url: http://sonarr-4k:8989
-      api_key: ""
+      api_key_file: /run/secrets/sonarr_4k   # or read the key from a file
 
 radarr:
   instances:
@@ -186,6 +186,9 @@ radarr:
       url: http://radarr:7878
       api_key: ""
 ```
+
+Each instance's key can be read from a file instead (`api_key_file`); it is then never written to
+`config.yml` — see [Externally managed secrets](#externally-managed-secrets).
 
 ### Sonarr / Radarr writes
 
@@ -357,16 +360,56 @@ worse than no override — it makes you believe a secret rotated when it did not
   unpopulated `${VAR}` interpolation, not of intent, and blanking a working key on that basis
   would take the deployment down.
 
-Not yet overridable: `auth.password_hash` (a verifier, not a secret — the first-run bootstrap
-has to be able to write it) and the per-instance Sonarr/Radarr `api_key`s (they live in a
-list, which a dotted path cannot address).
+Not overridable: `auth.password_hash` (a verifier, not a secret — the first-run bootstrap
+has to be able to write it).
+
+### Sonarr / Radarr instance keys
+
+The instance keys live in a list (`sonarr.instances`, `radarr.instances`), which a variable name
+cannot address reliably — an index breaks when an instance is reordered, a name when it is
+renamed. So each instance names **its own key file** instead:
+
+```yaml
+sonarr:
+  instances:
+    - name: sonarr-4k
+      url: http://sonarr-4k:8989
+      api_key_file: /run/secrets/sonarr_4k
+```
+
+```yaml
+services:
+  xenotag:
+    secrets:
+      - sonarr_4k
+
+secrets:
+  sonarr_4k:
+    file: ./secrets/sonarr_4k
+```
+
+When an instance has `api_key_file`, the same rules as the table above apply to its key:
+
+- the file supplies the key on every boot and every save, and **wins** over an `api_key` beside it;
+- Xenotag **never writes that instance's `api_key`** to `config.yml` — from the Settings page, the
+  raw YAML editor, or the first-run bootstrap. The path itself is not a secret and is saved;
+- a file that is unreadable or empty **fails startup** (and refuses a save) — there is no
+  "ignored with a warning" case, because a set `api_key_file` is always deliberate;
+- the Settings page shows that instance's key read-only, labelled as externally managed. Its
+  **Test** button sends the key read from the file; it never reads a path that `config.yml` does
+  not already name. To add, change or remove a path, use the raw YAML editor;
+- startup logs each file-backed instance **by name and path** — never by value.
+
+Because the binding lives in the instance itself, reordering or renaming an instance cannot
+detach it from its key. A rotated file is picked up at the next restart or Settings save.
 
 Use a **separate** Jellyfin API key for Xenotag rather than sharing one across your stack. A
 per-consumer key rotates and revokes independently, and Jellyfin's API key list then doubles as a
 record of what has access.
 
-Enabling an override does not rewrite `config.yml` — loading never writes. A value already in the
-file is removed by the next save (open Settings and save once), or delete the key by hand.
+Enabling an override or an `api_key_file` does not rewrite `config.yml` — loading never writes.
+A value already in the file (a Jellyfin key, or an instance's old `api_key`) is removed by the
+next save (open Settings and save once), or delete the key by hand.
 
 ---
 
