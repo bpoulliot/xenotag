@@ -11,5 +11,6 @@ class RadarrClient(ArrClient):
     EDITOR_IDS = "movieIds"
     MATCH_KEYS = (("Tmdb", "tmdbId"), ("Imdb", "imdbId"))
     # Radarr 6.3.0.10514 answers 400 "Allowed characters a-z, 0-9 and -" for
-    # `xt-H.265`, `xt-DD+ Atmos`, `xt-HDR10+` and `xt-TrueHD Atmos`.
+    # `xt-H.265`, `xt-DD+ Atmos`, `xt-HDR10+` and `xt-TrueHD Atmos`. Since B9 the
+    # tagger spells those `xt-H265` ... (tagger.tag_label); this stays as the guard.
     LABEL_PATTERN = re.compile(r"[a-z0-9-]+")

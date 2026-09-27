@@ -202,8 +202,10 @@ To go live: run the dry run first (Settings → **Sonarr / Radarr writes** → *
 `python -m app.arr_sync --dry-run --db /config/state.db` inside the container), then set
 **Tag writes → Live**. Turning either switch on forces the next scan to be a full re-tag.
 Switching back to dry run stops writes but removes nothing already written. Radarr accepts only
-`a-z`, `0-9` and `-` in a label, so tags such as `xt-h.265` are skipped there and listed in the
-report.
+`a-z`, `0-9` and `-` in a label, so tags are spelled to be legal everywhere: `.` is dropped, `+`
+becomes `plus` and a space `-` (`xt-H264`, `xt-DDplus-Atmos`, `xt-HDR10plus`; the \*arrs store
+them lowercased). Badge text keeps the display names (`H.264`, `DD+ Atmos`). A label Radarr would
+still refuse is skipped there and listed in the report.
 
 ### Scanning
 

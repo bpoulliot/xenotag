@@ -7,6 +7,25 @@ from .scanner import AudioTrack, SubTrack
 
 log = logging.getLogger(__name__)
 
+# Tag spelling (roadmap B9). Tags are built from the scanner's display names
+# ("H.264", "DD+ Atmos"), which are also the badge text -- but Radarr refuses any
+# label outside [a-z0-9-]. So a tag drops ".", spells "+" as "plus" and turns a
+# space into "-": `xt-H264`, `xt-DDplus-Atmos`, `xt-HDR10plus`. "+" is spelled
+# out, never stripped, or HDR10+ and DD+ would collide with HDR10 and DD. Case is
+# left alone: every *arr lowercases a label itself. Badge text is not touched.
+_TAG_SPELLING = str.maketrans({".": "", "+": "plus", " ": "-"})
+
+# Bump when the spelling above renames a tag that already exists somewhere.
+# pipeline._tag_config_hash() folds it in, so the upgrade's first scan is a full
+# re-tag, which replaces the old spellings on Jellyfin and on every *arr.
+# 1: display names verbatim (`xt-H.264`); 2: the spelling above.
+TAG_VOCABULARY = 2
+
+
+def tag_label(name: str) -> str:
+    """A display name as a tag label: `H.264` -> `H264`, `DD+ Atmos` -> `DDplus-Atmos`."""
+    return name.translate(_TAG_SPELLING)
+
 
 def _video_tags(prefix: str, resolution: str, video_codec: str | None, hdr_type: str | None) -> list[str]:
     tags = []
@@ -69,4 +88,5 @@ def build_tags(
         tags += _subtitle_tags(p, subtitle_tracks)
     if destination in d.rating:
         tags += _rating_tag(p, content_rating)
-    return tags
+    # Every tag above is prefix + label; the prefix is config and kept verbatim.
+    return [p + tag_label(t[len(p) :]) for t in tags]
