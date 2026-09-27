@@ -57,6 +57,12 @@ jobs:
       - name: Tests (pytest)
         run: pytest tests/ -q
 
+      # I3: `alembic check` against a database built by the startup path --
+      # fails when a model changes with no revision, or the reverse.
+      # tests/test_migrations.py proves it fails on a planted drift.
+      - name: Schema drift check (alembic check — models match migrations)
+        run: python -m app.migrate check
+
       - name: Badge contrast probe self-test
         run: python scripts/measure_badge_contrast.py --self-test
 
