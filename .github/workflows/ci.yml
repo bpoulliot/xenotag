@@ -83,6 +83,11 @@ jobs:
       - name: Webhook resolution probe self-test
         run: python scripts/measure_webhook_resolution.py --self-test
 
+      # B7: labels each index row by the pre-B7 rule and by scanner._lang3_to_lang2()
+      # (imported); the self-test plants a rename and an index the old rule can't reproduce.
+      - name: Language rename probe self-test
+        run: python scripts/measure_language_renames.py --self-test
+
       # Two steps: --self-test proves the probe can still see a planted
       # collision, and the bare run is the B3 acceptance criterion itself --
       # it exits non-zero if any poster width is served another width's tile.
