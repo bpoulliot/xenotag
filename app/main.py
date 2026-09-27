@@ -11,8 +11,10 @@ from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 from starlette.middleware.base import BaseHTTPMiddleware
 from starlette.requests import Request
+from starlette.responses import Response
 
 from . import auth as _auth
+from . import metrics
 from .config import AppConfig, get_config, load_config, log_env_overrides, save_auth
 from .pipeline import run_incremental_scan
 from .scheduler import start, stop
@@ -83,7 +85,9 @@ async def lifespan(app: FastAPI):
     cfg = load_config()
     logging.getLogger().setLevel(getattr(logging, cfg.log_level.upper(), logging.INFO))
     log_env_overrides()
+    metrics.quiet_access_log()
     init_db()
+    metrics.seed_from_disk()
     _purge_legacy_tags(cfg)
     _auth.bootstrap(cfg.auth, save_auth)
     start(cfg.scan.schedule, lambda: run_incremental_scan(get_config()))
@@ -112,3 +116,14 @@ if _static.exists():
     app.mount("/static", StaticFiles(directory=str(_static)), name="static")
 
 app.include_router(router)
+
+metrics.set_version(_version)
+
+
+# Roadmap I5. Unauthenticated on purpose: it is scraped over the Docker network,
+# and the public hostname is behind Authentik. It carries counts and timestamps,
+# never a name, a path or a secret.
+@app.get("/metrics", include_in_schema=False)
+def prometheus_metrics() -> Response:
+    body, content_type = metrics.render()
+    return Response(content=body, media_type=content_type)

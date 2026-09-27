@@ -52,6 +52,21 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | NEEDS DECISION | — |
 | B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | NEEDS DECISION | — |
 | B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | NEEDS DECISION | — |
+| B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | READY | — |
+
+**B22 — FILED 2026-09-27, found while building I5. Not fixed here. READY.** Demonstrated on
+the I5 branch: with `_run_scan` replaced by one that raises `RuntimeError("database is locked")`,
+`run_incremental_scan()` re-raises, `progress.running` stays **True**, and the next
+`run_incremental_scan()` returns at once with `Scan already in progress, skipping`. The scheduler
+thread swallows the exception after logging it, so nothing else notices: the UI shows a scan
+running forever and no scan runs again until the container restarts. What can raise there today is
+narrow — `_run_scan()` catches the Jellyfin listing, each probe and each item, but not its own
+`start_scan_run()` / `set_meta()` / `finish_scan_run()` commits (a locked SQLite), nor
+`ArrTagSync.resolve_all()`. **Since I5 it is visible**: `xenotag_scan_running` reads 1, the
+failure is recorded, and the host's 26-hour no-successful-scan alert fires. **Fix:** in I5's
+`pipeline._run_scan_recorded()`, call `progress.finish(error=str(exc))` in the `except` before
+re-raising, and test that a second scan then runs. Not done in I5 because it changes scan
+behaviour, not observability.
 
 **B21 — FILED 2026-09-27, found while building P6. Not fixed here. NEEDS DECISION.** It blocks
 [P6], whose whole regime is below 100%.
@@ -2180,7 +2195,7 @@ webhook resolves the wrong item.)*
 | I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | **CLOSED 2026-09-26** — moved to [Deferred / Out of Scope](#deferred--out-of-scope) | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
 | I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | **SHIPPED 2026-09-26** | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
 | I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | **SHIPPED 2026-05-05** (`53c9f3f`) | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
-| I5 | Prometheus metrics endpoint | 3 | 2 | READY (decided 2026-09-26) | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
+| I5 | Prometheus metrics endpoint | 3 | 2 | **SHIPPED 2026-09-27** — `/metrics` + host alert rules | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
 | I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | **CLOSED 2026-09-26** — superseded by I5 | — |
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
 | I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | READY (decided 2026-09-26) | — |
@@ -2363,6 +2378,36 @@ Serenity would have to be re-identified). The sibling trap is already known: `so
    **OPERATOR DECISION 2026-09-26:** (a) — build I5 (`/metrics`, `xenotag_*` names, the plain registry, never
    `PROMETHEUS_MULTIPROC_DIR`) plus an Alertmanager rule in `~/docker/monitoring`, and close I6 as
    superseded. **I5 READY, I6 CLOSED.**
+
+**I5 — SHIPPED 2026-09-27.** `GET /metrics` (unauthenticated, not in the OpenAPI schema) serves
+`app/metrics.py`'s own `CollectorRegistry` — the plain in-process registry the decision named.
+`prometheus_client` reads `PROMETHEUS_MULTIPROC_DIR` when it is *imported*, so `app.metrics`
+removes both spellings of it from the environment first, with a WARNING; a subprocess test proves
+the library writes multiprocess files into an inherited directory on its own and writes none
+through `app.metrics`. The metric list, names and labels are in the README ("Prometheus metrics")
+and pinned by `tests/test_metrics.py`. Choices the spec left open:
+
+* **A failed scan** is one that could not list Jellyfin (the existing FATAL path) or raised out of
+  `_run_scan()`. Per-item errors do not fail a scan; they are `xenotag_scan_errors_total` by the
+  four `error_type` shapes — `process_error: <text>` is collapsed to `process_error`, since a label
+  is never free text. A **cancelled** scan is its own outcome and moves neither timestamp.
+* **Restarts.** The registry is in memory, so at startup the last completed `scan_runs` row seeds
+  the success timestamp and last-scan counts (without it every deploy reads as "no scan for 20,000
+  days"), and a stored *live* \*arr report with `halted` set seeds the halt. `scan_runs` cannot tell
+  a cancelled scan from a success, so the seed counts it as one; a failure is stored nowhere and a
+  restart forgets it — the 26-hour rule still catches a scan that keeps failing.
+* **The halt** is a gauge that goes to 1 at the halt (mid-scan, so a scrape sees it before the
+  scan ends) and back to 0 only when a later **live, uncancelled** scan finishes its \*arr sync
+  without one. A dry run writes nothing and a webhook touches one item, so neither clears it.
+* The label is `arr_instance`, never `instance` (Prometheus owns that one). Known label sets start
+  at 0 so `increase()` sees the first increment; `*_created` series are off.
+* A 200 scrape is dropped from uvicorn's access log; anything else is still logged.
+
+Dependency added: **`prometheus_client` 0.26.0**, pinned in `requirements.txt`; licence read from
+the package metadata: `License-Expression: Apache-2.0 AND BSD-2-Clause` (its NOTICE: the bundled
+`decorator` 4.0.10 is 2-clause BSD). pip-audit clean. The host side — the scrape job and three
+alert rules (no successful scan in 26 h, last scan failed, \*arr sync halted) — lives in the
+operator's monitoring config, not this repo. Found while building it: **B22**.
 
 **I8 — SHIPPED 2026-09-24.** `jellyfin.api_key`, `auth.secret_key` and `webhooks.secret` can now
 be supplied by `JELLYFIN_API_KEY` / `XENOTAG_SECRET_KEY` / `XENOTAG_WEBHOOK_SECRET`, or by the

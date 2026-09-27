@@ -5,12 +5,14 @@ import json
 import logging
 import os
 import threading
+import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 
 from sqlalchemy.orm import Session
 
+from . import metrics
 from .arr_sync import MODE_DRY_RUN, MODE_LIVE, ArrTagSync, store_report
 from .clients.jellyfin import JellyfinClient
 from .clients.radarr import RadarrClient
@@ -351,8 +353,14 @@ def _make_badge_groups(
     return groups, rating_group
 
 
+def _record_scan_error(session: Session, item_id: str, name: str, file_path: str, error_type: str) -> None:
+    upsert_scan_error(session, item_id, name, file_path, error_type)
+    metrics.scan_error(error_type)
+
+
 def _run_scan(cfg: AppConfig, incremental: bool) -> None:
     scan_type = "incremental" if incremental else "full"
+    started = time.time()
     progress.emit(f"[xenotag] Starting {scan_type} scan…")
 
     jf, sonarrs, radarrs = _clients_from_config(cfg)
@@ -384,6 +392,7 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
         session.close()
         _close_clients(jf, sonarrs, radarrs)
         progress.finish(error=str(exc))
+        metrics.scan_finished(scan_type, metrics.FAILED)
         return
 
     if cfg.scan.path_filters:
@@ -458,7 +467,7 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
             msg = f"skip ({error_type}): {name} | path tried: {file_path or '(empty)'}"
             progress.emit(f"  {msg}")
             log.warning(msg)
-            upsert_scan_error(session, item_id, name, file_path or "", error_type)
+            _record_scan_error(session, item_id, name, file_path or "", error_type)
             progress.done += 1
             continue
 
@@ -515,7 +524,7 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
 
                 if info is None:
                     progress.emit(f"  ffprobe failed: {name} | path: {fp}")
-                    upsert_scan_error(session, item_id, name, fp, "probe_failed")
+                    _record_scan_error(session, item_id, name, fp, "probe_failed")
                     progress.done += 0.5
                     continue
 
@@ -531,13 +540,23 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
                     )
                 except Exception as exc:
                     log.error("Unhandled error processing %s: %s", name, exc, exc_info=True)
-                    upsert_scan_error(session, item_id, name, fp, f"process_error: {exc}")
+                    _record_scan_error(session, item_id, name, fp, f"process_error: {exc}")
                 progress.done += 0.5
     set_meta(session, _TAG_CONFIG_KEY, current_hash)
     finish_scan_run(session, run, scanned=items_count, tagged=tagged, images=images_modified)
     session.close()
     _close_clients(jf, sonarrs, radarrs)
+    metrics.scan_finished(
+        scan_type,
+        metrics.CANCELLED if progress.cancelled else metrics.SUCCESS,
+        started=started,
+        scanned=items_count,
+        tagged=tagged,
+        images=images_modified,
+    )
     if sonarrs or radarrs:
+        # A cancelled scan did not sync everything, so it cannot clear a halt.
+        metrics.arr_sync_finished(arr.live and not progress.cancelled, arr.halted is not None)
         store_report(arr.report())
         for line in arr.summary_lines():
             progress.emit(line)
@@ -687,18 +706,27 @@ def run_arr_dry_run_background(cfg: AppConfig) -> None:
         arr_dry_run_state["running"] = False
 
 
+def _run_scan_recorded(cfg: AppConfig, incremental: bool) -> None:
+    """``_run_scan``, with an exception that escapes it recorded as a failed scan (I5)."""
+    try:
+        _run_scan(cfg, incremental)
+    except Exception:
+        metrics.scan_finished("incremental" if incremental else "full", metrics.FAILED)
+        raise
+
+
 def run_full_scan(cfg: AppConfig) -> None:
     if not progress.try_start():
         log.warning("Scan already in progress, skipping")
         return
-    _run_scan(cfg, incremental=False)
+    _run_scan_recorded(cfg, incremental=False)
 
 
 def run_incremental_scan(cfg: AppConfig) -> None:
     if not progress.try_start():
         log.warning("Scan already in progress, skipping")
         return
-    _run_scan(cfg, incremental=True)
+    _run_scan_recorded(cfg, incremental=True)
 
 
 def _resolve_webhook_jf_item(jf: JellyfinClient, source: str, payload: dict) -> dict | None:
