@@ -2176,7 +2176,7 @@ webhook resolves the wrong item.)*
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| I1 | CSRF protection: form token validation on login and settings forms | 4 | 1 | READY (decided 2026-09-26) | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
+| I1 | CSRF protection: ~~form token validation on login and settings forms~~ **decided 2026-09-26: an `Origin`/`Referer` check on every state-changing request** | 4 | 1 | **SHIPPED 2026-09-27** (merged, not released) | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
 | I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | **CLOSED 2026-09-26** — moved to [Deferred / Out of Scope](#deferred--out-of-scope) | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
 | I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | **SHIPPED 2026-09-26** | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
 | I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | **SHIPPED 2026-05-05** (`53c9f3f`) | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
@@ -2280,6 +2280,60 @@ Serenity would have to be re-identified). The sibling trap is already known: `so
 
    **OPERATOR DECISION 2026-09-26:** (a) — reject `POST`/`PUT`/`DELETE` whose `Origin` (else `Referer`) is
    not the request's own origin, `/webhook/*` exempt, verified behind SWAG. **READY.**
+
+   **I1 — SHIPPED 2026-09-27 (merged, not released).** `app/web/csrf.py`, a pure ASGI middleware
+   added in `app/main.py` inside `_SecurityHeaders` (so its 403s carry the same headers). It checks
+   `POST`/`PUT`/`PATCH`/`DELETE`, and `/webhook/*` is exempt. `Origin` is compared, or `Referer` when
+   there is no `Origin`, as a (scheme, host, port) triple against the request's own origin. A
+   request with neither header, or with blank ones, is allowed as a non-browser client. `null`, a
+   wrong scheme, a wrong port and a suffix-extended host are all rejected. A rejection logs
+   `Rejected cross-origin <METHOD> <path>: Origin <x> is not this request's origin <computed>`.
+   - **"Own origin" behind SWAG.** SWAG's `proxy.conf` sends `Host $host`,
+     `X-Forwarded-Host $host:$server_port` and `X-Forwarded-Proto $scheme`, over a plain-http hop
+     to `xenotag:7755`. uvicorn trusts forwarded headers only from 127.0.0.1: it has the default
+     `forwarded_allow_ips`, and neither the Dockerfile `CMD` nor prod compose sets it. So
+     `request.url` reads `http://` behind SWAG, and a naive comparison would reject every save.
+     The middleware therefore reads the scheme from `X-Forwarded-Proto` and the host from
+     `X-Forwarded-Host`, then `Host`. The port comes from the host, then `X-Forwarded-Port`, then
+     the scheme's default. For a proxy chain it takes the first comma entry. Trusting these headers
+     is safe without a proxy too: they are not CORS-safelisted, so a cross-origin page cannot make
+     a browser send them without a preflight, and xenotag answers none. The Dockerfile's uvicorn
+     flags were deliberately **not** changed: `--forwarded-allow-ips '*'` would also let any
+     client spoof `X-Forwarded-For`, which the login rate limiter keys on.
+   - **Proxy verification** (the operator's condition). A throwaway container built from the
+     branch ran behind a throwaway nginx: the `lscr.io/linuxserver/swag` image's own nginx, with the
+     xenotag vhost's `location` block and `proxy.conf`/`resolver.conf` copied verbatim. Only the
+     Authentik includes and the real cert were left out. They shared a scratch `--internal`
+     network, removed afterwards. Results: a login through the proxy with `Origin: https://<host>`
+     → 302 and a cookie; the Settings save (`GET` then `PUT /api/settings`) → **200 `saved`**; the
+     same `PUT` with `Origin` `https://evil…` / `http://<host>` / `https://<host>:8443` / `null` →
+     **403** each; a same-origin `Referer` with no `Origin` → 200 and a foreign one → 403; neither
+     header → 200. `POST /webhook/sonarr` with a foreign `Origin` → 200 (exempt), and
+     `POST /scan/cancel` → 403 foreign, 409 same-origin (the request reached the route). uvicorn's
+     access log named the nginx container as the peer, confirming it applied no forwarded headers.
+     The computed origin was `https://<host>:443`. The harness and output are in
+     `~/docker/xenotag/i1-proxy-verify-20260927/`.
+   - **Non-browser callers checked.** `grep` over `~/docker` found none that `POST`s to xenotag
+     except the documented in-container recipe (`POST http://127.0.0.1:7755/scan/full` with a
+     minted cookie; U2 release README). It sends no `Origin`, so it is unaffected. The poll
+     scripts and the healthcheck only `GET`.
+   - **Not covered, by the decision:** `/webhook/*` is exempt, and production's `webhooks.secret`
+     is empty (B8), so that route is still reachable cross-site. It only queues a single-item
+     re-tag.
+   - **Tests** `tests/test_csrf_origin.py`, 115 of them. A guard pins the 16 mutating routes,
+     re-listed from `routes.py`, so a new route has to be looked at. Each of the 15 checked routes
+     is tested four ways: foreign `Origin` → 403, same-origin → reaches the route, `Referer`
+     fallback both ways, neither header → passes. More tests cover a signed-in admin's
+     cross-origin `/scan/full` (403, and no scan starts) against the same-origin one (starts), the
+     SWAG header set (public https origin passes; wrong scheme, host or port 403; without the
+     forwarded headers it would 403), the webhook exemption, GET unchecked, 403 carrying the CSP,
+     and both parsers directly. Seven mutants (middleware removed, reject-all, forwarded headers
+     ignored, host-only compare, neither-header rejected, no `Referer` fallback, webhook not
+     exempt) each turn the file red: 43/34/8/6/16/15/1 failures. Suite **512 → 627**, baseline
+     re-measured from a `git archive` of `origin/main`.
+   - **Post-deploy smoke (the releasing session or the operator):** through
+     `https://xenotag.bitmapserv.org`, save Settings once. It must say saved, and
+     `docker logs xenotag` must carry no `Rejected cross-origin` line for it.
  - **I2 — NEEDS DECISION → CLOSED 2026-09-26 (below); the premise does not hold for this deployment.** "Prevents a full
    rescan after container upgrades" assumes the upgrade loses `state.db`. It does not: production
    bind-mounts `~/docker/xenotag/config` at `/config`, `state.db` lives there, and restic backs up

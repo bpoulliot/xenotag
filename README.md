@@ -90,6 +90,10 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 
 ### Security
 - Session cookies: HttpOnly, SameSite=lax, 30-day expiry, `Secure` flag on by default
+- Cross-origin request check: a `POST`/`PUT`/`PATCH`/`DELETE` whose `Origin` header (or, without one, `Referer`) is not Xenotag's own origin gets a 403. This closes the gap `SameSite=lax` leaves: behind a reverse proxy, every other app on the same parent domain counts as the same *site*.
+  - **Behind a reverse proxy**, "own origin" is read from `X-Forwarded-Proto` and `X-Forwarded-Host` (then `Host`, then `X-Forwarded-Port`). The proxy must pass them through. SWAG's stock `proxy.conf` does. A proxy that rewrites `Host` to the upstream name and sends no `X-Forwarded-Host` will make every save fail with 403, and the log line `Rejected cross-origin … is not this request's origin …` shows what Xenotag computed.
+  - **A request with neither header is allowed.** Browsers always send `Origin` on a cross-origin `POST`, so such a request comes from a non-browser client (a script, `curl`). It still needs a valid session cookie wherever it did before.
+  - `/webhook/*` is exempt, because *arr and Jellyfin post there server-to-server
 - Rate-limited login: 10 attempts/minute per IP
 - bcrypt password hashing (12 rounds), minimum 12-character passwords
 - Security headers on every response: CSP, X-Frame-Options, X-Content-Type-Options, Referrer-Policy, X-XSS-Protection
@@ -410,7 +414,9 @@ Configure the webhook URL in your *arr application's Connect settings. Xenotag w
 | POST | `/api/deleted-items/report` | Yes | Start a deleted-items report — always report-only, whatever `deleted_items.mode` says |
 | POST | `/webhook/{source}` | No* | Trigger single-item processing from *arr/Jellyfin webhook |
 
-*Webhook endpoint is unauthenticated by design to support *arr's built-in webhook delivery.
+*Webhook endpoint needs no session, so that *arr's built-in webhook delivery works. When `webhooks.secret` is set it requires that token, as `?token=` or an `X-Webhook-Token` header.
+
+Every `POST`/`PUT`/`DELETE` above except `/webhook/{source}` is also subject to the [cross-origin check](#security).
 
 ---
 
