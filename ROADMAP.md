@@ -3535,7 +3535,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| U5 | Extended ffprobe tags: video profile, bitrate tier, interlacing, frame rate | 4 | 3 | READY (decided 2026-09-26; B9 FIXED 2026-09-27) | [#24](https://github.com/bpoulliot/xenotag/issues/24) |
+| U5 | Extended ffprobe tags: video profile, bitrate tier, interlacing, frame rate | 4 | 3 | **SHIPPED 2026-09-27** — interlacing only (`xt-interlaced`), as decided; merged, not released — the next release forces a full re-tag | [#24](https://github.com/bpoulliot/xenotag/issues/24) |
 | U6 | Extended metadata tags from Jellyfin/\*arr: genres, original language, runtime bands, series status, ratings, custom formats | 4 | 5 | **CLOSED 2026-09-26** | [#25](https://github.com/bpoulliot/xenotag/issues/25) |
 
 ### P — Polish
@@ -3570,6 +3570,65 @@ labels say what would make each one startable.
    **OPERATOR DECISION 2026-09-26:** interlacing only (`xt-interlaced`, present/absent), after B9.
    ~~**BLOCKED on B9.**~~ **READY** since B9 was FIXED 2026-09-27; `xt-interlaced` is already legal
    under B9's spelling rule (`tagger.tag_label()`), which any new family must go through.
+
+   **U5 — SHIPPED 2026-09-27 (merged, not released). Interlacing only; the other three families
+   were not built.**
+   - **Rule.** `scanner._detect_field_order()` reads ffprobe's `field_order` from the first video
+     stream (the one the codec comes from). `tt`/`bb`/`tb`/`bt` add `xt-interlaced`; `progressive`
+     adds nothing; a stream with no `field_order` is stored as `unknown` and adds nothing — no
+     guess either way. No video stream stores NULL. The label is already legal in Radarr (B9;
+     it is in `tests/test_tag_vocabulary.py`'s vocabulary now). It rides `tags.destinations.video`,
+     like resolution/codec/HDR, so no new config key. **Tags only:** no badge — the video pill row
+     is resolution/codec/HDR and stays that way (`test_no_badge_is_drawn_for_it`).
+   - **Index.** New nullable column `media_state.field_order`, **Alembic revision 0002** — the
+     first revision after the baseline; additive (a plain `ALTER TABLE … ADD COLUMN` under batch
+     mode). The \*arr index dry run builds tags from the row with it, so the dry run and the scan
+     agree (`test_index_dry_run_and_scan_agree_on_xt_interlaced`). A row written before 0002 reads
+     NULL and plans no `xt-interlaced`, without error.
+   - **Re-tag.** `TAG_VOCABULARY` 3 → 4, so the first scan after the upgrade is a full re-tag.
+     Checked that it **re-probes**: a full scan skips the mtime check, so every reachable item is
+     probed and its row gets `field_order` (`test_the_first_scan_after_the_upgrade_re_probes_an_unchanged_file`;
+     the scan after that is incremental again and reuses the row). Items that fail to probe keep
+     NULL. Default-config hash `d0c577fe5620e689` → `ed8a1890a06dc045`; production's own hash
+     (`811c4c22ae05ed4a`, arr live) changes too, which is the point.
+   - **Migration, measured on a copy of production `state.db`** (2026-09-27 08:37 MDT, at
+     revision 0001): `scripts/verify_state_db_upgrade.py --db` → `upgraded` 0001 → 0002, 10,646
+     rows (`media_state` 10,585, `scan_runs` 50, `scan_errors` 10, `app_meta` 1), **0** differing
+     in any pre-existing column, `field_order` NULL on all of them, second start `current`. The
+     **released** image (`:latest`, v1.10.0) run against the upgraded copy logs "revision 0002,
+     which this xenotag image does not know … Starting without migrating", starts, and its writes
+     leave `field_order` NULL — so rolling back the image needs no database restore.
+     The verifier itself had to change: it compared `.dump` lines byte for byte (an added column
+     changes every line) and built its "pre-I3" fixture from today's models. It now builds the
+     fixture from the baseline revision, accepts a source at an older revision, compares every
+     pre-existing column by `quote()` (what `.dump` writes), and fails if an added column holds a
+     value; the self-test plants one and sees it.
+   - **How often `unknown` occurs — common.** `scripts/measure_field_order.py`, run in a throwaway
+     container of the released image (ffprobe **7.1.5**, the one production scans with), media
+     mounted read-only, no network; every answer cross-checked against a separate plain `ffprobe`
+     call (0 disagreements), self-test on synthetic progressive/top/bottom-field files. Sample:
+     paths from the production index copy, seed 20260927 — 400 at random (47 paths no longer
+     exist on disk — stale index rows, deleted or replaced files; not counted) and 200 from the
+     SD / 480p / MPEG-2 / VC-1 / MPEG-4 stratum (9 gone).
+
+     | stratum | probed | progressive | unknown | interlaced |
+     |---|---:|---:|---:|---:|
+     | random | 353 | 226 | **126 (35.7 %)** | 1 (`tt`, SD H.264) |
+     | legacy SD stratum | 191 | 149 | 38 (19.9 %) | 4 (MPEG-2 `tt` ×2, `bb` ×1; H.264 `tt` ×1) |
+
+     By codec (random): AV1 76 of 132 unknown, H.265 47 of 72, MPEG-4 3 of 3, H.264 0 of 146.
+     Dev fixtures (`~/.mf-dev/media`, 6 files, host ffprobe 6.1.1): 6 progressive.
+     **What `unknown` is:** 15 of the unknowns (H.265 6, MPEG-4 4, AV1 3, VP9 2) re-probed with
+     `-probesize 200M -analyzeduration 200M` still declare no `field_order`, and none of their
+     first 50 decoded frames has `interlaced_frame=1` — so it is the stream not saying, not the
+     probe being too small. AV1 cannot code interlaced video at all. Consequence, recorded not
+     acted on: `xt-interlaced` is a **lower bound** — an interlaced file whose stream declares no
+     field order (plausible for old MPEG-4/AVI) is missed. The frame-level flag is what a later
+     rule could use; nothing reads it now, and there is no item for it, because with no
+     `xt-progressive` an `unknown` and a `progressive` file tag identically.
+   - **Not measured:** how many production items get the tag. The sample says roughly 0.3 % of
+     the library at random; the real count arrives with the release's full re-tag and can be read
+     back by `Ids=` (never the recursive listing — B18).
  - **U6 — NEEDS DECISION → CLOSED 2026-09-26 (below).** Complexity 5 because it is seven unrelated features; "ratings" left
    it with U7 (already shipped as the certification). Most of the rest is data Jellyfin already
    holds and indexes (genres, original language, series status), so re-emitting it as `xt-`
