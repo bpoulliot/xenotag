@@ -57,6 +57,17 @@ jobs:
       - name: Tests (pytest)
         run: pytest tests/ -q
 
+      # I3: `alembic check` against a database built by the startup path --
+      # fails when a model changes with no revision, or the reverse.
+      # tests/test_migrations.py proves it fails on a planted drift.
+      - name: Schema drift check (alembic check — models match migrations)
+        run: python -m app.migrate check
+
+      # The I3 acceptance harness (run by hand against a copy of prod state.db);
+      # its self-test proves the row comparator catches a planted change.
+      - name: State DB upgrade verifier self-test
+        run: python scripts/verify_state_db_upgrade.py --self-test
+
       - name: Badge contrast probe self-test
         run: python scripts/measure_badge_contrast.py --self-test
 

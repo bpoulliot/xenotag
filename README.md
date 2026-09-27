@@ -416,6 +416,30 @@ black --check app/
 
 ---
 
+## Database migrations
+
+`state.db`'s schema is versioned by [Alembic](https://alembic.sqlalchemy.org/). The revisions
+live in `app/migrations/versions/`, and every start (app, scanner, `python -m app.arr_sync`)
+upgrades the database to the newest one before opening it:
+
+- a **new** `state.db` is built from the revisions;
+- a `state.db` from a release **before migrations existed** is compared with the baseline
+  revision and stamped only if it matches exactly. If it differs, xenotag refuses to start and
+  names each difference: restore a backup, or move the file aside to build a fresh index (the
+  next scan re-tags everything);
+- a `state.db` that a **newer** release has already migrated is left alone, with a warning.
+
+**Rolling back.** An additive migration (a new column or table) leaves the database readable by
+an older image: SQLAlchemy ignores the version table and columns it does not know. A
+non-additive migration (dropping, renaming or retyping) does not. **Back up `state.db` with its
+`-wal` and `-shm` files before upgrading to a release that ships one**, and restore that backup
+to roll back.
+
+Adding a revision: see [`app/migrations/README.md`](app/migrations/README.md).
+CI runs `python -m app.migrate check`, which fails if the models and the revisions disagree.
+
+---
+
 ## CI/CD
 
 Every push and pull request runs:
@@ -425,6 +449,7 @@ Every push and pull request runs:
 | Python lint + format | ruff + black |
 | Python SAST | bandit |
 | Dependency CVE audit | pip-audit |
+| Schema drift (models vs migrations) | `alembic check` via `python -m app.migrate check` |
 | Dockerfile lint | hadolint |
 | Container CVE scan | Trivy (CRITICAL + HIGH, fixed only) |
 | Deep Python SAST | CodeQL (weekly + on push/PR to main) |
