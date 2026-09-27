@@ -301,6 +301,7 @@ def test_run_opens_the_index_read_only_in_report_mode(tmp_path, monkeypatch):
             self.delete_rows(["d-film"])
         except OperationalError as exc:
             outcome["refused"] = str(exc)
+        self._abort("stopped by the test")  # the report of a pass that never listed anything
         return self.report()
 
     monkeypatch.setattr(DeletedItemsPass, "run", rogue_run)
