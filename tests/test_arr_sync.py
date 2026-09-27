@@ -15,9 +15,9 @@ fake reproduces what the dev instances were measured to do (Sonarr
 from __future__ import annotations
 
 import copy
-from datetime import datetime
 import json
 import re
+from datetime import datetime
 
 import httpx
 import pytest
@@ -690,7 +690,11 @@ def _index_db(tmp_path, rows, errors, runs=()):
             )
         )
     for item_id, error_type, last_seen in errors:
-        s.add(ScanError(item_id=item_id, item_name=item_id, error_type=error_type, first_seen=last_seen, last_seen=last_seen))
+        s.add(
+            ScanError(
+                item_id=item_id, item_name=item_id, error_type=error_type, first_seen=last_seen, last_seen=last_seen
+            )
+        )
     for started_at, scan_type in runs:
         s.add(ScanRun(started_at=started_at, completed_at=started_at, scan_type=scan_type))
     s.commit()
@@ -717,15 +721,22 @@ _ERROR_TYPES = ["no_path", "no_file", "probe_failed", "process_error: OSError: [
 
 def test_an_item_whose_error_is_newer_than_its_row_is_unreachable_for_every_error_type(tmp_path, monkeypatch):
     ids = [f"e{n}" for n in range(len(_ERROR_TYPES))]
-    db = _index_db(tmp_path, dict.fromkeys(ids, _ROW_OLD), [(i, t, _ERR_NEW) for i, t in zip(ids, _ERROR_TYPES)])
+    db = _index_db(
+        tmp_path, dict.fromkeys(ids, _ROW_OLD), [(i, t, _ERR_NEW) for i, t in zip(ids, _ERROR_TYPES, strict=True)]
+    )
     report = _index_dry_run(monkeypatch, db, ids)
     st = report["instances"]["sonarr/s0"]
     assert st["owned"] == 4
     assert st["would_change"] == 0 and st["synced"] == 0 and st["tags_to_add"] == 0
     assert st["unreachable"] == 4
-    assert {x["error"] for x in st["examples"]["unreachable"]} == {"no_path", "no_file", "probe_failed", "process_error"}
+    assert {x["error"] for x in st["examples"]["unreachable"]} == {
+        "no_path",
+        "no_file",
+        "probe_failed",
+        "process_error",
+    }
     it = report["items"]
-    assert it["unreachable"] == 4 and it["no_probe_record"] == 0
+    assert it["unreachable"] == 4 and it.get("no_probe_record", 0) == 0
     assert {k: v for k, v in it.items() if k.startswith("unreachable_")} == {
         "unreachable_no_path": 1,
         "unreachable_no_file": 1,

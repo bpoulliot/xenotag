@@ -22,6 +22,7 @@ from .overlay import BadgeGroup, apply_overlay
 from .scanner import AudioTrack, MediaInfo, SubTrack, probe_file
 from .state import (
     MediaState,
+    ScanError,
     clear_scan_errors,
     finish_scan_run,
     get_meta,
@@ -581,6 +582,21 @@ def _read_only_session(db_path: str | Path) -> Session:
     return sessionmaker(bind=engine)()
 
 
+def _unreachable_errors(session: Session) -> dict[str, tuple]:
+    """Each item's newest ``scan_errors`` row, as ``{jellyfin id: (last_seen, error_type)}``.
+
+    An item is unreachable when this is newer than its ``media_state.last_scanned``
+    (B11): the scan skipped it before tagging, so its row is stale. Per item, not
+    per scan run -- ``scan_errors`` is cleared only by a full scan, and an
+    incremental scan skips a failed item whose stale row carries the file's mtime.
+    """
+    newest: dict[str, tuple] = {}
+    for item_id, error_type, last_seen in session.query(ScanError.item_id, ScanError.error_type, ScanError.last_seen):
+        if last_seen is not None and (item_id not in newest or last_seen > newest[item_id][0]):
+            newest[item_id] = (last_seen, error_type or "")
+    return newest
+
+
 arr_dry_run_state: dict = {"running": False, "error": None}
 
 
@@ -595,8 +611,9 @@ def run_arr_dry_run(
 
     Every client -- Jellyfin included -- sits behind a read-only transport, and
     the tags are computed from the local index (each item's last probe), so no
-    media file is read either. ``db_path`` opens a copied index read-only
-    instead of the app's own.
+    media file is read either. An item whose last scan error is newer than its
+    row is one the scan cannot reach -- counted as unreachable, not planned (B11).
+    ``db_path`` opens a copied index read-only instead of the app's own.
     """
     guards: list[ReadOnlyTransport] = []
     jf, sonarrs, radarrs = _clients_from_config(cfg, read_only=True, guards=guards)
@@ -608,12 +625,17 @@ def run_arr_dry_run(
         sync.resolve_all(items)
         session = _read_only_session(db_path) if db_path else get_session()
         try:
+            errors = _unreachable_errors(session)
             for item in items:
                 jf_rating = item.get("OfficialRating") or ""
                 arr_cert = sync.fallback_rating(item) if not jf_rating else ""
                 row = session.get(MediaState, f"jellyfin:{item.get('Id', '')}")
                 if row is None:
                     sync.note_no_probe(item)
+                    continue
+                error = errors.get(item.get("Id", ""))
+                if error and (row.last_scanned is None or error[0] > row.last_scanned):
+                    sync.note_unreachable(item, error[1])
                     continue
                 audio, subs = _tracks_from_row(row)
                 rating = jf_rating or arr_cert or None

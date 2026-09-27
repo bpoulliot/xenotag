@@ -1415,6 +1415,7 @@ function renderArrReport(r) {
   }).join('');
   const it = rep.items || {};
   const unowned = Object.entries(it).filter(([k]) => k.includes('_unowned_')).map(([k, v]) => `${e(k.replace('_unowned_', ': '))} ${v}`).join(' · ') || 'none';
+  const unreachable = Object.entries(it).filter(([k]) => k.startsWith('unreachable_')).map(([k, v]) => `${e(k.slice(12))} ${v}`).join(', ');
   const c = rep.certification_fallback || {};
   const cv = Object.entries(c.by_value || {}).map(([k, v]) => `${e(k)} ${v}`).join(', ');
   box.innerHTML = (rep.halted ? `<p style="color:var(--red)">Writes HALTED: ${e(rep.halted)}</p>` : '')
@@ -1423,7 +1424,8 @@ function renderArrReport(r) {
     + `<th title="ids that point at two titles, or a title two items claim — never written">Refused</th>`
     + `<th>${live ? 'Written' : 'Would change'} / synced</th><th>Labels to create</th><th>Labels refused (items)</th>`
     + `<th>Read-back / errors</th></tr></thead><tbody>${rows}</tbody></table>`
-    + `<p class="hint" style="margin-top:6px">Unmatched items — ${unowned}. No probe record: ${it.no_probe_record ?? 0}.</p>`
+    + `<p class="hint" style="margin-top:6px">Unmatched items — ${unowned}. No probe record: ${it.no_probe_record ?? 0}.`
+    + ` Owned, but the scan cannot reach it: ${it.unreachable ?? 0}${unreachable ? ' (' + unreachable + ')' : ''} — not planned.</p>`
     + `<p class="hint">Rating fallback (${c.enabled ? 'ON' : 'off'}): ${c.blank_rating ?? 0} items have no Jellyfin rating; `
     + `${c.would_fill ?? 0} would be filled${cv ? ' (' + cv + ')' : ''}.</p>`;
 }
