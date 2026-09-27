@@ -184,7 +184,9 @@ B9's first read-back reported *0 of 9,399 items changed*, and B5's cross-check a
 used the same call. **Fix:** read each item's current tags with `GET /Items?Ids=…&Fields=Tags`
 (batched) immediately before `set_managed_tags()`, and use the same read for any read-back
 (B17). Evidence and probes: `~/docker/xenotag/b9-retag-20260927/` (`jf_variants.py`,
-`jf_ids.py`, `jf_db_snap.py`).
+`jf_ids.py`, `jf_db_snap.py`). Since U9's drift warning (2026-09-27) a stale listing also
+produces false `Tag drift` warnings in a scan; the warning reads `jf.get_tags(item)`, the same copy
+`set_managed_tags()` uses, so this fix corrects both.
 
 **B17 — FILED 2026-09-27, found while reading back B9's re-tag. Not fixed here. NEEDS DECISION.**
 
@@ -418,6 +420,11 @@ NEEDS MEASUREMENT: *what* rewrites them — a Jellyfin metadata refresh that rep
 provider keywords, or an outside writer (the `nav1s`/`av1` tags point at the AV1 batch script,
 `/mnt/media/xtor/encodes/nav1s.sh`) — measured by watching one item's `Tags` across a refresh
 and across an encode, before choosing between a reconciliation pass and fixing the writer.
+
+*2026-09-27 — U9's drift warning (merged, not released) detects this class of loss:* the next
+scan or webhook that reaches such an item logs `Tag drift: … lacks [xt-…]` and counts
+`xenotag_tag_drift_total` before re-writing it; it does not fix B12, and an item whose file never
+changes is still not reached by an incremental scan.
 
 *Sweep 2026-09-26 — **NEEDS MEASUREMENT**, confirmed, with two leads the filing did not have.*
 
@@ -1768,7 +1775,7 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
 | U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted and collapse what is redundant or never queried. | 4 | 3 | **CLOSED 2026-09-23** — measured, then the operator ruled out cutting tags; what remains is [P7] | — |
-| U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | Override half **CLOSED** · drift-detection half **READY** (decided 2026-09-26) | — |
+| U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | Override half **CLOSED** · drift-detection half **SHIPPED 2026-09-27** (merged, not released) | — |
 | U11 | **Nothing sends xenotag a webhook.** 0 notifications on all five production \*arrs and no Jellyfin webhook plugin, so U3's event path (and B8's fix) never runs; wiring one adds an event-driven writer to live \*arrs | 2 | 2 | NEEDS DECISION | — |
 
 **U11 — FILED 2026-09-27, found while measuring B8. Not built here.**
@@ -2170,6 +2177,36 @@ override nobody has needed, and it is a cheap first detector for B12's class of 
 xenotag, and drift detection logs a WARNING when an item's current `xt-` tags differ from
 `tags_applied` before a write. So U9's **override half is CLOSED** and its **drift-detection half is
 READY**, specced by option (3) above; no build has been queued for it.
+
+**U9 drift-detection half — SHIPPED 2026-09-27 (merged, not released).** `_process_one_item()`
+calls `_warn_tag_drift()` just before `set_managed_tags()`, on both the scan and the webhook path.
+It compares the item's current `xt-` tags with the row's `tags_applied`, both restricted to
+`tags.managed_prefix`. When they differ it logs one WARNING line naming the item (name and id),
+the `xt-` tags Jellyfin has that xenotag did not write, and the ones it lacks. It also increments
+`xenotag_tag_drift_total`, a counter in I5's registry that accumulates for the process's lifetime
+and resets on restart. The write goes ahead unchanged, and any error in the check is logged at
+DEBUG and ignored. Non-`xt-` tags (including legacy `mf-` and the \*arrs' non-prefixed labels)
+are never drift. No row, or a row whose `tags_applied` is NULL, counts as a first write.
+- **No extra request.** The tags come from `jf.get_tags(item)`, the same copy
+  `set_managed_tags()` builds its write from. The scan's item comes from the recursive listing
+  and the Jellyfin webhook's from `/Items?Ids=`, and both request `Tags` in `Fields`. The
+  \*arr webhooks use `find_item_by_provider_id()`, which requests `ITEM_FIELDS` and so gets
+  `Tags` too.
+- **Caveat: B18.** On production the recursive listing can serve stale `Tags`. Until B18 is
+  fixed, a scan-path warning may describe the listing rather than Jellyfin, for example after a
+  re-tag the listing has not caught up with. B18's fix (read by `Ids=` before the write) corrects
+  both, because they share one input.
+- **Vocabulary changes do not flood the log.** The comparison is Jellyfin against the *row*,
+  never against the tags about to be written. An item nobody touched still carries exactly the
+  row's old spelling, so the full re-tag that a `tag_config_hash` change forces warns only where
+  Jellyfin really differs. B17's 22 films are one example: their rows say `xt-H264` and
+  Jellyfin still says `xt-H.264`.
+- **Expected real warnings.** Items carrying the \*arrs' lowercase NFO spellings (`xt-aac`
+  beside `xt-AAC`; 28 were counted before scan 148) are reported as drift, because they are
+  `xt-` tags xenotag did not write, and the write replaces them.
+- Tests: `tests/test_tag_drift.py` covers drift detected, all tags lost (B12), no drift,
+  non-`xt-` differences ignored, first write, a post-vocabulary-change re-tag, identical writes
+  and row with and without drift, and a failing check not stopping the write.
 
 ~~**U9 note.** There is currently **no tag query surface at all**~~ *(superseded)* — no `def` in `state.py`,
 `pipeline.py` or `web/routes.py` searches or filters by tag. Tags are written outward to

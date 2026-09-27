@@ -170,6 +170,56 @@ def _close_clients(jf: JellyfinClient, sonarrs: list[SonarrClient], radarrs: lis
         c.close()
 
 
+def _tag_drift(current: list[str], row: MediaState | None, prefix: str) -> tuple[list[str], list[str]] | None:
+    """Roadmap U9: managed tags Jellyfin carries that xenotag did not write, and the reverse.
+
+    Compares Jellyfin's current ``prefix`` tags with the row's ``tags_applied``
+    -- what xenotag last wrote -- never with the tags about to be written, so a
+    vocabulary change (B9's respelling, a new tag) is not drift: an item nobody
+    touched still carries exactly its row's old spelling. No row, or a row with
+    nothing recorded, is a first write and returns None; so does no difference.
+    """
+    if row is None or row.tags_applied is None:
+        return None
+    try:
+        applied = json.loads(row.tags_applied)
+    except ValueError:
+        return None
+    had = {t for t in applied if isinstance(t, str) and t.startswith(prefix)}
+    has = {t for t in current if t.startswith(prefix)}
+    if had == has:
+        return None
+    return sorted(has - had), sorted(had - has)
+
+
+def _warn_tag_drift(session: object, jf: JellyfinClient, item: dict, prefix: str) -> None:
+    """Log one WARNING line if the item's managed tags changed since xenotag wrote them.
+
+    Observes only; the write that follows replaces them as before. The tags are
+    ``jf.get_tags(item)`` -- the copy ``set_managed_tags()`` works from -- so no
+    extra request is made, and whatever feeds that write feeds this check.
+    """
+    item_id = item.get("Id", "")
+    try:
+        row = session.get(MediaState, f"jellyfin:{item_id}")
+        drift = _tag_drift(jf.get_tags(item), row, prefix)
+    except Exception as exc:  # a detector must never stop the write
+        log.debug("Tag drift check failed for %s: %s", item_id, exc)
+        return
+    if drift is None:
+        return
+    added, missing = drift
+    log.warning(
+        "Tag drift: %s (%s) — Jellyfin has %s tags xenotag did not write %s and lacks %s; this write replaces them",
+        item.get("Name", item_id),
+        item_id,
+        prefix,
+        added,
+        missing,
+    )
+    metrics.tag_drift()
+
+
 def _process_one_item(
     jf: JellyfinClient,
     arr: ArrTagSync,
@@ -226,6 +276,7 @@ def _process_one_item(
         field_order=info.field_order,
     )
 
+    _warn_tag_drift(session, jf, item, prefix)
     try:
         jf.set_managed_tags(item_id, item, prefix, jf_tags, fallback_rating=arr_cert, legacy_prefixes=legacy_prefixes)
     except Exception as exc:
