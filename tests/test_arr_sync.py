@@ -15,6 +15,7 @@ fake reproduces what the dev instances were measured to do (Sonarr
 from __future__ import annotations
 
 import copy
+from datetime import datetime
 import json
 import re
 
@@ -40,7 +41,7 @@ from app.clients.readonly import ReadOnlyTransport, ReadOnlyViolation
 from app.clients.sonarr import SonarrClient
 from app.config import AppConfig, ArrInstance
 from app.scanner import AudioTrack, MediaInfo
-from app.state import Base, MediaState
+from app.state import Base, MediaState, ScanError, ScanRun
 
 _RADARR_LABEL = re.compile(r"[a-z0-9-]+")
 
@@ -663,3 +664,129 @@ def test_index_dry_run_reads_a_copied_index_read_only(tmp_path, monkeypatch):
     assert report["items"]["no_probe_record"] == 1
     assert report["certification_fallback"]["would_fill"] == 1
     assert radarr.writes == [] and db.read_bytes() == before
+
+
+# ── B11: the index dry run must not plan items the scan cannot reach ────────
+_ROW_OLD = datetime(2026, 6, 2, 4, 0)
+_ERR_NEW = datetime(2026, 9, 26, 9, 0)
+
+
+def _index_db(tmp_path, rows, errors, runs=()):
+    """A state.db holding ``rows`` (item id -> last_scanned) and ``errors`` (item id, type, last_seen)."""
+    db = tmp_path / "state.db"
+    engine = create_engine(f"sqlite:///{db}")
+    Base.metadata.create_all(engine)
+    s = sessionmaker(bind=engine)()
+    for item_id, last_scanned in rows.items():
+        s.add(
+            MediaState(
+                item_id=f"jellyfin:{item_id}",
+                source="jellyfin",
+                resolution="1080p",
+                video_codec="H.265",
+                audio_tracks=json.dumps([{"lang": "EN", "codec": "AAC"}]),
+                last_scanned=last_scanned,
+                file_mtime=1_700_000_000.0,
+            )
+        )
+    for item_id, error_type, last_seen in errors:
+        s.add(ScanError(item_id=item_id, item_name=item_id, error_type=error_type, first_seen=last_seen, last_seen=last_seen))
+    for started_at, scan_type in runs:
+        s.add(ScanRun(started_at=started_at, completed_at=started_at, scan_type=scan_type))
+    s.commit()
+    s.close()
+    engine.dispose()
+    return db
+
+
+def _index_dry_run(monkeypatch, db, ids):
+    fake = FakeArr("sonarr", [series(n, i, n, f"/tv/{i}") for n, i in enumerate(ids, 1)])
+    items = [jf_series(i, i, f"/tv/{i}", Tvdb=str(n)) for n, i in enumerate(ids, 1)]
+
+    def fake_clients(c, *, read_only=False, guards=None):
+        return FakeJellyfin(items), [client_for(fake, "s0", read_only=True)], []
+
+    monkeypatch.setattr(pipeline, "_clients_from_config", fake_clients)
+    report = pipeline.run_arr_dry_run(cfg(), db_path=db, store=False)
+    assert fake.writes == []
+    return report
+
+
+_ERROR_TYPES = ["no_path", "no_file", "probe_failed", "process_error: OSError: [Errno 5] Input/output error"]
+
+
+def test_an_item_whose_error_is_newer_than_its_row_is_unreachable_for_every_error_type(tmp_path, monkeypatch):
+    ids = [f"e{n}" for n in range(len(_ERROR_TYPES))]
+    db = _index_db(tmp_path, dict.fromkeys(ids, _ROW_OLD), [(i, t, _ERR_NEW) for i, t in zip(ids, _ERROR_TYPES)])
+    report = _index_dry_run(monkeypatch, db, ids)
+    st = report["instances"]["sonarr/s0"]
+    assert st["owned"] == 4
+    assert st["would_change"] == 0 and st["synced"] == 0 and st["tags_to_add"] == 0
+    assert st["unreachable"] == 4
+    assert {x["error"] for x in st["examples"]["unreachable"]} == {"no_path", "no_file", "probe_failed", "process_error"}
+    it = report["items"]
+    assert it["unreachable"] == 4 and it["no_probe_record"] == 0
+    assert {k: v for k, v in it.items() if k.startswith("unreachable_")} == {
+        "unreachable_no_path": 1,
+        "unreachable_no_file": 1,
+        "unreachable_probe_failed": 1,
+        "unreachable_process_error": 1,
+    }
+
+
+def test_an_item_fixed_after_its_error_is_planned_normally(tmp_path, monkeypatch):
+    # scan_errors is only cleared by a FULL scan: an incremental success leaves the old row.
+    db = _index_db(tmp_path, {"a": datetime(2026, 9, 24, 23, 20)}, [("a", "probe_failed", datetime(2026, 9, 20, 3, 0))])
+    report = _index_dry_run(monkeypatch, db, ["a"])
+    st = report["instances"]["sonarr/s0"]
+    assert st["synced"] == 1 and st["would_change"] == 1 and st["unreachable"] == 0
+    assert "unreachable" not in report["items"]
+
+
+def test_frontier_war_stays_unreachable_after_a_later_incremental_scan(tmp_path, monkeypatch):
+    # Its May row carries the file's current mtime, so incremental scans skip it at the
+    # mtime filter and never touch its error: a "seen by the latest scan" rule would plan it.
+    db = _index_db(
+        tmp_path,
+        {"fw": datetime(2026, 5, 10, 3, 0), "ok": datetime(2026, 9, 27, 3, 5)},
+        [("fw", "probe_failed", _ERR_NEW)],
+        runs=[(_ERR_NEW, "full"), (datetime(2026, 9, 27, 3, 0), "incremental")],
+    )
+    report = _index_dry_run(monkeypatch, db, ["fw", "ok"])
+    st = report["instances"]["sonarr/s0"]
+    assert st["unreachable"] == 1 and st["synced"] == 1
+    assert st["examples"]["unreachable"] == [{"item": "fw", "error": "probe_failed"}]
+
+
+def test_an_item_with_no_row_is_still_no_probe_record_only(tmp_path, monkeypatch):
+    db = _index_db(tmp_path, {}, [("m", "probe_failed", _ERR_NEW)])
+    report = _index_dry_run(monkeypatch, db, ["m"])
+    assert report["items"]["no_probe_record"] == 1
+    assert "unreachable" not in report["items"]
+    assert report["instances"]["sonarr/s0"]["unreachable"] == 0
+
+
+def test_the_scan_path_ignores_scan_errors_and_never_counts_unreachable(session, tmp_path, monkeypatch):
+    """B11 is dry-run planning only: a scan that reaches an item syncs it, error row or not."""
+    fake = FakeArr("sonarr", [series(1, "A", 1, str(tmp_path))])
+    sync = make_sync([fake])
+    item = jf_series("a", "A", str(tmp_path), Tvdb="1")
+    sync.resolve_all([item])
+    session.add(ScanError(item_id="a", item_name="A", error_type="probe_failed", last_seen=datetime(2099, 1, 1)))
+    session.commit()
+    calls = []
+    real = sync.sync_item
+    monkeypatch.setattr(sync, "sync_item", lambda it, tags: calls.append((it["Id"], tags)) or real(it, tags))
+    pipeline._process_one_item(
+        FakeJellyfin(), sync, session, cfg(), item, str(tmp_path / "e.mkv"), str(tmp_path), 1.0, _info()
+    )
+    assert [c[0] for c in calls] == ["a"] and {t.lower() for t in calls[0][1]["sonarr"]} == {
+        "xt-1080p",
+        "xt-h.265",
+        "xt-en",
+        "xt-dts-hd",
+    }
+    report = sync.report()
+    st = report["instances"]["sonarr/s0"]
+    assert st["synced"] == 1 and st["would_change"] == 1 and st["unreachable"] == 0
+    assert not any(k.startswith("unreachable") for k in report["items"])
