@@ -2418,7 +2418,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | NEEDS MEASUREMENT | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a READY (dashboard grid overflow) · P4b NEEDS DECISION (header, phone tables) — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
 | P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
@@ -2456,6 +2456,80 @@ labels say what would make each one startable.
    every overflow, clipped control and unreadable table. **Roughly 1 h**, no code. The fix list
    it produces is then specced — and per the UI rule, any layout change that is not a plain
    overflow fix goes to the operator first.
+
+   **Measured 2026-09-26 — the label is now SPLIT: P4a READY (one plain overflow fix) and P4b
+   NEEDS DECISION (the header and the phone-width tables change layout).** Instrument: headless
+   Chromium (Playwright 1.58.0) at 360 / 390 / 768 / 1024 / 1366 × 800 against a throwaway
+   container built from `origin/main` `331dba5`, on a Docker `--internal` network (no path to
+   any real service; placeholder `*.example` URLs; one Sonarr + one Radarr instance so Settings
+   shows instance cards), scratch `/config`, `SECURE_COOKIES=false`, and a **synthetic**
+   `state.db` (60 media rows with long invented paths and 1–8 `xt-` tags, 6 scan runs, 4 scan
+   errors). Per page × width, from the DOM: `scrollWidth` vs `innerWidth`; every visible element
+   whose box leaves the viewport and is not inside a horizontal scroll/clip box (root offenders
+   only); every `overflow-x:auto|scroll` box that actually scrolls; every control outside its
+   viewport or clip box; every control whose centre `elementFromPoint` hits something else.
+   **Self-test, both directions:** a synthetic 390 px page with a 600 px div, an off-screen
+   button and a 900 px table in a scroll box is flagged on all three counts, and a 100 px page
+   comes back empty; on the app, the known P9 header defect is flagged at 390 px, and all four
+   pages at 1366 px have no overflow and no clipped control. No JS errors at any width.
+
+   | Page | 360 | 390 | 768 | 1024 | 1366 |
+   |---|---|---|---|---|---|
+   | Login | clean | clean | clean | clean | clean |
+   | Dashboard (incl. media browser) | **508 px wide** (header + all 5 cards) | **508 px wide** (header + all 5 cards) | clean | clean | clean |
+   | Preview | 397 px (header only) | 397 px (header only) | clean | clean | clean |
+   | Settings | 397 px (header only) | 397 px (header only) | clean | clean | clean |
+
+   What overflows, and why:
+
+   1. **Header (every signed-in page, 360 and 390).** The nav fits (66–347 px); **Sign out**
+      sits at 357–397, off the edge by 7 px at 390 and 37 px at 360, and wraps to two lines.
+      The fixed parts do not fit one row at phone width: ~24 padding + logo + the nav's 32 px
+      `margin-left` + 281 px of nav + Sign out ≈ 460 px. This is the P9 defect; it is the
+      *logout* button that leaves the viewport, not the nav buttons.
+   2. **Dashboard grid (360 and 390).** Every card is forced to **484 px** and the page to
+      508 px, because `.grid` items keep `min-width:auto`: the one-column grid takes the widest
+      card's min-content (the media browser's table, 484 px; scan history 463). The tables'
+      `overflow-x:auto` wrappers therefore **never scroll at any width** — measured scrollWidth ==
+      clientWidth everywhere. Clipped by it at 360/390: **Clear all** (scan errors, 425–491 px) and
+      the **Language** filter (247–445 px), reachable only by scrolling the whole page sideways.
+   3. **Media browser readability (360 and 390, not an overflow).** Squeezed to min-content, the
+      tag chips break at every hyphen (`xt-` / `lang-` / `ja`): **median row 188 px, tallest
+      393 px, 50 rows = 10,616 px** of table, vs 60 / 1,909 px at 1366. Scan-error paths break
+      per character (`word-break:break-all`, deliberate).
+
+   **Falsified:** 3–5 Settings controls per width first read as covered, by the sticky save bar.
+   Re-tested with each of the 53 controls scrolled to the viewport centre: **0 covered at every
+   width.** It is where the bar sits at a given scroll offset, not an unreachable control.
+
+   **P4a — READY: the plain overflow fix.** `.grid > * { min-width: 0 }` (or
+   `grid-template-columns: minmax(0,1fr) …`). Measured by injecting it into the throwaway page:
+   dashboard `scrollWidth` 508 → 360 / 390, zero overflowing elements, zero clipped controls,
+   and the three tables now scroll inside their cards (media 450 px in a 278 / 308 px box, scan
+   history 429, errors 361); 768+ unchanged. It fixes items 2 and the clipping, **not** item 1.
+   Acceptance: the same DOM audit, clean on dashboard at 360 and 390, unchanged at 768–1366.
+
+   **P4b — NEEDS DECISION: the header, and the media browser at phone width.** Both change
+   what the page looks like, so per the UI rule they are the operator's.
+   - *Header.* (a) `header{flex-wrap:wrap}` alone — no overflow, but measured **3 rows
+     (~127 px)** at 390, because the brand has zero width and the nav's 32 px margin pushes it
+     down too. (b) wrap plus `.nav{margin-left:8px}` below 600 px — **2 rows (91 px) at 390**,
+     still 3 rows (127 px) at 360; Sign out gets its own row. (c) move Sign out into the nav row
+     as an icon button below 600 px — one row, but a new control shape. (d) collapse nav + Sign
+     out into a menu — biggest change, three items do not need it. **Recommendation: (b)** — a
+     wrap, no new control, and one extra row on the widths that need it; revisit (c) if the
+     360 px third row bothers the operator in use.
+   - *Media browser at ≤ 600 px.* After P4a it scrolls sideways inside its card, but rows stay
+     very tall. (a) leave it — sideways scroll is the honest table. (b) `white-space:nowrap` on
+     tag chips — rows shrink, the table gets wider and scrolls further. (c) cards instead of a
+     table below 600 px. (d) hide Source / Audio / Scanned below 600 px. **Recommendation: (a)
+     now**, and decide (b)–(d) in the post-feature UI pass — a tagger's operator browses this
+     table at a desk, and the phone case is checking a scan, which the Overview card covers.
+
+   Not determined: real library data (longest titles, most tags) — the synthetic rows were made
+   long on purpose but are not a sample; Preview with a reachable Jellyfin (its sample posters
+   come from Jellyfin — here the synthetic backgrounds were used); touch-target sizes; heights
+   other than 800 px; browsers other than Chromium. Screenshots were kept out of the repo.
  - **P5 — SHIPPED 2026-09-26** (`scripts/generate_readme_images.py`; CI runs its `--check`). README gains (1) overlay examples rendered with `generate_preview_bytes()`
    over the **synthetic** backgrounds in `app/preview_samples.py` — never real posters, which are
    copyrighted art and this repo is public — at the shipped defaults, one per `badge_size`, and
