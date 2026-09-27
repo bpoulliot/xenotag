@@ -238,15 +238,17 @@ def test_shipped_default_is_dry_run_without_rating_fallback():
 
 
 def test_default_tag_config_hash_changes_only_by_design():
-    """B5's switches change the hash only when turned on; B9's respelling changes it for everyone.
+    """B5's switches change the hash only when turned on; B9's respelling and B7's
+    language table change it for everyone.
 
-    Before B9 the defaults hashed to 3163f57ce472c152. The vocabulary term moves
-    every install once, on purpose: every library holds the old spellings.
+    Before B9 the defaults hashed to 3163f57ce472c152, before B7 to 09d02a2ffe47df66.
+    The vocabulary term moves every install once per bump, on purpose: every library
+    holds the old spellings.
     """
-    assert pipeline._tag_config_hash(AppConfig()) == "09d02a2ffe47df66"
-    assert pipeline._tag_config_hash(AppConfig()) != "3163f57ce472c152"
-    assert pipeline._tag_config_hash(cfg("live")) != "09d02a2ffe47df66"
-    assert pipeline._tag_config_hash(cfg("dry_run", cert_fallback=True)) != "09d02a2ffe47df66"
+    assert pipeline._tag_config_hash(AppConfig()) == "d0c577fe5620e689"
+    assert pipeline._tag_config_hash(AppConfig()) not in ("3163f57ce472c152", "09d02a2ffe47df66")
+    assert pipeline._tag_config_hash(cfg("live")) != "d0c577fe5620e689"
+    assert pipeline._tag_config_hash(cfg("dry_run", cert_fallback=True)) != "d0c577fe5620e689"
 
 
 # ── trap 1: an *arr id is per instance ──────────────────────────────────────

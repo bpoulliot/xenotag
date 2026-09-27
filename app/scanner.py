@@ -2,57 +2,19 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import subprocess
 from dataclasses import dataclass
 from pathlib import Path
 
+from .iso639 import ISO639_2_TO_1
+
 log = logging.getLogger(__name__)
 
-# ISO 639-2 (3-letter) → ISO 639-1 (2-letter uppercase)
-LANG_MAP: dict[str, str] = {
-    "eng": "EN",
-    "jpn": "JA",
-    "fre": "FR",
-    "fra": "FR",
-    "ger": "DE",
-    "deu": "DE",
-    "spa": "ES",
-    "ita": "IT",
-    "por": "PT",
-    "rus": "RU",
-    "chi": "ZH",
-    "zho": "ZH",
-    "kor": "KO",
-    "ara": "AR",
-    "hin": "HI",
-    "pol": "PL",
-    "nld": "NL",
-    "swe": "SV",
-    "nor": "NO",
-    "dan": "DA",
-    "fin": "FI",
-    "tur": "TR",
-    "heb": "HE",
-    "hun": "HU",
-    "ces": "CS",
-    "cze": "CS",
-    "ron": "RO",
-    "rum": "RO",
-    "tha": "TH",
-    "vie": "VI",
-    "ind": "ID",
-    "msa": "MS",
-    "ukr": "UK",
-    "hrv": "HR",
-    "bul": "BG",
-    "cat": "CA",
-    "slk": "SK",
-    "slo": "SK",
-    "slv": "SL",
-    "lit": "LT",
-    "lav": "LV",
-    "est": "ET",
-}
+# ISO 639-2 (3-letter) -> ISO 639-1 (2-letter uppercase), from the generated
+# table (roadmap B7): every code with a 2-letter form, bibliographic and
+# terminologic alike (`fre`/`fra` -> `FR`, `per`/`fas` -> `FA`).
+LANG_MAP: dict[str, str] = {code: two.upper() for code, two in ISO639_2_TO_1.items() if two}
 
 RESOLUTION_THRESHOLDS = [
     (3840, "4K"),
@@ -188,11 +150,14 @@ def probe_file(path: str | Path) -> MediaInfo | None:
 
     streams = data.get("streams", [])
     resolution = _detect_resolution(streams)
-    languages, raw = _detect_languages(streams)
+    raw = _raw_audio_langs(streams)
     video_codec = _detect_video_codec(streams)
     hdr_type = _detect_hdr(streams)
-    audio_tracks = _detect_audio_tracks(streams)
-    subtitle_tracks = _detect_subtitle_tracks(streams)
+    audio_tracks = _detect_audio_tracks(streams, path)
+    # The audio tracks keep each language's first occurrence in stream order, so
+    # this is the ordered unique list -- mapped once, by the same rule as the tags.
+    languages = [t.lang for t in audio_tracks if t.lang != "UND"]
+    subtitle_tracks = _detect_subtitle_tracks(streams, path)
     subtitle_tracks += _detect_external_subs(Path(path))
 
     return MediaInfo(
@@ -217,20 +182,10 @@ def _detect_resolution(streams: list[dict]) -> str:
     return "unknown"
 
 
-def _detect_languages(streams: list[dict]) -> tuple[list[str], list[str]]:
-    seen: dict[str, None] = {}
-    raw: list[str] = []
-    for s in streams:
-        if s.get("codec_type") != "audio":
-            continue
-        tags = s.get("tags") or {}
-        lang3 = (tags.get("language") or "").lower().strip()
-        raw.append(lang3)
-        if not lang3 or lang3 in ("und", "unknown", ""):
-            continue
-        lang2 = LANG_MAP.get(lang3, lang3[:2].upper() if len(lang3) >= 2 else lang3.upper())
-        seen[lang2] = None
-    return list(seen.keys()), raw
+def _raw_audio_langs(streams: list[dict]) -> list[str]:
+    return [
+        ((s.get("tags") or {}).get("language") or "").lower().strip() for s in streams if s.get("codec_type") == "audio"
+    ]
 
 
 def _detect_video_codec(streams: list[dict]) -> str | None:
@@ -297,22 +252,65 @@ def _normalize_audio_codec(s: dict) -> str:
     return _AUDIO_CODEC_MAP.get(name, name.upper() if name else "?")
 
 
-def _lang3_to_lang2(lang3: str) -> str:
-    lang3 = lang3.lower().strip()
-    if not lang3 or lang3 in ("und", "unknown", ""):
+_LANG_CODE = re.compile(r"[a-z]{2,3}")  # the shape of an ISO 639-1 or 639-2 code, ASCII only
+
+# Every label a language tag shares the `xt-` namespace with that the scanner itself
+# emits. A 3-letter code with no 2-letter form is kept as itself, and one outside
+# ISO 639-2 (`aac`, `dts`) must not turn into one of these; the table's own codes
+# are checked against the same set by a test (none collide). The 2-letter codes
+# are the standard's and are not second-guessed here, though two of them are also
+# scanner labels -- Sindhi `SD`, Divehi `DV` (roadmap B19).
+_NON_LANGUAGE_LABELS = frozenset(
+    label.upper()
+    for label in (
+        *(label for _, label in RESOLUTION_THRESHOLDS),
+        "SD",
+        *_VIDEO_CODEC_MAP.values(),
+        *("DV", "HDR10+", "HDR10", "HLG"),
+        *_AUDIO_CODEC_MAP.values(),
+        *_AUDIO_QUALITY_RANK,
+    )
+)
+
+
+def _lang3_to_lang2(lang3: str, source: str | Path | None = None) -> str:
+    """A stream's language tag as the label xenotag tags it with (roadmap B7).
+
+    ISO 639-1 uppercase where the language has one (`per`/`fas` -> `FA`, `khm` ->
+    `KM`); otherwise the 3-letter code uppercase (`egy` -> `EGY`); a 2-letter code
+    as itself. `und`/`unknown`/nothing is `UND`. So is `zxx` ("no linguistic
+    content") and anything that is not 2-3 ASCII letters (`"eng"`), with a WARNING
+    naming ``source`` -- the file -- because those are metadata to fix, not a
+    language to guess.
+    """
+    code = lang3.lower().strip()
+    if code in ("", "und", "unknown"):
         return "UND"
-    return LANG_MAP.get(lang3, lang3[:2].upper() if len(lang3) >= 2 else lang3.upper())
+    if not _LANG_CODE.fullmatch(code):
+        log.warning("Language tag %r is not an ISO 639 code; tagged UND: %s", lang3, source)
+        return "UND"
+    if code == "zxx":
+        log.warning("Language tag 'zxx' (no linguistic content); tagged UND: %s", source)
+        return "UND"
+    if len(code) == 2:
+        return code.upper()
+    if code in LANG_MAP:
+        return LANG_MAP[code]
+    label = code.upper()
+    if label in _NON_LANGUAGE_LABELS:
+        log.warning("Language tag %r would read as the %s tag; tagged UND: %s", lang3, label, source)
+        return "UND"
+    return label
 
 
-def _detect_audio_tracks(streams: list[dict]) -> list[AudioTrack]:
+def _detect_audio_tracks(streams: list[dict], source: str | Path | None = None) -> list[AudioTrack]:
     # Collect all audio tracks
     all_tracks: list[tuple[str, str]] = []  # (lang2, codec)
     for s in streams:
         if s.get("codec_type") != "audio":
             continue
         tags = s.get("tags") or {}
-        lang3 = (tags.get("language") or "").lower().strip()
-        lang2 = _lang3_to_lang2(lang3)
+        lang2 = _lang3_to_lang2(tags.get("language") or "", source)
         codec = _normalize_audio_codec(s)
         all_tracks.append((lang2, codec))
 
@@ -337,14 +335,13 @@ def _detect_audio_tracks(streams: list[dict]) -> list[AudioTrack]:
     return ordered
 
 
-def _detect_subtitle_tracks(streams: list[dict]) -> list[SubTrack]:
+def _detect_subtitle_tracks(streams: list[dict], source: str | Path | None = None) -> list[SubTrack]:
     tracks: list[SubTrack] = []
     for s in streams:
         if s.get("codec_type") != "subtitle":
             continue
         tags = s.get("tags") or {}
-        lang3 = (tags.get("language") or "").lower().strip()
-        lang2 = _lang3_to_lang2(lang3)
+        lang2 = _lang3_to_lang2(tags.get("language") or "", source)
         codec_name = (s.get("codec_name") or "").lower()
         fmt = _SUB_FORMAT_MAP.get(codec_name, codec_name.upper() if codec_name else "?")
         tracks.append(SubTrack(lang=lang2, format=fmt, embedded=True))
@@ -362,14 +359,15 @@ def _detect_external_subs(video_path: Path) -> list[SubTrack]:
             if not f.stem.startswith(stem):
                 continue
             fmt = _SUB_FORMAT_MAP.get(f.suffix.lower().lstrip("."), f.suffix.upper().lstrip("."))
-            # Infer language from filename suffix: Movie.en.srt → "en"
+            # Infer language from filename suffix: Movie.en.srt → "en". Only a part
+            # shaped like a language code counts: `Movie.10.srt` is a track number.
             remainder = f.stem[len(stem) :].lstrip(".")
             parts = remainder.split(".")
             lang2 = "UND"
             for part in parts:
                 part = part.lower().strip()
-                if part and len(part) in (2, 3):
-                    lang2 = _lang3_to_lang2(part) if len(part) == 3 else part.upper()
+                if _LANG_CODE.fullmatch(part):
+                    lang2 = _lang3_to_lang2(part, video_path)
                     break
             tracks.append(SubTrack(lang=lang2, format=fmt, embedded=False))
     except Exception as exc:

@@ -18,8 +18,10 @@ _TAG_SPELLING = str.maketrans({".": "", "+": "plus", " ": "-"})
 # Bump when the spelling above renames a tag that already exists somewhere.
 # pipeline._tag_config_hash() folds it in, so the upgrade's first scan is a full
 # re-tag, which replaces the old spellings on Jellyfin and on every *arr.
-# 1: display names verbatim (`xt-H.264`); 2: the spelling above.
-TAG_VOCABULARY = 2
+# The language labels count too (scanner._lang3_to_lang2), since they are tags.
+# 1: display names verbatim (`xt-H.264`); 2: the spelling above; 3: the complete
+# ISO 639-2 table (B7: `xt-KH` -> `xt-KM`, `xt-PE` -> `xt-FA`, `xt-ZX` -> `xt-UND`).
+TAG_VOCABULARY = 3
 
 
 def tag_label(name: str) -> str:
