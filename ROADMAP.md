@@ -39,7 +39,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | READY (decided 2026-09-26) | — |
 | B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | READY (decided 2026-09-26) | — |
 | B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | READY | — |
-| B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged | — |
+| B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27; LIVE (v1.8.0)** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged; production re-tagged 2026-09-27 09:00–10:15Z | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
@@ -47,6 +47,55 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | READY | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | READY | — |
 | B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | NEEDS DECISION | — |
+| B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | NEEDS DECISION | — |
+| B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | READY | — |
+
+**B18 — FILED 2026-09-27, found while reading back B9's re-tag. Not fixed here. READY.**
+
+`_run_scan()` takes every item from `jf.get_items()` — the recursive `/Items` listing — and
+`set_managed_tags()` builds the new tag list from that copy's non-managed tags. On production
+(Jellyfin 10.11.10) that listing was **stale**: an hour after the re-tag it still served the
+pre-re-tag `Tags` for all 6,366 items the re-tag had changed, and for *Frontier War*, whose tags
+Jellyfin itself changed at 2026-09-26 19:05Z; it agreed with the database only for the 3,033
+items whose tags had not changed. At the same moment `jellyfin.db` (a copy), `/Items?Ids=`,
+`SearchTerm=` queries and the `Tags=` filter were all current: 180 items read by `Ids=` (150
+re-tagged, 30 not) equal the database 180/180 and the listing 30/180. *War Dogs* alone:
+`Ids=`, `Recursive+Ids` and `SearchTerm=War Dogs` return its new `xt-H264`; `NameStartsWith=War
+Dogs`, with or without `MediaSources`, returns no `xt-` tag. The listing matched `state.db` for
+the 20 items the 2026-09-26 09:00Z scan wrote, so it went stale between 09-26 09:01Z and 19:05Z.
+Why is Jellyfin's business and was not determined (no restart was tried; production Jellyfin was
+not in scope).
+
+What it costs xenotag: (1) a non-managed tag Jellyfin gained after the listing went stale is
+**dropped** by xenotag's next write of that item — not measured for this run, because the only
+pre-scan reads went through the same listing; (2) every read-back through the listing is blind:
+B9's first read-back reported *0 of 9,399 items changed*, and B5's cross-check and B12's filing
+used the same call. **Fix:** read each item's current tags with `GET /Items?Ids=…&Fields=Tags`
+(batched) immediately before `set_managed_tags()`, and use the same read for any read-back
+(B17). Evidence and probes: `~/docker/xenotag/b9-retag-20260927/` (`jf_variants.py`,
+`jf_ids.py`, `jf_db_snap.py`).
+
+**B17 — FILED 2026-09-27, found while reading back B9's re-tag. Not fixed here. NEEDS DECISION.**
+
+`_process_one_item()` writes the tags (`POST /Items/{id}`), and when the overlay rewrote the
+poster — every item, in a full scan — asks Jellyfin to refresh the item
+(`POST /Items/{id}/Refresh?ReplaceAllMetadata=false&ReplaceAllImages=false`). In B9's re-tag, for
+**22 of 9,340** such items `jellyfin.db` shows the item re-saved **60–700 ms after the refresh
+call** with exactly the tags it had before the write (`DateLastSaved` against the POST and
+refresh times in xenotag's log), in four bursts (09:05, 09:12–09:14, 09:46, 10:13–10:14Z). Both
+calls returned 204. Separately, 8 tag writes timed out client-side (30 s) on the largest series
+(*SpongeBob SquarePants*, *Bleach*, *One Piece*, *Bob's Burgers*, *King of the Hill*, *South
+Park*, *The Simpsons*, *Teen Titans Go!*); all 8 landed server-side about 30 s later — this time.
+
+Either way `upsert_media_state(tags_applied=…)` records the tags as applied (a tag error is only
+logged), so `state.db` says the item carries tags it does not, and the mtime-driven incremental
+scan never goes back. The 22 films still carry `xt-H.264`/`xt-H.265`/`xt-DD+` on Jellyfin while
+their Radarr copies carry the new labels; only the next full re-tag reaches them. **Options:** (a)
+read the item back by `Ids=` (B18) once the refresh has settled, retry once, and record
+`tags_applied` from what was read; (b) stop requesting the refresh after a tag write (it exists for
+the poster; Jellyfin's library monitor already sees the file change — unverified) or request it
+before the write; (c) record nothing on a failed write so the next scan retries. Recommendation:
+(a) + (c) — (b) changes how posters reach clients and needs its own measurement.
 
 **B16 — FILED 2026-09-27 by I13 (CodeQL #8). NEEDS DECISION.**
 
@@ -279,6 +328,37 @@ items' `Tags` once a day for a week (GET only) and note when, if ever, they go a
 pass in xenotag, a tag-preserving change to the refresh script (a `~/docker` change, not this
 repo), or both.
 
+*2026-09-27 — data points from B9's re-tag (recorded for B12; not a measurement of it).*
+
+ - **Before the re-tag** (08:55Z, recursive listing): still no `xt-` tag on any of the five —
+   *Steel Magnolias* `av1`, `nav1s`, `luxe` + 22 keywords; *Swearnet* `luxe` + 3; *War Dogs*
+   `av1`, `nav1s`, `luxe` + 6; *What Happens After the Massacre?* `luxe`, `slasher`; *What If*
+   `luxe` + 23; none locked. That listing was stale (B18), so this is Jellyfin's state at some
+   moment between 09-26 09:01Z and 19:05Z, not at 08:55Z.
+ - **The re-tag started 2026-09-27 09:00:00Z** (scan 147, ended 10:14:59Z); **step (3)'s week
+   restarts from it.** The five were written 09:12:40–09:17:47Z, and `jellyfin.db` at 10:18Z holds
+   *Steel Magnolias* `xt-1080p xt-H264 xt-UND xt-AAC xt-sub-EN xt-PG`; *Swearnet* `xt-1080p
+   xt-H264 xt-UND xt-AAC xt-NC-17`; *War Dogs* and *What Happens After the Massacre?* `xt-1080p
+   xt-H264 xt-UND xt-AAC xt-R`; *What If* `xt-1080p xt-AV1 xt-EN xt-Opus xt-sub-EN xt-PG-13`.
+   **Look for these new spellings** (`xt-H264`, not `xt-H.264`).
+ - **Read them by `/Items?Ids=`, never through the recursive listing** — an hour after the write
+   the listing still showed all five without an `xt-` tag (B18).
+ - **A lead the filing did not have: the \*arrs write NFO files.** All five \*arrs run the Kodi
+   (XBMC) / Emby metadata consumer (`GET /api/v3/metadata`), which writes an object's tag labels
+   into its NFO as `<tag>`; the five films' non-keyword tags (`av1`, `nav1s`, `luxe`) are exactly
+   their Radarr labels. After B5 wrote the \*arr labels (11:12–11:27Z), the \*arrs rewrote **9,349
+   NFOs before the re-tag, 9,333 of them between 2026-09-26 14:00Z and 20:00Z** (file mtimes);
+   9,347 NFOs now carry `xt-` labels. Jellyfin
+   follows them: *Frontier War* (not reached by the re-tag — ffprobe timeout) was saved at
+   19:05:23Z, three minutes after Radarr rewrote its NFO, with exactly the NFO's tags (`luxe`,
+   `1-admin-jellyfin`, `xt-und`, `xt-aac`, `xt-720p` — the \*arr's lowercase spelling); *Adults*
+   (series, not reached) carries Sonarr's lowercase spellings beside xenotag's own `xt-sub-EN`
+   and `xt-TV-MA`; *Boruto* gained Sonarr's `dual-audio` during the re-tag, after xenotag's own
+   refresh call. In all three the NFO's tags were **added** — so whether a refresh can remove
+   tags, B12's symptom, is still the question. The re-tag changed 6,043 \*arr objects' labels and
+   none of their NFOs had been rewritten by 10:40Z; on 09-26 the rewrite came 3–9 h after the
+   labels changed, which makes the next rewrite a natural moment to read the five and a sample.
+
 **B11 — FILED 2026-09-26, found while taking B5 live; FIXED 2026-09-26 (below the sweep note).**
 
 The B5 go-live (below) was driven from the index, like the dry run, and its independent
@@ -469,6 +549,88 @@ and no two share a spelling once lowercased. The same checks **fail on the naive
 test swaps `xt-h.265`/`xt-dd+` for `xt-h265`/`xt-ddplus` on a Sonarr object and lands them on a
 Radarr one, operator tags kept. Suite **272 → 284** passed. `RadarrClient.LABEL_PATTERN` stays
 as the guard. Evidence and scripts: `~/docker/xenotag/b9-retag-20260927/`.
+
+**B9 — LIVE 2026-09-27 (release v1.8.0). Production re-tagged 09:00–10:15Z; every \*arr object
+and every Jellyfin item read back.**
+
+**Release.** v1.8.0 — `bump=minor`, because a tag-vocabulary change is user-visible (release
+commit `eefda5d`, published 05:47:40Z, `docker-publish` green, `ghcr.io/bpoulliot/xenotag:1.8.0`
+= `:latest`). It carries everything merged since v1.7.0: **B9** (#88), **I3** Alembic (#78),
+**I12** (#77), **B11** (#76), **I10** (#74), **P5** (#79), the B13 / I7 / B8 probe scripts
+(#81, #83, #84), I13's pinning tests (#85), and roadmap-only PRs (#72, #73, #75, #80, #82, #86,
+#87).
+
+**Deploy** at 05:49:43Z (23:49 MDT; no scan running — the last had ended 09-26 09:00:58Z).
+`state.db` was backed up first (`config/state.db.bak-20260927-pre-b9` + `-wal`/`-shm`; checked:
+no `alembic_version` table, hash `20142cb0e93c4394`), then pull and
+`docker compose up -d --no-deps xenotag`; healthy. **This was the first production run of I3's
+stamp** and it stamped rather than refused: the log reads `Running stamp_revision -> 0001` then
+`state.db schema: stamped (revision 0001)`, and a copy of the live database has
+`alembic_version = 0001`.
+
+**The re-tag** was the scheduled 03:00 MDT scan, 09:00:00Z → 10:14:59Z (75 min). `scan_runs` 147
+records it as `incremental`, the type it started as; the hash differed, so Phase 1b queued all
+9,399 items. 9,388 tagged, 9,340 posters rewritten, 11 `probe_failed` (B11's empty series,
+*Mating Season*, and ffprobe timeouts on *Frontier War* and *Adults*). The stored hash is now
+`811c4c22ae05ed4a`, as predicted.
+
+| instance | objects written | labels created | already current | refused | read-back failures / errors / halts |
+|---|---:|---:|---:|---:|---|
+| sonarr/general | 745 | 3 | 309 | 0 | 0 / 0 / 0 |
+| sonarr/4k | 7 | 2 | 0 | 0 | 0 / 0 / 0 |
+| sonarr/anime | 859 | 3 | 496 | 0 | 0 / 0 / 0 |
+| radarr/general | 4,365 | 3 | 2,498 | 1 (`xt-"e`, B7) | 0 / 0 / 0 |
+| radarr/4k | 67 | 2 | 2 | 0 | 0 / 0 / 0 |
+| **total** | **6,043** | **13** | **3,305** | **1** | **0** |
+
+Predicted beforehand from the snapshots (each object against its own Jellyfin item, respelled):
+748 / 7 / 859 / 4,362 / 67.
+
+**Read back** with `b9verify.py` (self-test: a clean re-tag passes and 8 planted faults — operator
+tag removed, other field changed, old label left, label deleted, crossed tag, Jellyfin user tag
+lost, old spelling left on Jellyfin, HALTED report — each fail), the 08:55Z snapshot against
+10:15Z, every object. Two pre-scan snapshots three hours apart differed in nothing, so every
+difference below is the scan's.
+
+ - **\*arrs:** no label deleted or renamed; the 13 new ones are `xt-h264`, `xt-h265` and
+   `xt-ddplus`. **0 operator tags changed and 0 other fields changed on all 9,618 objects.**
+   Sonarr: 1,607 of the 1,609 objects that carried a dotted label now carry the new one instead;
+   the other two are *Adults* (not reached) and *Daredevil: Born Again*, whose file changed (now
+   `xt-h265` + `xt-dd`, correctly). Radarr: the 4,432 films written gained only the three new
+   labels and lost nothing — **4,589 label applications** (`xt-h264` 3,062, `xt-h265` 1,048,
+   `xt-ddplus` 479), exactly the number B9 was filed with.
+   Twins: all 69 radarr/4k and all 7 sonarr/4k objects equal their own Jellyfin item, and no
+   HD/4K pair shares a tag set.
+ - **Jellyfin**, read from a copy of `jellyfin.db` (see the trap below): of the 6,143 items that
+   carried a dotted, plus or space tag, **6,117 are respelled**; 9,363 of 9,399 carry exactly
+   their old set respelled; **0 non-managed tags lost** (one gained: *Boruto*'s `dual-audio`, from
+   Sonarr's NFO). 180 items read through `/Items?Ids=` (150 re-tagged, 30 not) all equal the
+   database, with 0 old spellings among the 150. `Tags=xt-H264` finds 3,660 items; `Tags=xt-H.264`
+   finds 18.
+ - **The 26 not respelled:** 3 of B11's empty series and *Adults* (not reached), and **22 films
+   whose write Jellyfin undid** — each re-saved 60–700 ms after xenotag's own refresh call, with
+   its old tags (filed **B17**). Their Radarr copies carry `xt-h264` and the like; `state.db`
+   says they are tagged, so only the next full re-tag reaches them.
+ - The other 10 whose set changed beyond the respelling are B12's five films (their `xt-` tags
+   are back), *Frontier War* (changed by Jellyfin itself on 09-26 — B12's note), *Daredevil*, and
+   three series that had no `xt-` tag before and have one now.
+
+**The trap: the listing is stale (filed B18).** The first read-back used the recursive `/Items`
+listing, as B5's did, and reported **0 of 9,399 items changed** while `jellyfin.db` held the new
+tags. That listing served stale `Tags` for every item whose tags had changed since some moment
+between 2026-09-26 09:01Z and 19:05Z; `Ids=`, `SearchTerm=`, the `Tags=` filter and the database
+were current. Read Jellyfin tags back by `Ids=` or from a database copy.
+
+**Seen, not B9's:** 8 Jellyfin tag writes timed out client-side on the largest series and landed
+anyway (B17); 6 overlay errors `Permission denied` on `folder.jpg` under `/media/luxe/tv/anime/`
+(poster side, file permissions); *Cunk on Britain* (sonarr/general) and *Laughing Target*
+(radarr/general) carry no `xt-` label although their Jellyfin items do — untouched by this scan,
+and the same before it. The \*arrs will write the new labels into their NFO files at their next
+refresh (B12's note).
+
+**Where things are:** `~/docker/xenotag/b9-retag-20260927/` (its README lists every snapshot and
+script). **Back out** (not needed): redeploy `:1.7.0` — its hash differs, so its first scan
+re-tags to the old spelling, which Radarr refuses again.
 
 **B8 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
@@ -728,7 +890,8 @@ scan could not reach on the other four instances (0 there). Hence 9,347 = 9,356 
 `20142cb0e93c4394` → `aabcd4f06c79b714`, so **the 03:00 scan on 2026-09-27 is a full re-tag** —
 expect ~1 h (the last two full scans took 55 and 76 min) and near-zero \*arr writes, since
 every reachable object is already current. That scan is the first run of the live path from
-a scan; read its report (`written`, read-back, **HALTED**).
+a scan; read its report (`written`, read-back, **HALTED**). *(It ran as B9's re-tag instead —
+6,043 \*arr writes, 0 read-back failures, not halted: see "B9 — LIVE 2026-09-27".)*
 
 **Where things are:** the `state.db` backup is
 `~/docker/xenotag/config/state.db{,-wal,-shm}.bak-20260926-pre-b5-live`; scripts, every report
@@ -737,7 +900,7 @@ and every snapshot (the 11:12Z one is the record of each object's tags *before* 
 restart (stops writes, removes nothing); to strip the tags, the recipe in step 6 below.
 
 **Still open:** B9 (Radarr refuses `xt-h.264`/`xt-h.265`/`xt-dd+` — 4,591 applications skipped,
-so ~3 in 5 radarr/general films have no codec tag there), B7 (odd language labels such as
+so ~3 in 5 radarr/general films have no codec tag there; FIXED and LIVE 2026-09-27), B7 (odd language labels such as
 `xt-zx`, `xt-ma` now exist as \*arr labels), B8 (a webhook would process the wrong item; now
 live, but 0 webhooks in 30 days and B8 cannot cross-tag), B11 (FIXED 2026-09-26), B12, B13.
 
