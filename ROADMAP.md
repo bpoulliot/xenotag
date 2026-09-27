@@ -36,8 +36,8 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B3 | **`_PILL_CACHE`'s key omits the padding.** Two poster widths can agree on `font_size` and disagree on `pad_h`/`pad_v`, so the first one rendered supplies the tile for both. | 2 | 1 | **FIXED 2026-09-24** | — |
 | B4 | **Two shipped badge colours are the same colour to a colour-blind viewer.** `audio` and `rating` separate by CIEDE2000 **1.9** under deuteranopia — below the threshold at which they differ at all. | 3 | 1 | **FIXED 2026-09-24** | — |
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **LIVE 2026-09-26** (v1.7.0) — all five instances written and read back | — |
-| B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | **FIXED 2026-09-27** (merged, not released) | — |
-| B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | **FIXED 2026-09-27** (merged, not released) | — |
+| B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | **FIXED 2026-09-27; LIVE (v1.9.0)** | — |
+| B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | **FIXED 2026-09-27; LIVE (v1.9.0)** — production re-tagged 2026-09-27 11:41–12:52Z and read back | — |
 | B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | READY | — |
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27; LIVE (v1.8.0)** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged; production re-tagged 2026-09-27 09:00–10:15Z | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
@@ -136,6 +136,11 @@ read the item back by `Ids=` (B18) once the refresh has settled, retry once, and
 the poster; Jellyfin's library monitor already sees the file change — unverified) or request it
 before the write; (c) record nothing on a failed write so the next scan retries. Recommendation:
 (a) + (c) — (b) changes how posters reach clients and needs its own measurement.
+
+*Seen again 2026-09-27 in v1.9.0's re-tag (scan 148):* 21 of the 22 films were respelled, but 2
+films read back **by id** still carry `xt-H.264` after the scan's tag write returned 204 and its
+refresh was sent — B9's leftovers and new lost updates are indistinguishable from here — and 5 of
+the largest series timed out client-side again (30 s). No new evidence on the options.
 
 **B16 — FILED 2026-09-27 by I13 (CodeQL #8). NEEDS DECISION.**
 
@@ -398,6 +403,11 @@ repo), or both.
    tags, B12's symptom, is still the question. The re-tag changed 6,043 \*arr objects' labels and
    none of their NFOs had been rewritten by 10:40Z; on 09-26 the rewrite came 3–9 h after the
    labels changed, which makes the next rewrite a natural moment to read the five and a sample.
+ - *Data point, 2026-09-27 (v1.9.0's re-tag, Jellyfin read by id before and after):* **28 items
+   carried a lowercase variant of a tag xenotag writes in another case** before the scan — `xt-aac`
+   19, `xt-und` 15, `xt-en` 12, `xt-av1` 9, `xt-opus` 6 — the \*arrs' lowercase spelling, as with
+   *Frontier War*; xenotag's full write replaced each with its own spelling. 0 items lost a
+   non-managed tag in that scan.
 
 **B11 — FILED 2026-09-26, found while taking B5 live; FIXED 2026-09-26 (below the sweep note).**
 
@@ -796,8 +806,19 @@ accessible file". Both fail safe and are left for the nightly scan. The import-t
 production's media mounts was not measured. It matters only if U11 wires a webhook, so it belongs
 to U11.
 
-**B7 — FIXED 2026-09-27 (merged, not released).** Takes effect at the next release, and **that
-release's first scan is a full re-tag with live \*arr writes**: `TAG_VOCABULARY` went 2 → 3, so
+**B7 — LIVE 2026-09-27 (v1.9.0).** The release's first scan — scan 148, a full re-tag started
+11:41:30Z, done 12:52:11Z — re-tagged **14 \*arr objects** (sonarr/general 3, radarr/general 11) and
+created 8 labels, every one a legal language label (`xt-gd` on Sonarr; `xt-bs`, `xt-egy`, `xt-fa`,
+`xt-hz`, `xt-km`, `xt-mi`, `xt-my` on Radarr); 0 read-back failures, 0 write errors, not halted. Read
+back independently (`b9verify.py`, GET snapshots of every object before and after, Jellyfin read
+**by id**): 0 operator tags changed, 0 non-tag fields changed, 0 labels deleted or renamed, twins
+intact; on Jellyfin 82 items' managed tags changed — 56 language renames (`sub-DU`→`NL`, `GR`→`EL`,
+`NO`→`NB`, `PE`→`FA`, `EG`→`EGY`, …), 5 track-number "languages" dropped (`xt-sub-10`…), 21 of B9's
+leftover spellings respelled — and 0 items' non-managed tags. Record, snapshots and scripts:
+`~/docker/xenotag/u2-release-20260927/` on the host (see U2).
+
+**B7 — FIXED 2026-09-27 (released in v1.9.0, above).** Took effect at that release, and **that
+release's first scan was a full re-tag with live \*arr writes**: `TAG_VOCABULARY` went 2 → 3, so
 `_tag_config_hash()` changes for every install (defaults `09d02a2ffe47df66` → `d0c577fe5620e689`).
 
 **What shipped.** Operator decision (c), as written:
@@ -910,7 +931,8 @@ codec tag in the emitted vocabulary.
 **OPERATOR DECISION 2026-09-26:** (c) — a complete ISO 639-2 (B and T) → 639-1 table, the 3-letter form only where no
 2-letter code exists, and `zxx` and malformed codes → `UND` with a WARNING naming the item.
 
-**B6 — FIXED 2026-09-27 (merged, not released).** Takes effect at the next release. Option (a) as
+**B6 — FIXED 2026-09-27; LIVE in v1.9.0 (2026-09-27).** Production's `config.yml` sets no badge colour, so
+nothing it renders changed. Option (a) as
 decided, in `ImageConfig._normalise_colour()` (`app/config.py`) over `normalize_color()`:
 
  - every value Pillow's `ImageColor.getrgb()` reads as **RGB** is stored as lowercase `#rrggbb`
@@ -1055,7 +1077,7 @@ restart (stops writes, removes nothing); to strip the tags, the recipe in step 6
 
 **Still open:** B9 (Radarr refuses `xt-h.264`/`xt-h.265`/`xt-dd+` — 4,591 applications skipped,
 so ~3 in 5 radarr/general films have no codec tag there; FIXED and LIVE 2026-09-27), B7 (odd language labels such as
-`xt-zx`, `xt-ma` now exist as \*arr labels; FIXED 2026-09-27, merged, not released), B8 (a webhook would process the wrong item; now
+`xt-zx`, `xt-ma` now exist as \*arr labels; FIXED 2026-09-27, LIVE in v1.9.0), B8 (a webhook would process the wrong item; now
 live, but 0 webhooks in 30 days and B8 cannot cross-tag), B11 (FIXED 2026-09-26), B12, B13.
 
 **B5 — FIXED 2026-09-25. Sonarr/Radarr writes shipped OFF (dry run); going live was the operator's step (done 2026-09-26, above).**
@@ -1670,7 +1692,7 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
-| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **BUILT 2026-09-27** — ships report-only, removal OFF · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
+| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **LIVE report-only (v1.9.0, 2026-09-27)** — removal OFF until the operator switches it · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution broken, see [B8] | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
@@ -1742,7 +1764,7 @@ is the operator's call because it decides whether xenotag becomes event-driven a
      half closes; if not, the size check #36 proposes needs a `file_size` column — an Alembic
      revision (I3, SHIPPED 2026-09-26).
 
-**U2, deleted items — BUILT 2026-09-27. Ships report-only (`deleted_items.mode: report`); removal is built, tested on dev, and OFF.**
+**U2, deleted items — BUILT 2026-09-27; LIVE report-only in v1.9.0 (deployed 2026-09-27 11:40Z). Removal is built, tested on dev, and OFF: the operator's switch.**
 
 The operator's option (c): when a Jellyfin item is gone, a scan deletes its index row and strips
 the managed tags from the \*arr object it owned — behind one report-only release first. The
@@ -1808,6 +1830,17 @@ tagged has left Jellyfin since. **Cross-checked from the other end**, independen
 GET snapshot of all five \*arrs (11:26Z) holds 9,350 objects with a managed label, and all 9,350
 sit in a folder holding a live Jellyfin item — 0 do not. So enabling removal today would delete
 1,187 index rows and strip nothing; the strip half starts to matter as tagged items are deleted.
+
+**In production — the report of record** (v1.9.0, released and deployed 2026-09-27; production's
+`config.yml` has no `deleted_items` key, so it runs the shipped `report`). The first scan, scan 148 (a
+full re-tag forced by B7, 11:41:30Z → 12:52:11Z), ran the pass at its end: **the same numbers** —
+9,399 listed = `TotalRecordCount` = recount; 1,187 of 10,585 rows confirmed gone by id (60/60
+controls); 314 rows kept for a live item (297 radarr/general objects), 873 with no object; **0 tags to
+strip** on all five instances; 42 GETs, 0 blocked, no \*arr write. None of the 873 has an object at
+any ancestor of its file (checked at every depth, so the folder rule misses nothing there); 716 of
+them name a folder that exists under another root — the title moved, and its object follows its
+live item. The report with titles, the snapshots and the re-tag read-back are on the host in
+`~/docker/xenotag/u2-release-20260927/` (not in this repo).
 
 **Dev end to end** (Jellyfin 12.1.0, Sonarr 4.0.18.2978, Radarr 6.3.0.10514; scratch config and
 index): Serenity's folder moved out of the library and Jellyfin refreshed (item gone, the Radarr
@@ -2125,10 +2158,9 @@ Serenity would have to be re-identified). The sibling trap is already known: `so
  - **I3 — SHIPPED 2026-09-26.** Every schema change from here on is an Alembic revision in
    `app/migrations/versions/` (how: `app/migrations/README.md`); `create_all()` and
    `_migrate_schema()` are gone from `init_db()`, which now calls `app.migrate.upgrade_to_head()`.
-   **Not yet run against production:** prod picks it up at the operator's next release, and that
-   start is the first real-world stamp. Expect one log line `state.db schema: stamped (revision
-   0001)`, then `current` on every later start; a `SchemaMismatchError` means the file is not the
-   baseline and nothing was changed.
+   **Ran against production at v1.8.0's start (2026-09-27 05:49Z):** `state.db schema: stamped
+   (revision 0001)`; v1.9.0's start logged `current (revision 0001)`, as every later start should. A
+   `SchemaMismatchError` means the file is not the baseline and nothing was changed.
    - **What "exact" compares** (before stamping an unversioned file): per table, every column's
      name, declared type, NOT NULL, default and primary-key position; every index's columns,
      uniqueness and partialness (explicit ones by name, SQLite's automatic ones by columns); and
