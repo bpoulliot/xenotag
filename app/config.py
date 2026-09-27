@@ -139,6 +139,10 @@ _COLOUR_FIELDS = (
     "audio_badge_color",
     "sub_badge_color",
     "rating_badge_color",
+    "backup_video_badge_color",
+    "backup_audio_badge_color",
+    "backup_sub_badge_color",
+    "backup_rating_badge_color",
 )
 _BARE_HEX6 = frozenset("0123456789abcdefABCDEF")
 
@@ -228,6 +232,25 @@ class ImageConfig(BaseModel):
     audio_badge_color: str = "#312c4c"  # deep indigo  opaque 13.2:1
     sub_badge_color: str = "#50532f"  # dark olive     opaque  8.0:1
     rating_badge_color: str = "#73485b"  # muted plum  opaque  7.5:1
+
+    # Roadmap P6: adapt badge colours to the poster. Off by default, and while
+    # off nothing below is read. On, each badge row samples the poster under it
+    # and, where that region would wash the label out (lighter than
+    # overlay.ADAPT_LUMINANCE_THRESHOLD, for a light label), draws in the backup
+    # palette instead. It only matters below badge_opacity 1.0: an opaque badge
+    # hides the poster, so the region under it cannot change what renders.
+    adapt_badge_colors: bool = False
+
+    # The backup palette. Darker than the main one, and measured rather than
+    # picked (scripts/measure_adaptive_palette.py): each holds WCAG AA (4.5:1)
+    # on a WHITE poster at 65% opacity, keeps its category's hue within 30
+    # degrees and the main palette's chroma, and stays at least CIEDE2000 5
+    # (roadmap B4's bar) from every other category -- backup or main, since one
+    # poster can show both -- under normal, protan, deutan and tritan vision.
+    backup_video_badge_color: str = "#0c332d"
+    backup_audio_badge_color: str = "#12061e"
+    backup_sub_badge_color: str = "#332d0c"
+    backup_rating_badge_color: str = "#210000"
 
     @field_validator(*_COLOUR_FIELDS, mode="before")
     @classmethod
