@@ -237,11 +237,16 @@ def test_shipped_default_is_dry_run_without_rating_fallback():
     assert AppConfig().arr_sync.certification_fallback is False
 
 
-def test_default_tag_config_hash_is_unchanged_by_b5():
-    """An upgrade must not force a full rescan: the defaults hash exactly as before B5."""
-    assert pipeline._tag_config_hash(AppConfig()) == "3163f57ce472c152"
-    assert pipeline._tag_config_hash(cfg("live")) != "3163f57ce472c152"
-    assert pipeline._tag_config_hash(cfg("dry_run", cert_fallback=True)) != "3163f57ce472c152"
+def test_default_tag_config_hash_changes_only_by_design():
+    """B5's switches change the hash only when turned on; B9's respelling changes it for everyone.
+
+    Before B9 the defaults hashed to 3163f57ce472c152. The vocabulary term moves
+    every install once, on purpose: every library holds the old spellings.
+    """
+    assert pipeline._tag_config_hash(AppConfig()) == "09d02a2ffe47df66"
+    assert pipeline._tag_config_hash(AppConfig()) != "3163f57ce472c152"
+    assert pipeline._tag_config_hash(cfg("live")) != "09d02a2ffe47df66"
+    assert pipeline._tag_config_hash(cfg("dry_run", cert_fallback=True)) != "09d02a2ffe47df66"
 
 
 # ── trap 1: an *arr id is per instance ──────────────────────────────────────
@@ -611,7 +616,7 @@ def test_process_one_item_in_dry_run_writes_jellyfin_but_no_arr(session, tmp_pat
     assert fake.writes == []
     assert jf.writes[0][2] == ""  # no fallback rating written to Jellyfin while it is off
     st = sync.stats["sonarr/s0"]
-    assert st.would_change == 1 and set(st.labels_to_create) == {"xt-1080p", "xt-h.265", "xt-en", "xt-dts-hd"}
+    assert st.would_change == 1 and set(st.labels_to_create) == {"xt-1080p", "xt-h265", "xt-en", "xt-dts-hd"}
 
 
 def test_process_one_item_live_writes_the_owner(session, tmp_path):
@@ -623,7 +628,35 @@ def test_process_one_item_live_writes_the_owner(session, tmp_path):
         FakeJellyfin(), sync, session, cfg("live"), item, str(tmp_path / "e.mkv"), str(tmp_path), 1.0, _info()
     )
     labels = {fake_id: label for label, fake_id in fake.tags.items()}
-    assert {labels[t] for t in fake.objects[1]["tags"]} == {"xt-1080p", "xt-h.265", "xt-en", "xt-dts-hd"}
+    assert {labels[t] for t in fake.objects[1]["tags"]} == {"xt-1080p", "xt-h265", "xt-en", "xt-dts-hd"}
+
+
+def test_b9_re_tag_swaps_the_old_label_on_sonarr_and_reaches_radarr(session, tmp_path):
+    """The full re-tag after B9: the dotted label comes off, the legal one goes on, the rest stays.
+
+    Sonarr accepted `xt-h.265` and `xt-dd+`, so it holds them; Radarr refused them,
+    so it holds neither. Old *labels* stay in Sonarr's tag list, unused.
+    """
+    info = MediaInfo("1080p", ["EN"], ["eng"], "H.265", None, [AudioTrack("EN", "DD+")], [])
+    show_dir, film_dir = tmp_path / "S", tmp_path / "F"
+    old = {"anime": 1, "xt-1080p": 2, "xt-h.265": 3, "xt-en": 4, "xt-dd+": 5}
+    son = FakeArr("sonarr", [series(1, "S", 1, str(show_dir), tags=[1, 2, 3, 4, 5])], tags=old)
+    rad = FakeArr(
+        "radarr", [movie(1, "F", 7, str(film_dir), tags=[1, 2, 3])], tags={"luxe": 1, "xt-1080p": 2, "xt-en": 3}
+    )
+    sync = make_sync([son], [rad], mode="live")
+    show = jf_series("s", "S", str(show_dir), Tvdb="1")
+    film = jf_movie("f", "F", str(film_dir / "f.mkv"), Tmdb="7")
+    sync.resolve_all([show, film])
+    for item, path in ((show, show_dir / "e.mkv"), (film, film_dir / "f.mkv")):
+        pipeline._process_one_item(FakeJellyfin(), sync, session, cfg("live"), item, str(path), "", 1.0, info)
+    son_labels = {i: label for label, i in son.tags.items()}
+    rad_labels = {i: label for label, i in rad.tags.items()}
+    assert {son_labels[t] for t in son.objects[1]["tags"]} == {"anime", "xt-1080p", "xt-h265", "xt-en", "xt-ddplus"}
+    assert {rad_labels[t] for t in rad.objects[1]["tags"]} == {"luxe", "xt-1080p", "xt-h265", "xt-en", "xt-ddplus"}
+    assert {"xt-h.265", "xt-dd+"} <= set(son.tags)  # the old labels remain, unused
+    assert sync.halted is None
+    assert all(st.readback_failures == 0 and not st.labels_rejected for st in sync.stats.values())
 
 
 def test_index_dry_run_reads_a_copied_index_read_only(tmp_path, monkeypatch):
@@ -659,8 +692,9 @@ def test_index_dry_run_reads_a_copied_index_read_only(tmp_path, monkeypatch):
     report = pipeline.run_arr_dry_run(cfg(), db_path=db, store=False)
     st = report["instances"]["radarr/r0"]
     assert st["owned"] == 2 and st["synced"] == 1 and st["would_change"] == 1
-    assert st["labels_rejected"] == {"xt-h.265": 1, "xt-hdr10+": 1, "xt-truehd atmos": 1}
-    assert set(st["labels_to_create"]) == {"xt-4k", "xt-en"}
+    # B9: before the respelling, H.265 / HDR10+ / TrueHD Atmos were all refused here.
+    assert st["labels_rejected"] == {}
+    assert set(st["labels_to_create"]) == {"xt-4k", "xt-h265", "xt-hdr10plus", "xt-en", "xt-truehd-atmos"}
     assert report["items"]["no_probe_record"] == 1
     assert report["certification_fallback"]["would_fill"] == 1
     assert radarr.writes == [] and db.read_bytes() == before
@@ -793,7 +827,7 @@ def test_the_scan_path_ignores_scan_errors_and_never_counts_unreachable(session,
     )
     assert [c[0] for c in calls] == ["a"] and {t.lower() for t in calls[0][1]["sonarr"]} == {
         "xt-1080p",
-        "xt-h.265",
+        "xt-h265",
         "xt-en",
         "xt-dts-hd",
     }

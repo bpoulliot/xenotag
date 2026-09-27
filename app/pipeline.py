@@ -32,7 +32,7 @@ from .state import (
     upsert_media_state,
     upsert_scan_error,
 )
-from .tagger import build_tags
+from .tagger import TAG_VOCABULARY, build_tags
 
 log = logging.getLogger(__name__)
 
@@ -112,6 +112,9 @@ def _tag_config_hash(cfg: AppConfig) -> str:
         f"|audio:{','.join(sorted(dest.audio))}"
         f"|subtitles:{','.join(sorted(dest.subtitles))}"
         f"|rating:{','.join(sorted(dest.rating))}"
+        # Code, not config: an upgrade that respells existing tags (B9) must force
+        # one full re-tag, or unchanged files keep the old spelling forever.
+        f"|vocab:{TAG_VOCABULARY}"
     )
     # Appended only when switched ON, so the shipped defaults hash exactly as
     # before and an upgrade does not force a full rescan. Turning either on
