@@ -40,7 +40,7 @@ how long. Five items turned out to be **already built** (U3, U4, P3, I4) or **de
 | B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. | 3 | 2 | NEEDS MEASUREMENT | — |
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | NEEDS DECISION | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
-| B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | READY | — |
+| B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule would put a 1916-wide 1080p crop at `720p`. | 3 | 1 | NEEDS MEASUREMENT | — |
 
@@ -113,7 +113,7 @@ items' `Tags` once a day for a week (GET only) and note when, if ever, they go a
 pass in xenotag, a tag-preserving change to the refresh script (a `~/docker` change, not this
 repo), or both.
 
-**B11 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
+**B11 — FILED 2026-09-26, found while taking B5 live; FIXED 2026-09-26 (below the sweep note).**
 
 The B5 go-live (below) was driven from the index, like the dry run, and its independent
 cross-check (every \*arr label must also be on the item's own Jellyfin tags) flagged 5 series
@@ -160,6 +160,37 @@ implementer does not have to rediscover it:*
    (all four reported as unreachable, none as "would change"), one whose row is newer than its
    error (planned normally), and one *Frontier War* case (row older than the error, same
    mtime). No live step; the production re-run is the operator's.
+
+*FIXED 2026-09-26 — the sweep's rule, as specified.* `run_arr_dry_run()` now reads each item's
+newest `scan_errors` row (`pipeline._unreachable_errors()`) and, when it is later than the
+item's `media_state.last_scanned` (or the row has no `last_scanned`), calls
+`ArrTagSync.note_unreachable()` instead of planning it. That counts the item in the report as
+`items.unreachable` plus `items.unreachable_<error type>` (the `process_error: <text>` shape is
+folded to `process_error`), and on each non-refused owner as `instances.<label>.unreachable`
+with up to five named examples — so "would change / synced" no longer includes them. Only
+owned items are counted there (an unowned item has nothing to plan). `no_probe_record` is
+unchanged and still wins when there is no row. The Settings hint line, the CLI summary and the
+scan log line say "Owned, but the scan cannot reach it"/"unreachable"; the scan log only when
+non-zero. **Inert on the scan and webhook paths:** neither consults `scan_errors` nor calls
+`note_unreachable()`, and a test drives `_process_one_item()` with a newer error row present and
+asserts the same single `sync_item()` call and zero unreachable counts. The `ScanError`
+comment now names all four `error_type` shapes.
+
+Tests (`tests/test_arr_sync.py`): one item per `error_type` whose error is newer than its row —
+this one **failed on `origin/main` with `would_change` 4 where 0 is right**; a failed-then-fixed
+item (planned normally); *Frontier War* (May row, same mtime, a later incremental `scan_runs`
+row — still unreachable); an error with no row (still `no_probe_record` only); and the scan-path
+inertness test. Suite **220 → 225 passed**.
+
+**Measured on a copy of production `state.db`** (+ `-wal`/`-shm`, taken 2026-09-26 after the
+05:28 local write; hash unchanged after the read) with `scripts/measure_unreachable_rows.py`,
+which applies the same classifier with no Jellyfin or \*arr call (so ownership is *not*
+determined there) and refuses to report unless it agrees with a one-query SQL reference; its
+self-test fails if the classifier returns nothing or marks everything new. Of **10,583** index
+rows, **10** Jellyfin items have an error row: **9 unreachable**, all `probe_failed` — exactly
+the nine empty series named above (errors 2026-09-26 09:00Z; rows 2026-06-02 to 2026-09-24) —
+**1 with no row** (*Mating Season*, the `no_probe_record: 1`), and **0** fixed since. The
+production dry-run re-run, which puts the per-instance numbers on it, is the operator's.
 
 **B9 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
@@ -375,7 +406,7 @@ restart (stops writes, removes nothing); to strip the tags, the recipe in step 6
 **Still open:** B9 (Radarr refuses `xt-h.264`/`xt-h.265`/`xt-dd+` — 4,591 applications skipped,
 so ~3 in 5 radarr/general films have no codec tag there), B7 (odd language labels such as
 `xt-zx`, `xt-ma` now exist as \*arr labels), B8 (a webhook would process the wrong item; now
-live, but 0 webhooks in 30 days and B8 cannot cross-tag), B11, B12, B13.
+live, but 0 webhooks in 30 days and B8 cannot cross-tag), B11 (FIXED 2026-09-26), B12, B13.
 
 **B5 — FIXED 2026-09-25. Sonarr/Radarr writes shipped OFF (dry run); going live was the operator's step (done 2026-09-26, above).**
 

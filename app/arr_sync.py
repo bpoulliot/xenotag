@@ -258,6 +258,7 @@ class _InstanceStats:
     synced: int = 0
     would_change: int = 0
     already_current: int = 0
+    unreachable: int = 0
     tags_to_add: int = 0
     tags_to_remove: int = 0
     labels_to_create: Counter = field(default_factory=Counter)
@@ -292,6 +293,7 @@ class _InstanceStats:
             "synced": self.synced,
             "would_change": self.would_change,
             "already_current": self.already_current,
+            "unreachable": self.unreachable,
             "tags_to_add": self.tags_to_add,
             "tags_to_remove": self.tags_to_remove,
             "labels_to_create": dict(sorted(self.labels_to_create.items())),
@@ -577,6 +579,23 @@ class ArrTagSync:
     def note_no_probe(self, item: dict) -> None:
         self.items["no_probe_record"] += 1
 
+    def note_unreachable(self, item: dict, error_type: str) -> None:
+        """Index dry run only (B11): an item the scan skips before tagging, so nothing would be written.
+
+        Counted per owner, never planned: its row describes a file the scan can no
+        longer read. The scan and webhook paths never call this.
+        """
+        owners = [o for o in self._resolve(item) if (o.client.label, o.object_id) not in self._refused]
+        if not owners:
+            return
+        reason = error_type.split(":", 1)[0]
+        self.items["unreachable"] += 1
+        self.items[f"unreachable_{reason}"] += 1
+        for owner in owners:
+            st = self.stats[owner.client.label]
+            st.unreachable += 1
+            st.example("unreachable", {"item": item.get("Name"), "error": reason})
+
     def report(self) -> dict:
         cert = dict(self.cert)
         cert["by_value"] = dict(cert["by_value"].most_common())
@@ -600,9 +619,10 @@ class ArrTagSync:
             if not st.available:
                 lines.append(f"[xenotag] {label}: unavailable — {st.error or 'not preloaded'}")
                 continue
+            unreachable = f", unreachable {st.unreachable}" if st.unreachable else ""
             lines.append(
                 f"[xenotag] {label}: owned {st.owned}, id-matched elsewhere {st.elsewhere}, ambiguous {st.ambiguous},"
-                f" {verb} {st.written if self.live else st.would_change}, current {st.already_current},"
+                f" {verb} {st.written if self.live else st.would_change}, current {st.already_current}{unreachable},"
                 f" labels to create {len(st.labels_to_create)}, labels refused {len(st.labels_rejected)}"
             )
         if self.halted:
@@ -672,6 +692,7 @@ def _print_summary(report: dict) -> None:
         )
         print(
             f"      would change {st['would_change']} of {st['synced']} (current {st['already_current']});"
+            f" owned but unreachable by the scan {st.get('unreachable', 0)};"
             f" +{st['tags_to_add']} / -{st['tags_to_remove']} tags;"
             f" labels to create {len(st['labels_to_create'])}; labels refused {st['labels_rejected'] or '{}'}"
         )

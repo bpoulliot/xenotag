@@ -63,7 +63,7 @@ class ScanError(Base):
     item_id = Column(String, index=True)
     item_name = Column(Text)
     file_path = Column(Text)
-    error_type = Column(String)  # "probe_failed" | "no_file"
+    error_type = Column(String)  # "no_path" | "no_file" | "probe_failed" | "process_error: <exception text>"
     first_seen = Column(DateTime, default=datetime.utcnow)
     last_seen = Column(DateTime, default=datetime.utcnow)
     scan_count = Column(Integer, default=1)
