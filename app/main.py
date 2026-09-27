@@ -17,6 +17,7 @@ from .config import AppConfig, get_config, load_config, log_env_overrides, save_
 from .pipeline import run_incremental_scan
 from .scheduler import start, stop
 from .state import get_session, init_db, purge_legacy_tags
+from .web.csrf import OriginCheckMiddleware
 from .web.routes import _limiter, router
 
 _version_file = Path(__file__).parent.parent / "VERSION"
@@ -96,6 +97,8 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+# Added first so it runs inside _SecurityHeaders: its 403s carry the same headers.
+app.add_middleware(OriginCheckMiddleware)
 app.add_middleware(_SecurityHeaders)
 app.state.limiter = _limiter
 app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
