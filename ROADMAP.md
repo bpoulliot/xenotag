@@ -51,6 +51,62 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | READY | — |
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | NEEDS DECISION | — |
 | B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | NEEDS DECISION | — |
+| B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | NEEDS DECISION | — |
+
+**B21 — FILED 2026-09-27, found while building P6. Not fixed here. NEEDS DECISION.** It blocks
+[P6], whose whole regime is below 100%.
+
+**The mechanism.** `_render_group()` places every tile on a transparent row layer with
+`overlay.paste(tile, (x - gm, y - gm), tile)` — the tile as its own mask. Pillow's masked paste
+blends *every* band, alpha included, so each layer pixel becomes `rgb·a`, `alpha a²` (a = the
+tile's alpha / 255), and the layer is then alpha-composited onto the poster as if unpremultiplied.
+Net: the fill lands at **a³**, the poster shows through at **(1 − a²)**. At 100% (a = 1) the pill
+interior is exact, which is why nothing at the shipped default ever disagreed. B1's instrument
+(`app.contrast.render_over()`) composites the tile directly, at **a**, and so do B2's chips, the
+opacity-slider line and `measure_badge_contrast.py` — none of them measures the path a poster
+takes. Algebra checked against a render: rating `#73485b` over black at 65% — predicted fill·a³ =
+`(31,20,25)`, rendered `(31,20,25)`; the instrument says `(74,47,59)`.
+
+**Measured** (origin/main `03e983a`, Pillow 12.3.0): one `1080p` pill through
+`render_badge_groups()` on a flat 1000×1500 poster, rating hidden, B1's sampler (modal pixel, 5 px
+inset) on the rectangle `placed=` reports. White poster, white text, chip → poster:
+
+| opacity | video | audio | sub | rating |
+|---|---|---|---|---|
+| 65% | 4.17 → **2.54** | 4.38 → **2.59** | 3.28 → **2.32** | 3.19 → **2.30** |
+| 80% | 6.63 → **4.53** | 7.00 → **4.68** | 4.75 → **3.71** | 4.52 → **3.60** |
+| 90% | 8.98 → **7.24** | 9.54 → **7.60** | 6.06 → **5.28** | 5.76 → **5.09** |
+
+On a **black** poster the error runs the other way (rating at 65%: chip 11.93, poster 17.91): a
+translucent pill is darker than configured everywhere and lets through more of the poster. The
+opacity floors the config comment, the README and B1/B2 quote — **80% for AA, 98% for AAA** — are
+**87% and 99%** for what renders. B2's chip is the one place an operator looks, and below 100% it
+gives a wrong verdict with nothing to say so (silent wrongness). The Preview page's images take the
+real path, so the chip and the preview beside it disagree.
+
+**The glow, at every opacity.** The same paste squares the glow's alpha, and the glow was
+blurred as unpremultiplied RGBA, so its RGB is already pulled toward the transparent black. On a
+mid-grey (128) poster at **100%**, the pixels 1–8 px left of a pill read **115–122** — the
+"white glow" B1 kept as a halo renders as a faint dark shadow, on every production poster today.
+
+**Why a decision, not a fix.** Any fix changes posters; a re-render only happens on a full scan
+(there is no overlay hash), so nothing moves until then. The options:
+
+ - **(a) Composite correctly everywhere** (`overlay.alpha_composite(tile, dest=…)`; negative
+   `dest` is accepted, checked on 12.3.0). The fill matches `badge_opacity` and B1/B2's numbers
+   become true; the glow becomes the white halo it is drawn as — a visible change on **every**
+   poster, production's included, and `assets/readme/` must be regenerated (its `--check` is in CI).
+ - **(b) Composite the pill correctly, keep today's glow pixels.** Below 100% the fill matches
+   the configured opacity; at 100% posters stay as they are — *not measured*: the pill's
+   antialiased edge may move by a level, so "byte-identical at 100%" needs a render comparison.
+ - **(c) Keep the render, re-derive the instrument.** The chips and floors get honest numbers
+   (87% / 99%); `badge_opacity` keeps meaning something other than the alpha its comment
+   documents, and B1's model stays wrong for every later measurement.
+
+**Recommend (b):** production (100%) keeps its look, the documented opacity becomes true below it,
+and [P6]'s probe re-runs unchanged — its self-test's end-to-end check is exactly this comparison
+and fails today. Either (a) or (b) moves every poster saved below 100% toward the opacity it
+names (a saved 0.65 renders at an effective ~0.42 today).
 
 **B20 — FILED 2026-09-27, found while fixing B7. Not fixed here. NEEDS DECISION.**
 
@@ -2592,7 +2648,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | READY (decided 2026-09-26) | — |
+| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **BLOCKED on [B21]** (decided 2026-09-26; work held in PR #95) | — |
 | P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **NEEDS DECISION** (wrap / shrink / count) · ordering: **SHIPPED 2026-09-27** (merged, not released) | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
@@ -2660,6 +2716,40 @@ that fails if the cache key is not widened with the palette choice.
 **OPERATOR DECISION 2026-09-26:** (1a) main + backup palette chosen per badge row by the luminance of the region
 under it, and (2a) one checkbox, off by default, whose backup pickers carry B2's contrast chips;
 the backup palette must clear B4's dE 5.
+
+**P6 — STOPPED 2026-09-27 on [B21]; the work is held, unmerged, in PR #95 (`HOLD:`).** Measuring
+the threshold showed the poster path does not composite a translucent pill the way B1's instrument
+does (B21), and P6 lives entirely below 100%. So its threshold, its backup colours and the chips its
+pickers must carry would each encode a guess about how B21 is resolved. What the held branch has,
+and what is left:
+
+ - **Built, independent of B21:** `image.adapt_badge_colors` (off) + `backup_{video,audio,sub,
+   rating}_badge_color` (B6-normalised); `overlay.region_luminance()` (exact linear-light mean from
+   the histogram) over the laid-out row's own strip of the **bare** poster; `adapted_fill()` picks
+   the backup where the region is on the *label's* side of the threshold (light regions for a
+   light label, dark ones for a dark label); no adaptation at 100% (what the checkbox text says);
+   `app/wcag.py` is the one luminance implementation. **The cache trap turned out not to need a
+   new key term:** the choice is made before the tile is requested and arrives as `fill_hex`, which
+   B3 already keys on — the tile stays a pure function of its seven arguments. Default off → 512/512,
+   P7's byte-identical pins included.
+ - **Probe:** `scripts/measure_adaptive_palette.py` (threshold sweep, backup contrast over every
+   region it serves, CVD separation of every pair that can share a poster — backup/backup **and**
+   backup/main across categories, since rows choose independently — a main-vs-adapted table, a
+   seeded `--search`, `--self-test`). Its self-test's end-to-end check compares
+   `render_badge_groups()` with the instrument and **fails until B21 is resolved**; it is in CI on
+   that branch, so the PR is red on purpose.
+ - **Provisional numbers (the instrument's model, white text, design opacity 65% — the pre-B1
+   default):** the main palette holds AAA over flat greys up to 94 / 98 / 109 at 50 / 65 / 80%
+   (L 0.112 / 0.122 / 0.153), while its AA boundary swings from grey 153 to "everywhere" over the
+   same range — so an AAA boundary is the one a single threshold can serve: **L 0.12**. Backup
+   (search: AA on white at 65%, hue within 30° of the category, chroma ≤ the main palette's 22,
+   maximise the worst co-occurring dE) **`#0c332d` / `#120c2a` / `#332d0c` / `#1f0001`**: AA on
+   white down to **65%** and AAA down to **79%** (main alone: 80% / 98%), worst co-occurring pair
+   **dE 11.5** (main's own worst 12.3). Adapted worst over every flat grey: 3.19 → 4.51 at 65%,
+   4.52 → 7.26 at 80%. Coloured regions (150 random RGB each side, seed 0): main ≥ 7.08, backup ≥ 4.88.
+   Every one of these is re-derived by the probe once B21 lands; under (b) they should not move.
+ - **Not built:** the Settings UI (checkbox + four backup pickers with chips) and the preview wiring
+   in the template; the routes already accept `adapt` and `backup_*_color`.
 
 **P7 + U8 — REDIRECTED 2026-09-23. Hiding metadata is the wrong route.** The operator:
 *"Seems like u8 should not be an app choice. Why hide this for even a poster oversaturated with
