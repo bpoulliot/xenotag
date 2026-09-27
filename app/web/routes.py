@@ -527,6 +527,33 @@ class _ArrTestReq(BaseModel):
     arr_type: str
     url: str
     api_key: str
+    # Roadmap I9: a file-backed row sends its api_key_file, and its api_key blank.
+    api_key_file: str = ""
+
+
+def _arr_test_client(body: _ArrTestReq) -> SonarrClient | RadarrClient:
+    """A client for a connection test, sending the key that will actually be used.
+
+    For a file-backed row that is the key the configured instance read from the
+    same file -- never a file named only by the request, so a test cannot be
+    pointed at an arbitrary path the config does not already name.
+    """
+    if body.arr_type not in ("sonarr", "radarr"):
+        raise HTTPException(status_code=400, detail="arr_type must be sonarr or radarr")
+    api_key = body.api_key
+    key_file = body.api_key_file.strip()
+    if key_file:
+        cfg = get_config()
+        instances = cfg.sonarr.instances if body.arr_type == "sonarr" else cfg.radarr.instances
+        inst = next((i for i in instances if i.api_key_file == key_file), None)
+        if inst is None:
+            raise HTTPException(
+                status_code=400,
+                detail="This instance's key is read from its api_key_file when the settings are saved — save first",
+            )
+        api_key = inst.api_key
+    cls = SonarrClient if body.arr_type == "sonarr" else RadarrClient
+    return cls(body.url, api_key, "test")
 
 
 @router.post("/api/jellyfin/test")
@@ -562,13 +589,7 @@ async def jellyfin_test(request: Request, body: _ConnTestReq):
 async def arr_test(request: Request, body: _ArrTestReq):
     """Health-check an arr instance with provided credentials — does not save config."""
     _require_user(request)
-    if body.arr_type == "sonarr":
-        client: SonarrClient | RadarrClient = SonarrClient(body.url, body.api_key, "test")
-    elif body.arr_type == "radarr":
-        client = RadarrClient(body.url, body.api_key, "test")
-    else:
-        raise HTTPException(status_code=400, detail="arr_type must be sonarr or radarr")
-    with client:
+    with _arr_test_client(body) as client:
         return client.health()
 
 
@@ -576,13 +597,7 @@ async def arr_test(request: Request, body: _ArrTestReq):
 async def arr_rootfolders_test(request: Request, body: _ArrTestReq):
     """Fetch root folders from an arr instance with provided credentials — does not save config."""
     _require_user(request)
-    if body.arr_type == "sonarr":
-        client: SonarrClient | RadarrClient = SonarrClient(body.url, body.api_key, "test")
-    elif body.arr_type == "radarr":
-        client = RadarrClient(body.url, body.api_key, "test")
-    else:
-        raise HTTPException(status_code=400, detail="arr_type must be sonarr or radarr")
-    with client:
+    with _arr_test_client(body) as client:
         try:
             folders = client._get("/rootfolder")
             return [{"path": f.get("path", ""), "freeSpace": f.get("freeSpace", 0)} for f in folders]
