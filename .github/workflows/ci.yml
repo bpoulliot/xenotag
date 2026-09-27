@@ -97,6 +97,12 @@ jobs:
       - name: Brand assets match their sources
         run: python scripts/generate_brand_assets.py --check
 
+      # P5: the README's overlay examples are the real render path, so a
+      # palette or layout change must regenerate them. Byte comparison is sound
+      # only because the render is deterministic (see the script's docstring).
+      - name: README overlay examples match the current render
+        run: python scripts/generate_readme_images.py --check
+
   codeql:
     runs-on: ubuntu-latest
     permissions:

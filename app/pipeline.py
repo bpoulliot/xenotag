@@ -339,7 +339,7 @@ def _make_badge_groups(
         if sub_labels:
             groups.append(BadgeGroup(sub_labels, img_cfg.sub_badge_color, img_cfg.badge_text_color))
 
-    # Rating badge (top-right, independent)
+    # Rating badge -- its own corner, image.rating_position (roadmap B10)
     rating_group: BadgeGroup | None = None
     if img_cfg.show_rating_badge and content_rating and "poster" in dest.rating:
         rating_group = BadgeGroup([f"Rated {content_rating}"], img_cfg.rating_badge_color, img_cfg.badge_text_color)
