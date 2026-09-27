@@ -385,6 +385,7 @@ Configure the webhook URL in your *arr application's Connect settings. Xenotag w
 | Method | Path | Auth | Description |
 |---|---|---|---|
 | GET | `/health` | No | Service info unauthenticated; full upstream connectivity when authenticated |
+| GET | `/metrics` | No | Prometheus metrics — see [Prometheus metrics](#prometheus-metrics) |
 | GET | `/stats` | Yes | Scan statistics and next scheduled run time |
 | POST | `/scan/full` | Yes | Trigger a full library scan |
 | POST | `/scan/incremental` | Yes | Trigger an incremental scan |
@@ -417,6 +418,53 @@ Configure the webhook URL in your *arr application's Connect settings. Xenotag w
 *Webhook endpoint needs no session, so that *arr's built-in webhook delivery works. When `webhooks.secret` is set it requires that token, as `?token=` or an `X-Webhook-Token` header.
 
 Every `POST`/`PUT`/`DELETE` above except `/webhook/{source}` is also subject to the [cross-origin check](#security).
+
+---
+
+## Prometheus metrics
+
+`GET /metrics` serves the Prometheus text format, with no session — scrape it over your Docker
+network, and keep the public hostname behind your proxy's auth. It carries counts and timestamps
+only: no item names, paths or secrets.
+
+| Metric | Type | Labels | Meaning |
+|---|---|---|---|
+| `xenotag_build_info` | gauge | `version` | Always 1 |
+| `xenotag_scan_running` | gauge | | 1 while a scan holds the scan lock |
+| `xenotag_scans_total` | counter | `scan_type`, `outcome` | Scans finished; `outcome` = `success` / `failed` / `cancelled` |
+| `xenotag_scan_last_success_timestamp_seconds` | gauge | | When the last scan completed |
+| `xenotag_scan_last_failure_timestamp_seconds` | gauge | | When the last scan failed (0 = none since start) |
+| `xenotag_scan_last_duration_seconds` | gauge | | Wall time of the last successful scan |
+| `xenotag_scan_last_items_scanned` / `_items_tagged` / `_images_modified` | gauge | | The last successful scan's counts |
+| `xenotag_scan_errors_total` | counter | `error_type` | Per-item errors: `no_path`, `no_file`, `probe_failed`, `process_error` (or `other`) |
+| `xenotag_arr_tag_writes_total` | counter | `arr_instance`, `result` | Live Sonarr/Radarr writes: `written` / `error` / `readback_mismatch` |
+| `xenotag_arr_halts_total` | counter | | Times live \*arr writes halted |
+| `xenotag_arr_sync_halted` | gauge | | 1 from a halt until a later **live** scan syncs without one |
+| `xenotag_arr_last_halt_timestamp_seconds` | gauge | | When the last halt happened |
+
+Plus the standard `process_*` and `python_*` series. A failed scan is one that could not list
+Jellyfin or raised; items that error inside a scan are counted in `xenotag_scan_errors_total`
+and do not fail it.
+
+**After a restart** the last completed scan is read back from `state.db`, and a halt from the
+stored \*arr sync report, so a redeploy does not look like "never scanned". A failure is not
+stored anywhere and is forgotten by a restart. A halt stays set until a live scan finishes its
+\*arr sync cleanly — a dry run, a cancelled scan or a webhook does not clear it.
+
+Metrics are **single-process** by design: xenotag runs one uvicorn worker, and it removes
+`PROMETHEUS_MULTIPROC_DIR` from its environment rather than switch on `prometheus_client`'s
+multiprocess mode (which writes a file per process that nothing here would ever prune).
+
+Example alerts:
+
+```yaml
+- alert: XenotagNoSuccessfulScan
+  expr: time() - xenotag_scan_last_success_timestamp_seconds > 26 * 3600
+- alert: XenotagLastScanFailed
+  expr: xenotag_scan_last_failure_timestamp_seconds > xenotag_scan_last_success_timestamp_seconds
+- alert: XenotagArrSyncHalted
+  expr: xenotag_arr_sync_halted == 1
+```
 
 ---
 
