@@ -2425,7 +2425,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| I7 | pillow-simd acceleration (marginal gain; ffprobe is the bottleneck, not PIL) | 2 | 3 | NEEDS MEASUREMENT | [#20](https://github.com/bpoulliot/xenotag/issues/20) |
+| I7 | pillow-simd acceleration (measured 2026-09-26: overlay ≈ 8–11% of full-scan wall, pillow-simd could save ≤ ~3%; recommend close) | 2 | 3 | NEEDS DECISION | [#20](https://github.com/bpoulliot/xenotag/issues/20) |
 
 > **Renumbered 2026-09-22:** this was a second `I6`, colliding with the ntfy item in Near-term.
 > Referenced as `I6` in anything predating this date, it means whichever of the two fits context.
@@ -2543,6 +2543,67 @@ labels say what would make each one startable.
    few hundred copied posters against the probe time of the same items). **Roughly 1 h.** If
    the overlay is under ~5% of scan time, close I7; pillow-simd is also a build-from-source
    fork, which is a supply-chain cost the gain would have to pay for.
+   **Measured 2026-09-26 → NEEDS DECISION** (below).
+
+**I7 measured 2026-09-26 — the overlay is NOT under 5%, but pillow-simd still is not worth it.**
+Probe: `scripts/measure_overlay_share.py` (`--self-test` covers the timer, the percentile against a
+naive reference, overlay-changes-the-copy / never-the-source, a badge-less item is neither timed
+nor written, and the media-root guard, each in both directions; it is **not** a CI step). Method
+(b), copied posters, over the dev stack: the dev library is a handful of items at synthetic
+poster sizes, while prod's posters are the distribution that matters. Run in a throwaway
+container of the prod image (`ghcr.io/bpoulliot/xenotag:latest`, v1.7.0: its ffprobe 7.1.5 and
+Pillow 12.3.0, with prod's `--cpus 4 --memory 2g`, `--network none`, and every media root
+mounted `:ro`) with origin/main's `app/` on the path, prod's `config.yml` read-only (desktop
+badges, `normalize_portrait`), and a copy of prod's `state.db`. Each poster's `.orig` was
+copied to `/tmp` and the copy overlaid with the real `apply_overlay()`. `probe_file()` was
+imported and run read-only on the item's own media file.
+
+- **Sample:** 300 rows, seeded (`--seed 7`), out of the 10,533 rows with an `image_path`. 268
+  were measured. 21 had no poster on disk and 11 failed to probe because the file was gone:
+  stale rows. Posters: 72 at 2000×3000, 66 at 1000×1500, 57 at 680×1000, the rest smaller or
+  odd sizes. `perf_counter` timing, one pass per item.
+- **Overlay** (open `.orig`, RGBA, render, RGB, JPEG save): median **20.9 ms**, p95 **105.5 ms**,
+  mean 40.3 ms. **Probe** (serial, first read): median **97.1 ms**, p95 **177.9 ms**, mean
+  118.3 ms, max 1.07 s. **Overlay share of overlay + probe:** median **20.4%** per item, p95
+  56.6%, and 25.4% of the summed totals.
+- **Where the overlay time goes.** Timings are the median of 15 runs on a synthetic noisy JPEG,
+  same image and limits. At 2000×3000: decode 37.0 ms, → RGBA 8.7, render 41.0, → RGB 6.6,
+  encode 19.1, total 112 ms. The real 2000×3000 posters took 116–131 ms. At 1000×1500 the total
+  is 20.5 ms, and at 680×1000 it is 9.2 ms. JPEG decode and encode are already libjpeg-turbo (3.1.4.1, in the Pillow
+  wheel), and pillow-simd's SIMD work is not in the codec. What pillow-simd could speed up is the two conversions plus the render
+  (its alpha composite): about 50% of the overlay at 2000×3000 and about 36% at 1000×1500.
+- **The share of what a scan actually spends.** A scan probes on a pool of `scan.max_workers`
+  (4 in prod) and runs `_process_one_item()`, overlay included, **serially** on the consuming
+  thread. The probe side therefore costs about 118 / 4 ≈ **30 ms/item** of throughput, and
+  13.5 ms/item on a warm second pass through a real 4-worker pool. Prod's last two full scans
+  took 55.4 min for 9,407 items (**353 ms/item**, 2026-09-24) and 75.8 min for 9,404 items
+  (**484 ms/item**, 2026-09-23). That fits the note that full scans take about 1 h. So the
+  overlay's 40 ms mean is **≈ 8–11% of full-scan wall time**, and **the roadmap row's "ffprobe
+  is the bottleneck" is false**. The critical path is the serial consumer. About 310–440
+  ms/item of it is neither the probe nor the overlay: the Jellyfin tag write, `refresh_item()`,
+  the \*arr sync and the upsert. Its split was not measured.
+- **Gain bound.** Even a 2× speedup on every step pillow-simd could touch saves ≤ 25% of the
+  overlay: ≈ 10 ms/item mean, **≤ ~3% of a full scan** (≈ 1.5–2 min of 55–76). Incremental
+  scans overlay 4–16 items (≈ 1 min each), so they gain nothing measurable.
+- **Machine load at the time:** load average 43 / 38 / 36 on 24 threads, I/O pressure
+  `some avg10` ≈ 33%, and Tdarr at ~800% CPU. Serial probe times are load-sensitive (see the
+  Jellyfin ffprobe-load notes). The overlay is CPU-bound inside a 4-CPU limit.
+- **Could not determine:** (1) pillow-simd's actual speedup, because it was deliberately not
+  installed anywhere, so the gain above is a bound, not a measurement. (2) How much of each
+  first probe read was already in the page cache: dropping caches needs root. (3) The overlay's
+  I/O against the real media disks: the copies were on `/tmp`, and a scan reads `.orig` from and
+  writes the poster to `/mnt/media`, so the true overlay time is ≥ the figure above. (4) The
+  split of the ~310–440 ms of non-overlay consumer time.
+
+**Decision for the operator:** adopt pillow-simd, or close I7. **Recommendation: close.** The
+overlay is above the sweep's 5% threshold, but at most ~3% of a scan's wall time is reachable
+by SIMD, and nightly incremental scans gain nothing. The cost: a build-from-source fork replaces
+the `Pillow` pin, the build stage gains a compiler and image-library headers, and security
+releases wait on the fork tracking upstream. It would also risk P5's byte-identical
+`generate_readme_images.py --check` in CI, which was measured identical across *upstream*
+Pillow builds only. If full-scan time ever matters, the lever is the serial consumer:
+moving the overlay off it, or finding out what the other ~310–440 ms/item is. That is not filed,
+because no decision waits on it today.
 
 **GitHub issues with no roadmap item** (found by the sweep, not assigned IDs here): **#12**
 *Subtitle cleanup* — deletes subtitle files/streams not on a keep-list, a destructive write to
