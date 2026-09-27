@@ -42,7 +42,7 @@ how long. Five items turned out to be **already built** (U3, U4, P3, I4) or **de
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
-| B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule would put a 1916-wide 1080p crop at `720p`. | 3 | 1 | NEEDS MEASUREMENT | — |
+| B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | NEEDS DECISION | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | READY | — |
 
 **B14 — FILED 2026-09-26, found while screenshotting the Preview page for P5. Not fixed here.**
@@ -81,6 +81,122 @@ candidate rule (width tolerance; height-or-width; the larger of `W/16` and `H/9`
 nearest class) classifies differently from today, and how many live tags each rule would rename.
 **On:** production Jellyfin, GET only. **Roughly 1 h**, no code shipped. The rule choice after it
 is then a NEEDS DECISION with numbers attached.
+
+**B13 — MEASURED 2026-09-27 (03:40–03:44Z), relabelled NEEDS DECISION. Nothing implemented.**
+
+*Instrument.* `scripts/measure_resolution_thresholds.py` (its `--self-test` runs in CI; the live
+sweep is a manual mode). One paginated `/Items` sweep of **production** Jellyfin over the 17
+`cfg.jellyfin.library_ids`, deduplicated across libraries as `get_all_items()` does: **2,632
+GETs through `ReadOnlyTransport`, 0 blocked**, nothing written. What the scan tags is what was
+measured: a **movie's** own item streams (the file at the item's `Path`, which is what the scan
+probes, since `ITEM_FIELDS` has no `MediaSources`), and a **series'** first episode, fetched with
+the scan's own query (`_get_first_episode_path`: `SortName` ascending, `Limit 1`, `MediaSources[0]`).
+The stream is the first `Type=Video` by `Index`; Jellyfin gives PGS subtitles a Width/Height too,
+so the type filter matters. Today's class comes from **importing** `_detect_resolution()`.
+**Population:** 6,944 movies + 2,455 series = **9,399 tagged items** (10 with no video stream:
+B11's 9 empty series and 1 movie), plus all **67,321 episodes** as an untagged distribution. The
+17 libraries hold every Movie/Series/Episode on the server (whole-server counts are identical).
+*Instrument check:* today's rule on Jellyfin's `Width`×`Height` reproduces the class `state.db`
+recorded (a copy, from the scan's own ffprobe) for **9,387 of 9,387** items with a row; 2 have
+no row. Jellyfin reports the two filed cases as **3836×1604** and **3584×2160**, as ffprobe did.
+*Stream edge cases:* 6 tagged items carry two video streams (5 movies, 1 series; 22 episodes);
+the first by `Index` was taken, which is ffprobe's first too, since **no** item has an embedded
+image ahead of its video stream (the flag is proven to fire on a fixture). 158 tagged items carry
+more than one `MediaSource` (138 movies, 20 series' first episodes). Of the movies' extra sources,
+132 are HD/4K twins — separately swept and separately tagged items — and 8 are versions inside one
+item that the scan never probes (2 of the 8 would class differently from the item's own file).
+
+*How far under a threshold the width falls* (count; bands are `(0,1]`, `(1,5]`, `(5,10]` % below):
+
+| threshold | band | movies | series | episodes |
+|---|---|---:|---:|---:|
+| 3840 | 0–1% | 1 | 0 | 0 |
+| 3840 | 1–5% | 0 | 0 | 0 |
+| 3840 | 5–10% | 1 | 0 | 0 |
+| 1920 | 0–1% | 243 | 28 | 1,385 |
+| 1920 | 1–5% | 15 | 2 | 18 |
+| 1920 | 5–10% | 84 | 1 | 11 |
+| 1280 | 0–1% | 6 | 1 | 128 |
+| 1280 | 1–5% | 3 | 0 | 1 |
+| 1280 | 5–10% | 0 | 1 | 80 |
+| 854 | 0–1% | 5 | 5 | 94 |
+| 854 | 1–5% | 1 | 1 | 26 |
+| 854 | 5–10% | 4 | 0 | 0 |
+
+*Aspect of those banded tagged items* (storage W/H): under 1920, the 0–1% band is 89 scope
+(≥2.2), 87 flat (1.80–2.2) and 95 16:9 — ordinary crops of every shape — while the 5–10% band is
+81 open-matte (1.40–1.70, mostly 1792/1800×1080) and 4 16:9. The 3840 rows are the two filed
+films (scope, open matte). All 9,389 tagged items with video: 2,280 scope, 1,605 flat, 4,137 16:9,
+601 1.40–1.70, 745 4:3, 21 narrower.
+
+*Width-only misses that no band shows:* **1,059 tagged items are `720p` today; 583 of them are
+≥ 1728 wide or 1080 high** — 131 are 1440×1080 alone (4:3 HD, or anamorphic HDV), 26 are
+1792×1080. That, not the two 4K films, is the bulk of B13.
+
+*What each rule changes, against today's imported rule* (tagged items; class names are unchanged
+under every rule, so no new tag label is created). **Renames:** one on Jellyfin per item, plus one
+per \*arr instance that owns it, counted from B5's go-live plans (`rg-live`, `sg-final-plan`,
+`sa-live`, `r4-live`, `s4-live`: 9,347 plan rows = every object B5 wrote) — no changed item is
+owned by two instances. Video tags go to `poster` too, so every changed item is also **one
+poster re-render**.
+
+| rule | items changing class | Jellyfin + \*arr renames | transitions | 3836×1604 | 3584×2160 |
+|---|---:|---:|---|---|---|
+| width −1% | 289 | 289 + 289 | 720p→1080p 271, SD→480p 10, 480p→720p 7, 1080p→4K 1 | 4K | 1080p |
+| width −2% | 303 | 303 + 303 | 720p→1080p 283, SD→480p 11, 480p→720p 8, 1080p→4K 1 | 4K | 1080p |
+| width −5% | 311 | 311 + 311 | 720p→1080p 288, SD→480p 12, 480p→720p 10, 1080p→4K 1 | 4K | 1080p |
+| width −10% | 402 | 402 + 402 | 720p→1080p 373, SD→480p 16, 480p→720p 11, 1080p→4K 2 | 4K | 4K |
+| height-or-width (exact) | 1,195 | 1,195 + 1,176 | **SD→480p 810**, 720p→1080p 322, 480p→720p 60, 1080p→4K 2, 480p→1080p 1 | 1080p | 4K |
+| height-or-width −1% | 1,538 | 1,538 + 1,518 | **SD→480p 834**, 720p→1080p 639, 480p→720p 60, 1080p→4K 3, 480p→1080p 2 | 4K | 4K |
+| **height-or-width −1%, HD only** | **714** | 714 + 712 | 720p→1080p 639, 480p→720p 60, SD→480p 10, 1080p→4K 3, 480p→1080p 2 | 4K | 4K |
+| **height-or-width −5%, HD only** | **745** | 745 + 743 | 720p→1080p 667, 480p→720p 61, SD→480p 12, 1080p→4K 3, 480p→1080p 2 | 4K | 4K |
+| height-or-width −5% | 1,604 | — | SD→480p 871, then as the HD-only row | 4K | 4K |
+| nominal `max(W/16, H/9)·9`, nearest | 1,562 | 1,562 + 1,543 | **SD→480p 810**, 720p→1080p 685, 480p→720p 60, 480p→1080p 4, 1080p→4K 3 | 4K | 4K |
+
+"HD only" = width **or height** within the tolerance for 4K / 1080p / 720p (heights 2160 / 1080 /
+720); below 720p, width alone with the same tolerance, as today. The third 1080p→4K is a
+2960×2160 (1.37:1) file. Commonest pairs each rule moves (all counts in the probe's output):
+width rules — 1904×1072 (26), 1904×1024 (22), 1916×1080 (20), 1918×1080 (18), 1918×802 (17);
+height-or-width adds 1440×1080 (131), 1440×1072 (28), 1792×1080 (26), 960×720 (24); the rules
+that use height for 480p also move 720×480 (305), 640×480 (270), 704×480 (46) and 720×576 (19)
+DVD-shaped frames from SD to 480p. HD-only −5% adds 31 items over −1%, every one a visibly
+cropped 1080-line source (1888×800, 1424×1056, 1820×1040 …). Nominal alone rounds 1136×960 and
+1200×900 up to 1080p and would put a 2880-wide frame at 4K (the 1620-line midpoint).
+
+*Delivery — measured from the code, and part of the decision.* `media_state` stores the class
+label, not `Width`/`Height`, and `_detect_resolution()` is not part of `_tag_config_hash()`, so a
+new rule reaches **only items whose file mtime changes**: an incremental scan skips the other
+~740, and the index-driven \*arr dry run keeps reading the old `resolution` from their rows. Any
+fix needs a forced full re-tag (roughly 1 h, like the 2026-09-27 one) or stored dimensions.
+
+*Could not determine.* Whether a series' first episode is representative of the rest (episodes are
+untagged; only their distribution is above). The second video stream's size on the 6 two-stream
+items. The alternate versions of the 20 series' first episodes (only the movies' were read). Per-
+file ffprobe `Width`×`Height` beyond the class-level agreement with `state.db` (the class matched
+on every item; the pixel numbers were not re-probed).
+
+**Decision needed (the operator's):**
+
+1. **Which rule.** Width tolerance alone fixes the scope crop but not the 3584×2160 open matte, and
+   leaves every 1440×1080 and 1792×1080 frame at 720p. Height-or-width without a tolerance fixes
+   the open matte but not the scope crop. Rules that also use height at the 480p boundary move
+   810–871 DVD-shaped files from SD to 480p — a change nobody filed. **Recommendation: height-or-
+   width, 5% tolerance, HD classes only** (745 items; both filed cases → 4K; 667 1080-line crops
+   leave 720p; DVDs stay SD). Choose −1% instead (714) if a 5% margin feels loose — the difference
+   is the 31 heavier crops listed above.
+2. **Are DVDs 480p or SD?** Today they are SD. Moving them is +859 items on top of the rule above
+   (height-or-width −5% minus its HD-only form). **Recommendation: leave SD** — it is a naming
+   choice, not the defect B13 filed.
+3. **How the new rule reaches existing items.** (a) Fold a resolution-rule version into
+   `_tag_config_hash()`, so the upgrade forces one full re-tag — against that function's stated
+   intent that an upgrade does not force a rescan; or (b) store `width`/`height` in `media_state`
+   (an Alembic revision, now possible since I3) so this and any later rule change re-classify from
+   the index — which still needs one re-probe to fill the columns. **Recommendation: (a)** for this
+   fix; (b) only if another rule change is expected.
+
+No option introduces a tag label: `xt-4k`, `xt-1080p`, `xt-720p`, `xt-480p` and `xt-sd` are all
+legal in Radarr's `[a-z0-9-]` (B9). Value 3→4 (hundreds of items, not two) and Complexity 1→2
+(the delivery question) on this measurement.
 
 **B12 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
 
