@@ -73,7 +73,7 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 - **Scheduled scans**: configurable cron expression (default: weekly)
 - Parallel `ffprobe` via configurable worker pool (`scan.max_workers`)
 - Path filters: limit scanning to specific mount prefixes
-- Tag config change detection: automatically forces a full re-tag when tag settings change
+- Tag config change detection: automatically forces a full re-tag when tag settings change, or when an upgrade changes how tags are spelled
 - Per-item error tracking: probe failures, missing files, process errors — visible in the dashboard
 
 ### Web UI

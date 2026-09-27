@@ -39,7 +39,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | READY (decided 2026-09-26) | — |
 | B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | READY (decided 2026-09-26) | — |
 | B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | READY | — |
-| B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | READY (decided 2026-09-26) | — |
+| B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
@@ -403,6 +403,72 @@ vocabulary that no two source labels map to the same output (the `hdr10+`/`hdr10
 entering `_tag_config_hash()` so the next scan is one full re-tag; first check that nothing outside
 xenotag selects on the dotted names, and if something does, fall back to (a), a Radarr-only map.
 **Release and deploy are authorised** for this item.
+
+*FIXED 2026-09-27 — option (b), as decided.*
+
+**Nothing outside xenotag selects on the old spellings** (checked first, read-only, 2026-09-27
+05:3xZ), so (b) applies, not the Radarr-only fallback:
+
+ - `grep -rIiF` for `xt-h.264`, `xt-h.265`, `xt-dd+`, `xt-hdr10+`, `xt-truehd atmos`,
+   `xt-dd+ atmos` — and, since the rule respells ratings too, `xt-not rated`, `xt-ma15+`,
+   `xt-ma 15+`, `xt-16+` and the other `+` ratings — over `~/docker` (text files, no `.gz`/`.git`)
+   and `~/dev` except this repo: the only hits are xenotag's own reports and scripts and the
+   overnight notes about this item. Both greps found a planted control file. Unreadable to the
+   search: crowdsec's hub, Home Assistant's auth store, a gitea ssh dir, pihole logrotate,
+   calibre's shader cache, jf-users' db, a wireguard token — none a media-tag selector.
+ - Jellyfin (production, 10.11.10, GET only): none of 27 users has `BlockedTags`/`AllowedTags`
+   (parental-control tag filters, the one native feature that selects by tag); no smart-playlist
+   or auto-collection plugin among the 16 installed; the 480 collections and 15 playlists are
+   static lists.
+ - All five \*arrs, `GET /api/v3/tag/detail`: **0** of the 142 `xt-` labels has any use besides
+   series/movie ids (delay/release profiles, restrictions, indexers, download clients,
+   notifications, import lists, auto-tagging). The check can see one: operator labels such as
+   `luxe` and `core-tv` show their auto-tagging use. Sonarr holds `xt-h.264`/`xt-h.265`/`xt-dd+`
+   (general, anime) and `xt-h.265`/`xt-dd+` (4k); Radarr holds none.
+
+**The spelling.** `tagger.tag_label()` drops `.`, spells `+` as `plus` and a space as `-`, and
+`build_tags()` applies it to every label after the prefix (the prefix is config, kept verbatim).
+Case is left alone — every \*arr lowercases a label itself — so Jellyfin carries `xt-H264`,
+`xt-H265`, `xt-DDplus`, `xt-DDplus-Atmos`, `xt-HDR10plus`, `xt-TrueHD-Atmos`, and the \*arrs
+store exactly the decided `xt-h264` … `xt-truehd-atmos`. **Badge text is unchanged**: badges are
+built from the display names by `_make_badge_groups()`, which never calls `build_tags()`; 24
+`generate_preview_bytes()` renders (four profiles carrying every respelled label, three badge
+sizes, two poster sizes) are byte-identical before and after, and all 24 differ from each other.
+
+**Ratings are respelled too**, because the rule is the spelling of every tag and production
+sends ratings to Jellyfin (`tags.destinations.rating: [poster, jellyfin]`). On the index,
+**348** items carry one: `xt-Not Rated` 188, `xt-MA15+` 86, `xt-16+` 33, `xt-12+` 14, `xt-18+` 9,
+`xt-MA 15+` 5, `xt-14+` 4, `xt-6+` 3, `xt-15+` 3, `xt-0+` 2, `xt-R18+` 1 → `xt-Not-Rated`,
+`xt-MA15plus`, `xt-16plus`, … (`MA15+` and `MA 15+` stay distinct: `MA15plus`, `MA-15plus`). No
+item on the index carries `HDR10+`, `DD+ Atmos` or `TrueHD Atmos` today. B7's `xt-"E` is not
+touched (`"` is B7's to fix) and stays the one label Radarr refuses.
+
+**The re-tag.** `_tag_config_hash()` hashes config, so a spelling change in code would not
+move it and an unchanged file would keep the old spelling forever. It now always folds in
+`|vocab:{TAG_VOCABULARY}` (`tagger.TAG_VOCABULARY = 2`; 1 = display names verbatim): the
+shipped defaults go `3163f57ce472c152` → `09d02a2ffe47df66`, production's config
+`aabcd4f06c79b714` → `811c4c22ae05ed4a` (the old value reproduced from a replica of production's
+tag settings first). The upgrade's first scan is therefore a full re-tag. The old labels go by
+the existing managed-prefix sweep — on Jellyfin `set_managed_tags()` keeps only non-`xt-`/`mf-`
+tags, on the \*arrs `plan_tags()` removes any managed tag not desired — which was **proved on the
+dev stack**, not assumed: a full scan with `origin/main`'s code (hash `aabcd4f06c79b714`, the
+same as production's) left `xt-H.264` on all 6 Jellyfin items and `xt-h.264` on Sonarr's Firefly
+(Radarr refused it for Serenity); an **incremental** scan with this code then logged "Tag config
+changed — forcing full re-tag" and left `xt-H264` on all 6 items (Jellyfin **12.1.0** — dev's
+version, see I14), `xt-h264` instead of `xt-h.264` on Firefly (Sonarr 4.0.18.2978), `xt-h264`
+added to Serenity with 0 refusals (Radarr 6.3.0.10514), every non-`xt-` tag unchanged and 0
+read-back failures. Sonarr keeps the old label as an unused entry in its tag list, as expected;
+they are harmless and are left (deleting a label is an outward write nobody asked for).
+
+**Tests** (`tests/test_tag_vocabulary.py`, and the pinned values in `tests/test_arr_sync.py`):
+over the full emitted vocabulary — the scanner's resolution, video and audio tables, every
+branch of `_detect_hdr()` and of `_normalize_audio_codec()`, every language, `sub-` tags, the
+two audio-count tags and every rating on production's index — every label is legal in Radarr
+and no two share a spelling once lowercased. The same checks **fail on the naive strip map**
+(`hdr10`: HDR10/HDR10+, `dd`: DD/DD+, `ma15`: MA15+/MA 15+) and on the old spelling; a scan-path
+test swaps `xt-h.265`/`xt-dd+` for `xt-h265`/`xt-ddplus` on a Sonarr object and lands them on a
+Radarr one, operator tags kept. Suite **272 → 284** passed. `RadarrClient.LABEL_PATTERN` stays
+as the guard. Evidence and scripts: `~/docker/xenotag/b9-retag-20260927/`.
 
 **B8 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
@@ -2772,7 +2838,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| U5 | Extended ffprobe tags: video profile, bitrate tier, interlacing, frame rate | 4 | 3 | **BLOCKED on B9** (decided 2026-09-26) | [#24](https://github.com/bpoulliot/xenotag/issues/24) |
+| U5 | Extended ffprobe tags: video profile, bitrate tier, interlacing, frame rate | 4 | 3 | READY (decided 2026-09-26; B9 FIXED 2026-09-27) | [#24](https://github.com/bpoulliot/xenotag/issues/24) |
 | U6 | Extended metadata tags from Jellyfin/\*arr: genres, original language, runtime bands, series status, ratings, custom formats | 4 | 5 | **CLOSED 2026-09-26** | [#25](https://github.com/bpoulliot/xenotag/issues/25) |
 
 ### P — Polish
@@ -2805,7 +2871,8 @@ labels say what would make each one startable.
    rule it must follow.
 
    **OPERATOR DECISION 2026-09-26:** interlacing only (`xt-interlaced`, present/absent), after B9.
-   **BLOCKED on B9.**
+   ~~**BLOCKED on B9.**~~ **READY** since B9 was FIXED 2026-09-27; `xt-interlaced` is already legal
+   under B9's spelling rule (`tagger.tag_label()`), which any new family must go through.
  - **U6 — NEEDS DECISION → CLOSED 2026-09-26 (below).** Complexity 5 because it is seven unrelated features; "ratings" left
    it with U7 (already shipped as the certification). Most of the rest is data Jellyfin already
    holds and indexes (genres, original language, series status), so re-emitting it as `xt-`
