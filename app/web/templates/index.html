@@ -467,6 +467,19 @@
       <span style="font-size:13px">Pad square/landscape posters to 2:3 portrait</span>
     </div>
 
+    <!-- Roadmap P7: order, never omission. A pick-list of the codes the index
+         actually holds, not a free-text box. -->
+    <div class="prev-ctrl-group" style="margin-top:12px">
+      <span class="prev-ctrl-label" title="Audio and subtitle pills carrying these languages come first, in the order listed; every other pill follows in its usual order. Reorders only — no pill is ever hidden. Tags in Jellyfin, Sonarr and Radarr are not changed.">Preferred languages ⓘ</span>
+      <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px">
+        <select id="prev-prefer-add" style="width:auto;min-width:200px" onchange="addPreferLang(this.value)" title="Languages found in your library's audio and subtitle tracks, most common first">
+          <option value="">Add a language…</option>
+        </select>
+        <div class="path-tags" id="prev-prefer-tags" style="margin-top:0"></div>
+      </div>
+      <div class="hint" id="prev-prefer-hint" style="margin-top:4px;font-size:11px">None chosen — pills keep their usual order.</div>
+    </div>
+
     <div class="btn-row">
       <button class="btn primary" id="btn-save-preview" onclick="savePreviewSettings()">💾 Save badge settings</button>
       <span class="save-status" id="preview-save-status"></span>
@@ -782,6 +795,8 @@ let mediaPage = 1;
 let sampleItems = [];       // [{id, name}, ...] from Jellyfin, for preview posters
 let sampleItemsLoaded = false;
 let previewDebounce = null;
+let preferLangs = [];        // image.prefer_languages, in order (roadmap P7)
+let indexLanguages = [];     // [{code, items}] from /api/languages
 
 const PREVIEW_PROFILES = [
   {resolution:"4K",   video_codec:"H.265", hdr_type:"HDR10",  audio:"EN DTS-HD",                    subtitles:"EN PGS",               rating:"PG-13", label:"4K HDR · EN DTS-HD"},
@@ -922,6 +937,58 @@ function onPreviewChange() {
 function schedulePreviewRefresh() {
   clearTimeout(previewDebounce);
   previewDebounce = setTimeout(refreshPreviews, 300);
+}
+
+// ═══════════════════════ PREFERRED LANGUAGES (roadmap P7) ═══════════════════════
+// Order, never omission: the chosen codes' pills come first, everything else
+// follows in its usual order. Only codes present in the index can be added.
+async function loadIndexLanguages() {
+  try {
+    indexLanguages = (await apiFetch('/api/languages')).languages ?? [];
+  } catch { indexLanguages = []; }
+  renderPreferLangs();
+}
+
+function addPreferLang(code) {
+  if (code && !preferLangs.includes(code)) preferLangs.push(code);
+  renderPreferLangs();
+  onPreviewChange();
+}
+
+function removePreferLang(code) {
+  preferLangs = preferLangs.filter(c => c !== code);
+  renderPreferLangs();
+  onPreviewChange();
+}
+
+function raisePreferLang(code) {
+  const i = preferLangs.indexOf(code);
+  if (i > 0) [preferLangs[i - 1], preferLangs[i]] = [preferLangs[i], preferLangs[i - 1]];
+  renderPreferLangs();
+  onPreviewChange();
+}
+
+function renderPreferLangs() {
+  const sel = document.getElementById('prev-prefer-add');
+  const tags = document.getElementById('prev-prefer-tags');
+  const hint = document.getElementById('prev-prefer-hint');
+  if (!sel || !tags) return;
+  const known = new Map(indexLanguages.map(l => [l.code, l.items]));
+  const plural = n => `${n.toLocaleString()} item${n === 1 ? '' : 's'}`;
+  sel.innerHTML = `<option value="">${indexLanguages.length ? 'Add a language…' : 'No languages in the index yet — run a scan'}</option>`
+    + indexLanguages.filter(l => !preferLangs.includes(l.code))
+        .map(l => `<option value="${esc(l.code)}">${esc(l.code)} — ${plural(l.items)}</option>`).join('');
+  sel.value = '';
+  tags.innerHTML = preferLangs.map((c, i) => {
+    const title = known.has(c) ? plural(known.get(c)) : 'not in the index — no poster carries it';
+    const up = i > 0 ? `<button onclick="raisePreferLang('${esc(c)}')" title="Move earlier">◀</button>` : '';
+    return `<div class="path-tag" title="${esc(title)}"><span>${i + 1}. ${esc(c)}</span>${up}`
+      + `<button onclick="removePreferLang('${esc(c)}')" title="Remove">×</button></div>`;
+  }).join('');
+  if (hint) hint.textContent = preferLangs.length
+    ? `${preferLangs.join(', ')} first, then everything else in its usual order. Nothing is hidden. `
+      + 'Posters pick this up on the next full scan; tags are not changed.'
+    : 'None chosen — pills keep their usual order.';
 }
 
 // ═══════════════════════ NAV ═══════════════════════
@@ -1215,6 +1282,7 @@ function refreshPreviews() {
       + `&text_color=${textColor}&video_color=${videoColor}&audio_color=${audioColor}`
       + `&sub_color=${subColor}&rating_color=${ratingColor}`
       + `&show_video=${showVideo}&show_audio=${showAudio}&show_subs=${showSubs}&show_rating=${showRating}`
+      + `&prefer_languages=${enc(preferLangs.join(','))}`
       + `${bgParam}&t=${ts}`;
     const posterName = item ? `<span style="color:var(--muted);font-weight:400"> — ${esc(item.name)}</span>` : '';
     return `<div class="preview-card">
@@ -1251,6 +1319,7 @@ function collectPreviewSettings() {
       show_sub_badges:   document.getElementById('prev-show-subs')?.checked   ?? true,
       show_rating_badge: document.getElementById('prev-show-rating')?.checked ?? true,
       normalize_portrait: document.getElementById('prev-normalize-portrait')?.checked ?? true,
+      prefer_languages: [...preferLangs],
     },
   };
 }
@@ -1336,6 +1405,10 @@ function populateForm(s) {
 
   // Preview page — normalize portrait
   setChk('prev-normalize-portrait', s.image?.normalize_portrait ?? true);
+
+  // Preview page — preferred languages (roadmap P7)
+  preferLangs = [...(s.image?.prefer_languages ?? [])];
+  loadIndexLanguages();
 
   // Settings page — tag destinations
   const CATS = ['video','audio','subtitles','rating'];
@@ -1602,6 +1675,7 @@ function collectForm() {
       show_sub_badges:    document.getElementById('prev-show-subs')?.checked   ?? true,
       show_rating_badge:  document.getElementById('prev-show-rating')?.checked ?? true,
       normalize_portrait: document.getElementById('prev-normalize-portrait')?.checked ?? true,
+      prefer_languages:   [...preferLangs],
     },
     auth: { username: getVal('s-auth-username') },
     log_level: settings.log_level ?? 'INFO',

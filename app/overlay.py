@@ -55,6 +55,35 @@ class BadgeGroup:
     text_color: str = "#ffffff"
 
 
+def prefer_order(langs: list[str], prefer: list[str]) -> list[str]:
+    """``langs`` with the codes in ``prefer`` first, in ``prefer``'s order.
+
+    Everything else follows in its original order. Order only: the result holds
+    exactly the items of ``langs`` (roadmap P7, ``image.prefer_languages``).
+    """
+    if not prefer:
+        return list(langs)
+    rank = {code: i for i, code in enumerate(prefer)}
+    # sorted() is stable, so unlisted codes keep today's relative order.
+    return sorted(langs, key=lambda code: rank.get(code, len(prefer)))
+
+
+def order_pills_by_language(pills: dict[str, list[str]], prefer: list[str]) -> list[str]:
+    """Pill labels for ``{codec_or_format: [langs]}``, preferred languages first.
+
+    Within each pill its languages are put in ``prefer`` order; the pills are
+    then ranked by the best-preferred language each carries, pills carrying none
+    keeping today's order after them. With ``prefer`` empty this is exactly the
+    label list the row builders produced before P7.
+    """
+    labels: list[tuple[int, str]] = []
+    for key, langs in pills.items():
+        ordered = prefer_order(langs, prefer)
+        rank = min((prefer.index(c) for c in ordered if c in prefer), default=len(prefer))
+        labels.append((rank, f"{key} {' '.join(ordered)}" if ordered else key))
+    return [label for _, label in sorted(labels, key=lambda t: t[0])]
+
+
 def clear_pill_cache() -> None:
     _PILL_CACHE.clear()
 
