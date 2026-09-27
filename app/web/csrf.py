@@ -125,7 +125,7 @@ class OriginCheckMiddleware:
             _printable(scope["path"]),
             source,
             _printable(claimed),
-            "(unparseable)" if expected is None else "%s://%s:%d" % expected,
+            "(unparseable)" if expected is None else "{}://{}:{}".format(*expected),
         )
         body = json.dumps({"detail": "Cross-origin request rejected"}).encode()
         await send(
