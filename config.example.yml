@@ -76,6 +76,7 @@ image:
   show_sub_badges:    true
   show_rating_badge:  true
   normalize_portrait: true     # pad non-portrait images to 2:3 before overlaying
+  prefer_languages: []         # e.g. [EN, JA, DE]: these audio/subtitle pills first; reorders, never hides
 
 auth:
   username: admin

@@ -2593,7 +2593,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | READY (decided 2026-09-26) | — |
-| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **NEEDS DECISION** (wrap / shrink / count) · ordering: **READY** (decided 2026-09-26) | — |
+| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **NEEDS DECISION** (wrap / shrink / count) · ordering: **SHIPPED 2026-09-27** (merged, not released) | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
@@ -2724,6 +2724,33 @@ index, not a free-text box. It changes pill order only — never which pills exi
 **OPERATOR DECISION 2026-09-26:** (a) — one `prefer_languages` pick-list (codes present in the index) for audio and
 subtitle rows; it orders pills only, never which pills exist. The ordering half is **READY**.
 
+**P7 ordering — SHIPPED 2026-09-27 (merged, not released).** `image.prefer_languages`, one list
+(default empty) for the audio and subtitle rows. Applied where the pills are built,
+`pipeline._make_badge_groups()`, via `overlay.order_pills_by_language()`: within each pill the
+listed languages lead in list order, then the pills are ranked by the best-listed language they
+carry; everything unlisted keeps today's order (a stable sort). `render_badge_groups()` is
+untouched. **Order only** — a 40-seed property test checks every pill keeps exactly its languages.
+ - **Byte-identical at the default.** In CI: renders with `prefer_languages=[]` equal renders from
+   a verbatim copy of the pre-P7 builder over 5 tag sets × 3 layouts, and a reorder is shown to
+   change the bytes (so "equal" can fail). Out of CI, once: 360 renders (60 random tag sets × 3
+   sizes × 2 corners, 360 distinct digests) from a `git archive` of `origin/main` and from the
+   branch hashed identical.
+ - **Tags untouched; no re-tag.** It is poster-only and not in `_tag_config_hash()` (a test pins
+   that). There is **no** separate overlay-config hash to add it to: like every other badge
+   setting (colours, size, corners), a change reaches existing posters on the next **full** scan,
+   because an incremental scan skips files whose mtime has not moved. The Settings hint says so.
+ - **Backups.** `apply_overlay()` copies `.orig` only if absent and always renders from it; a test
+   re-renders a synthetic poster in a new order and checks `.orig` is still the clean original and
+   the new render was drawn on it, not over the old badges.
+ - **Pick-list.** `GET /api/languages` (read-only) returns the codes present in the index with the
+   number of items carrying each, most first; UND/empty excluded, codes as the badges spell them.
+   It walks every row's track JSON, so it is cached until the latest scan run or the row count
+   changes. The Settings control (Badge settings card) is a select of those codes plus ordered
+   chips (◀ moves earlier, × removes), tooltip "reorders only — no pill is ever hidden". A saved
+   code no longer in the index stays listed, marked as such, rather than silently dropped. The
+   preview honours the setting. Verified in a throwaway container on invented data at 1366 and
+   390 px: add → raise → preview URL → save → reload round-trips, no JS errors, no 4xx/5xx.
+
 **P7 containment — MEASURED 2026-09-26, relabelled NEEDS DECISION.** Probe
 `scripts/measure_pill_containment.py` (`--self-test` in CI). It renders through the real
 `render_badge_groups()`, with groups built by `pipeline._make_badge_groups()` from invented
@@ -2826,7 +2853,7 @@ fewer rows go to wrapping; the rating is never covered.
 
 **Recommendation: (d), with a 2-row budget.** It shows every pill for most of the 1.29% (p99 needs
 1–2 extra rows), stays bounded on a heavy item, and turns silent hiding into a stated count. It
-also puts the queued `prefer_languages` ordering to work, because the preferred languages are then
+also puts the `prefer_languages` ordering (shipped 2026-09-27) to work, because the preferred languages are then
 the ones that survive. The build's acceptance test is this probe's grid: zero violations, including
 2.39:1 with padding off. Any count left hidden must appear in a `+N` pill; today's `…` pill must
 not.

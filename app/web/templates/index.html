@@ -469,10 +469,10 @@
 
     <!-- Roadmap P7: order, never omission. A pick-list of the codes the index
          actually holds, not a free-text box. -->
-    <div style="margin-top:12px">
+    <div class="prev-ctrl-group" style="margin-top:12px">
       <span class="prev-ctrl-label" title="Audio and subtitle pills carrying these languages come first, in the order listed; every other pill follows in its usual order. Reorders only — no pill is ever hidden. Tags in Jellyfin, Sonarr and Radarr are not changed.">Preferred languages ⓘ</span>
       <div style="display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-top:4px">
-        <select id="prev-prefer-add" onchange="addPreferLang(this.value)" title="Languages found in your library's audio and subtitle tracks, most common first">
+        <select id="prev-prefer-add" style="width:auto;min-width:200px" onchange="addPreferLang(this.value)" title="Languages found in your library's audio and subtitle tracks, most common first">
           <option value="">Add a language…</option>
         </select>
         <div class="path-tags" id="prev-prefer-tags" style="margin-top:0"></div>
