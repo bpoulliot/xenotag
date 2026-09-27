@@ -1328,7 +1328,7 @@ webhook resolves the wrong item.)*
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
 | I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | NEEDS DECISION | — |
 | I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
-| I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | NEEDS MEASUREMENT | — |
+| I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | READY (measured 2026-09-26) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
 | I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure | 3 | 2 | NEEDS MEASUREMENT | — |
 
@@ -1590,6 +1590,56 @@ and (4) whether `httpx2` pulls anything that conflicts with the runtime `httpx`.
 PyPI metadata (maintainer, licence, release history) — a package whose name is one character off
 a popular one deserves a provenance look before it enters CI. **Roughly 30 min.** The
 test-only-install question answers itself from (4).
+
+*Measured 2026-09-26 — now **READY**.* Scratch venv (Python 3.12.3, CI's version) built from
+`requirements.txt` + `pytest` at `af91b0c`; `pytest tests/ -q`.
+
+* **Baseline, no `httpx2`: 251 passed, 0 skipped, 1 warning** (the sweep's "220" predates later
+  tests). The warning is raised at `fastapi/testclient.py:1`
+  (`from starlette.testclient import TestClient`): *"Using `httpx` with `starlette.testclient` is
+  deprecated; install `httpx2` instead."* Starlette 1.6.0's `testclient.py` does
+  `try: import httpx2 as httpx` and falls back to `httpx` with that warning.
+* **`StarletteDeprecationWarning` is a `UserWarning`** (MRO: `StarletteDeprecationWarning →
+  UserWarning → Warning`; its docstring says so on purpose, "visible by default") — the same trap
+  as I10's `FastAPIDeprecationWarning`. So `-W error::DeprecationWarning` **cannot** catch it:
+  without `httpx2` that run is 251 passed *with the warning still printed*, while
+  `-W error::UserWarning` fails collection (`tests/test_json_responses.py`). Any CI guard for this
+  must name `UserWarning` (or `starlette.exceptions.StarletteDeprecationWarning`).
+* **`pip install httpx2` → 2.13.1**, pulling `httpcore2` 2.13.1 and `truststore` 0.10.4 (3 packages,
+  nothing else changed in `pip freeze`). **Picked up with no import change:** `TestClient.__mro__` is
+  `starlette.testclient.TestClient → httpx2.Client`; `starlette.testclient.httpx` is module `httpx2`;
+  the client's `_transport` is Starlette's `_TestClientTransport`, a subclass of
+  `httpx2.BaseTransport`; `isinstance(client, httpx.Client)` is now False.
+* **Warning gone:** 251 passed with no flag, with `-W error::DeprecationWarning`, and with `-W error`
+  (every warning an error) — 0 warnings in all three. Same count as the baseline.
+* **No conflict with the runtime `httpx`:** `pip check` clean; `httpx` 0.28.1 and `httpx2` 2.13.1
+  import side by side from separate packages (`httpcore` vs `httpcore2`); `app.clients.arr`,
+  `app.clients.readonly` and `app.arr_sync` still resolve `httpx` to `httpx`, and
+  `tests/test_arr_sync.py`'s `httpx.MockTransport` fakes are untouched. Starlette's own `full` extra
+  requires both (`httpx2>=2.0.0` and `httpx<0.29.0,>=0.27.0`), so coexisting is the intended setup.
+  The runtime never imports `httpx2`.
+* **Provenance — sound.** PyPI `httpx2`: author Tom Christie (the `httpx` author), maintainer
+  "Pydantic Services Inc.", sole PyPI owner `Kludex`, who authored and merged Starlette's own
+  "Support httpx2 in the test client" (encode/starlette#3291, 2026-05-25) and publishes Starlette
+  releases (1.7.0). Source `github.com/pydantic/httpx2` (not a fork; created 2026-05-11, the day of
+  the first upload). Licence `BSD-3-Clause` (read from package metadata; `httpcore2` BSD-3-Clause,
+  `truststore` MIT). History: 18 releases, 0.0.0 (2026-05-11) → 2.13.1 (2026-09-23), none yanked.
+  Starlette's release notes name it three times (#3291 test-client support, #3304 type checking,
+  #3323 `full` extra) and its README links `pypi.org/project/httpx2`. No PEP 740 attestation is
+  published for 2.13.1 — not a red flag, just absent.
+* **`pip-audit` 2.10.1**, 70 packages: 0 vulnerabilities in `httpx2`, `httpcore2`, `truststore`,
+  `httpx`, `httpcore`; the only findings are in the venv's own bundled `pip` 24.0, not a project
+  dependency.
+
+**Spec.** Test-only: the runtime never imports `httpx2`, and putting it in `requirements.txt` would
+ship three unused packages in the image (the `Dockerfile` installs `requirements.txt`). Add a root
+`requirements-dev.txt` holding `httpx2==2.13.1` (Dependabot's pip ecosystem at `/` picks it up), and
+change `ci.yml`: the test job to `pip install -r requirements.txt -r requirements-dev.txt pytest`, and
+the `pip-audit` step to `pip-audit -r requirements.txt -r requirements-dev.txt` so the new package is
+audited. Leave `pytest` where it is (no version change in this item). Acceptance: the CI test log's
+warnings summary has no `StarletteDeprecationWarning`; optionally add
+`-W error::starlette.exceptions.StarletteDeprecationWarning` to the pytest step — **not**
+`error::DeprecationWarning`, which cannot see it.
 
 **I12 — filed 2026-09-26, seen in I10's test output; FIXED 2026-09-26 (below the sweep note).** `app/state.py:137` sets
 `row.last_scanned = datetime.utcnow()`, deprecated since Python 3.12. NEEDS MEASUREMENT before the
