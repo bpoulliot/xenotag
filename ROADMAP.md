@@ -44,6 +44,42 @@ how long. Five items turned out to be **already built** (U3, U4, P3, I4) or **de
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | NEEDS DECISION | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | READY | — |
+| B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | READY | — |
+| B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | NEEDS DECISION | — |
+
+**B16 — FILED 2026-09-27 by I13 (CodeQL #8). NEEDS DECISION.**
+
+`auth.bootstrap()` runs at every start; when `auth.password_hash` is empty and `XENOTAG_PASSWORD`
+is unset it generates a password and logs it at WARNING (`auth.py:130–135`). Reproduced: the logged
+value verifies against the hash it stored, and it stays valid until someone changes it in Settings.
+The log is stdout only, but on this host that means `docker logs`, Dozzle and Portainer (both
+running), plus any log shipper added later; prod's json-file driver keeps 3 × 10 MB. **Not exposed
+today** — prod has a `$2b$` hash and 0 `FIRST RUN` lines — so this is about fresh installs.
+The alert is accurate; whether to change the behaviour is a taste call, hence the label. Options:
+(a) keep it and dismiss #8 as *won't fix* — the Jenkins/Portainer convention;
+(b) write the password to a 0600 file under `/config` (e.g. `initial-password`), log only the path,
+delete the file on the first password change; (c) refuse to start without `XENOTAG_PASSWORD`
+(breaks the `docker run` quickstart); (d) keep logging it, but force a change at first login.
+**Recommendation: (b)** — same first-run experience, the secret lives where `config.yml` already
+does. Needs no schema change.
+
+**B15 — FILED 2026-09-27 by I13 (CodeQL #6, #7). READY.**
+
+`app/auth.py` wraps `import bcrypt` in `try/except ImportError` and, on failure, hashes the admin
+password as `"sha256:" + hashlib.sha256(pw).hexdigest()` — unsalted and fast, so a copy of
+`config.yml` (a backup, a leaked file) gives the password up to a GPU or a lookup table. Probe with
+bcrypt made unimportable: two hashes of `hunter2` are identical and equal its plain SHA-256. It is
+also a lockout: under the fallback, `verify_password()` rejects every `$2b$` hash, so an install
+that loses bcrypt silently locks its admin out, with one startup WARNING as the only trace.
+**Latent** — `bcrypt==5.0.0` is pinned in `requirements.txt`, installed by the Dockerfile, imports
+in the prod container, and prod and dev both store `$2b$`.
+
+**Fix (contained):** delete the `except ImportError` branch and import bcrypt unconditionally, so a
+missing bcrypt fails at import instead of downgrading; fix the section comment ("bcrypt preferred,
+sha256 fallback"). Only an install without bcrypt can hold a `sha256:` hash; have `bootstrap()` log
+an ERROR naming the recovery when it sees one — blank `auth.password_hash` in `config.yml` and
+restart, which re-runs the first-run path. Test: a `sha256:` hash does not verify. #6/#7 should
+then close as *fixed* on `main`'s next analysis.
 
 **B14 — FILED 2026-09-26, found while screenshotting the Preview page for P5. Not fixed here.**
 
@@ -1563,7 +1599,7 @@ webhook resolves the wrong item.)*
 | I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
 | I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | READY (measured 2026-09-26) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
-| I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure | 3 | 2 | NEEDS MEASUREMENT | — |
+| I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure. **Triaged 2026-09-27:** five are false positives (probes committed); #6/#7 → B15, #8 → B16. What remains is dismissing the five on GitHub with the reasons recorded below | 3 | 1 | READY (measured 2026-09-27) | — |
 | I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | NEEDS DECISION | — |
 
 **I14 — FILED 2026-09-27, found while measuring B8. Not fixed here.**
@@ -1917,7 +1953,7 @@ via a SQLAlchemy column default, attributed to `sqlalchemy.sql.schema` — so a
 `-W error::DeprecationWarning:app.state` filter would have missed it) to 1 (the `httpx2` one, I11).
 The acceptance grep is `datetime\.utcnow`: the helper's own name makes a bare `utcnow` grep non-empty.
 
-**I13 — filed 2026-09-26 by the readiness sweep. NEEDS MEASUREMENT.** B2 (2026-09-25) noted seven
+**I13 — filed 2026-09-26 by the readiness sweep as NEEDS MEASUREMENT; measured 2026-09-27, now READY (below).** B2 (2026-09-25) noted seven
 open CodeQL alerts on `main` that "deserve an item of their own, with evidence" and none was
 filed. Re-read on 2026-09-26 via `gh api repos/bpoulliot/xenotag/code-scanning/alerts`: **eight**
 are open, one new since B2 —
@@ -1937,6 +1973,41 @@ for a false positive, the exact dismissal reason to use. **On:** the code and th
 details, no running system. **Roughly 1–2 h.** Deliverable: the table above with a verdict
 column, and each real alert filed as its own B item. Dismissing alerts is an outward action on
 GitHub and is **not** part of the measurement.
+
+**MEASURED 2026-09-27 — relabelled READY: dismiss five, fix two via B15, decide one via B16.**
+
+*Instruments.* `gh api repos/bpoulliot/xenotag/code-scanning/alerts?state=open` returned the same
+eight as the table above (#1, #3–#9), every `most_recent_instance` at `ddb8eb5`, every line number
+unchanged; #2 is `fixed` (2026-06-01) and none is dismissed. The REST API returns no code-flow
+paths, so each source → sink was traced by reading `origin/main` at `ddb8eb5`. What CodeQL treats
+as a sanitiser was read from `github/codeql` `main` on 2026-09-27
+(`python/ql/lib/semmle/python/security/dataflow/{PathInjection,CookieInjection,StackTraceExposure}Customizations.qll`)
+— not necessarily the exact pack version the action ran. Every "false positive" below is backed by
+`tests/test_codeql_triage.py` (21 tests, real routes through `TestClient`). Each test carries a
+control that fails the other way, and the file was run against three mutants in a scratch copy —
+`sample` joined raw, the raw username as the cookie value, a formatted traceback stored as the
+dry-run error: **5, 5 and 1 tests went red respectively**, so the probe is not one that can only
+agree with itself. #6–#8 were reproduced with scratch probes (not committed: they pin defects).
+
+| alert | rule | verdict | reason |
+|---|---|---|---|
+| #1 | `py/cookie-injection`, `routes.py:125` | **false positive** | The cookie value is `create_session()`'s token: `base64url("<user>:<expiry>:<hmac>")`, set only when the submitted username **equals** the configured one. Five hostile usernames (`;` + `Domain=`, CR/LF + `Set-Cookie:`, a quote + `HttpOnly=false`, a comma, NUL) each gave exactly one `Set-Cookie`, a value in `[A-Za-z0-9_-]+=*` (the stdlib quotes it when it holds `=` padding), only the expected attributes, and a token that decodes back to the username. A non-matching username gets a 401 and no cookie. CodeQL's cookie query has no sanitiser at all and propagates taint through base64 encoding. |
+| #3, #4, #5 | `py/path-injection`, `routes.py:758–759` | **false positive** | `sample` is reduced to `Path(sample).name`, so every path touched is `_PREVIEW_CACHE/<one component>`. Four inputs whose naive join provably resolves to a file outside the cache (`../x`, an absolute path, `../../<dir>/x`, `legit.jpg/../../x`) read nothing; so did `..%2F`, `%2E%2E%2F`, double-encoded `%252F`, backslashes (one filename on POSIX), NUL (pathlib answers `False`, never raises), `.`, `/` and `..`. `..` is the only name that steps up — to the cache's parent, a directory, which fails `is_file()`. A spy on `Path.exists`/`is_file` shows nothing outside the cache is even stat'd, and a file in the cache is still read (also via a `../elsewhere/` prefix, which is dropped). CodeQL's barriers are a constant comparison, a normalise-then-prefix-check pair, or a models-as-data barrier; `PurePath.name` is none of them. B2's guess was right. |
+| #6, #7 | `py/weak-sensitive-data-hashing`, `auth.py:52, 56` | **real, latent → B15** | What is hashed is **the admin password itself**, with bare `hashlib.sha256` — not an HMAC key (that is `_sign()`, HMAC-SHA256 with `secret_key`, not flagged) and not a cache key. The branch runs only when `import bcrypt` fails. Probe with `bcrypt` made unimportable: two hashes of one password are identical (no salt), equal plain SHA-256, and a `$2b$` hash no longer verifies. Unreachable in the shipped image (`bcrypt==5.0.0` pinned; prod's container imports 5.0.0; prod and dev store `$2b$`). |
+| #8 | `py/clear-text-logging-sensitive-data`, `auth.py:133` | **real, by design → B16** | On a first run with no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING; the logged value verifies against the stored hash. Controls: nothing is logged when `XENOTAG_PASSWORD` is set or a hash already exists. The log is stdout only (no file handler, no route serves logs). Prod today: 0 `FIRST RUN` lines in its `docker logs`, a `$2b$` hash, no `XENOTAG_*` env. |
+| #9 | `py/stack-trace-exposure`, `routes.py:865–871` | **false positive** | The response's `error` is `str(exc)` of a failed dry run — the message, never a traceback. Probe: the **real** `run_arr_dry_run()` against a local Jellyfin that answers 401, with a sentinel API key; the report carries exactly `str(exc)` and contains no `Traceback`, no `File "`, no `.py`, and not the key (clients send keys as headers, so an `httpx` error's URL holds none). The route is 401 without a session, and the Settings page shows the message on purpose ("Last dry run failed: …"). CodeQL counts the caught exception object itself as stack-trace information. Residual, not a finding: the message is unbounded, so a future exception that embeds a secret would reach the admin's own browser. |
+
+**The remaining work (READY):** after this lands on `main`, dismiss #1, #3, #4, #5 and #9 on
+GitHub, each as **"false positive"** with the comment below verbatim (each under GitHub's 280
+characters). #6/#7 close as *fixed* when B15 merges; #8 waits on B16's decision. Dismissing is an
+outward action — the operator's, or a session whose item says so in so many words.
+
+- **#1:** `Value is create_session()'s base64url HMAC token, set only when the username equals the configured one; no ; , " or CR/LF can reach the header. CodeQL propagates taint through base64. Pinned by tests/test_codeql_triage.py (I13).`
+- **#3, #4, #5:** `sample is reduced to Path(sample).name, so the path is always _PREVIEW_CACHE/<one component>; '..' reaches only the parent dir, which fails is_file(). CodeQL has no barrier for PurePath.name. Pinned by tests/test_codeql_triage.py (I13).`
+- **#9:** `Returns str(exc) of a failed dry run (the message, never a traceback) to the signed-in admin only; client keys travel in headers, not URLs. CodeQL treats the exception object as stack-trace info. Pinned by tests/test_codeql_triage.py (I13).`
+
+B2's trap still applies after dismissal: a PR whose diff re-attributes `preview_image`'s or
+`login`'s signature can re-surface these on the PR check.
 
 *(I10's original filing follows; its heading had been pasted twice.)*
 
