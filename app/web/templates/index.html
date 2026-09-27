@@ -1683,7 +1683,11 @@ function collectForm() {
 }
 
 function cleanInstance(i) {
-  return {name: i.name || '', url: i.url || '', api_key: i.api_key || ''};
+  // api_key_file must survive the round trip: dropping it would silently turn a
+  // file-backed row into one with a blank key. Its api_key is sent blank; the
+  // server reads the file and never writes the key back (roadmap I9).
+  const keyFile = (i.api_key_file || '').trim();
+  return {name: i.name || '', url: i.url || '', api_key: keyFile ? '' : (i.api_key || ''), api_key_file: keyFile};
 }
 
 async function saveSettings() {
@@ -1722,9 +1726,12 @@ function renderInstances(type) {
       <div class="field">
         <label>API Key</label>
         <div class="inline-row">
-          <input type="password" value="${esc(inst.api_key)}" oninput="updateInstance('${type}',${idx},'api_key',this.value)">
+          ${inst.api_key_file
+            ? `<input type="password" value="" readonly class="env-managed" placeholder="Read from a file">`
+            : `<input type="password" value="${esc(inst.api_key)}" oninput="updateInstance('${type}',${idx},'api_key',this.value)">`}
           <button class="btn sm" onclick="testInstance('${type}', ${idx})">Test</button>
         </div>
+        ${inst.api_key_file ? `<div class="hint">Externally managed — read from <code>${esc(inst.api_key_file)}</code> and not stored in config.yml. Rotate it in that file, then restart. To change the path, use the raw YAML editor.</div>` : ''}
         <div id="inst-status-${type}-${idx}" style="font-size:11px;color:var(--muted);margin-top:3px"></div>
       </div>
     </div>`).join('');
@@ -1732,7 +1739,7 @@ function renderInstances(type) {
 
 function addInstance(type) {
   const arr = type === 'sonarr' ? sonarrInstances : radarrInstances;
-  arr.push({name: '', url: '', api_key: ''});
+  arr.push({name: '', url: '', api_key: '', api_key_file: ''});
   renderInstances(type);
 }
 
@@ -1756,7 +1763,7 @@ async function testInstance(type, idx) {
   if (!inst?.url) { statusEl.textContent = 'Enter a URL first'; statusEl.style.color = 'var(--muted)'; return; }
   statusEl.textContent = 'Testing…'; statusEl.style.color = 'var(--muted)';
   try {
-    const h = await apiFetch('/api/arr/test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({arr_type: type, url: inst.url, api_key: inst.api_key||''})});
+    const h = await apiFetch('/api/arr/test', {method:'POST', headers:{'Content-Type':'application/json'}, body: JSON.stringify({arr_type: type, url: inst.url, api_key: inst.api_key||'', api_key_file: inst.api_key_file||''})});
     statusEl.textContent = h.ok ? '✓ ' + h.message : '✗ ' + h.message;
     statusEl.style.color = h.ok ? 'var(--green)' : 'var(--red)';
   } catch(e) {
@@ -1834,14 +1841,14 @@ async function fetchRootFolders() {
   for (const inst of sonarrInstances) {
     if (!inst.url) continue;
     try {
-      const folders = await apiFetch('/api/arr/rootfolders', {...opts, body: JSON.stringify({arr_type:'sonarr', url:inst.url, api_key:inst.api_key||''})});
+      const folders = await apiFetch('/api/arr/rootfolders', {...opts, body: JSON.stringify({arr_type:'sonarr', url:inst.url, api_key:inst.api_key||'', api_key_file:inst.api_key_file||''})});
       folders.forEach(f => paths.add(f.path));
     } catch {}
   }
   for (const inst of radarrInstances) {
     if (!inst.url) continue;
     try {
-      const folders = await apiFetch('/api/arr/rootfolders', {...opts, body: JSON.stringify({arr_type:'radarr', url:inst.url, api_key:inst.api_key||''})});
+      const folders = await apiFetch('/api/arr/rootfolders', {...opts, body: JSON.stringify({arr_type:'radarr', url:inst.url, api_key:inst.api_key||'', api_key_file:inst.api_key_file||''})});
       folders.forEach(f => paths.add(f.path));
     } catch {}
   }

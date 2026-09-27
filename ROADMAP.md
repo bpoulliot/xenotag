@@ -2198,7 +2198,7 @@ webhook resolves the wrong item.)*
 | I5 | Prometheus metrics endpoint | 3 | 2 | **SHIPPED 2026-09-27; LIVE (v1.10.0)** — scraped, three alert rules on the host | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
 | I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | **CLOSED 2026-09-26** — superseded by I5 | — |
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
-| I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | READY (decided 2026-09-26) | — |
+| I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | **SHIPPED 2026-09-27** — merged, not released; prod wiring is the operator's | — |
 | I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
 | I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | READY (measured 2026-09-26) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
@@ -2470,6 +2470,28 @@ no Settings field to make read-only, so it is one table entry and one test on an
 code path — and leaving a plainly-shaped secret out would have been a half-job. `auth.password_hash`
 stayed out on purpose: it is a verifier rather than a secret, and the first-run bootstrap has to be
 able to write it.
+
+**I9 — SHIPPED 2026-09-27 (merged, not released).** Option (d), as decided: `ArrInstance` has an
+optional `api_key_file`. When it is set, the file supplies the instance's key on every load and every
+save, wins over an `api_key` beside it, and that `api_key` is never written back — not by the Settings
+page, the raw YAML editor, `save_auth()` or the first-run bootstrap. The path saves normally. An
+unreadable or empty file is fatal at startup and refuses a save (nothing written); there is no
+"ignored with a warning" case, because unlike I8's bare variable a set `api_key_file` is always
+deliberate. Loading never writes, so the stale key already in `config.yml` is purged by the next
+save. Startup logs each file-backed instance by name and path, never by value. The Settings row
+shows its key read-only with an "Externally managed" line naming the path; changing the path is a
+raw-YAML-editor job (no new UI). 30 tests in `tests/test_arr_key_files.py`; with the strip in
+`_persistable()` removed, the ten save-path tests fail, and the raw-editor re-dump, safe-dict
+blanking, `config_as_yaml` strip, file read, empty-file check, test-route key and the page's
+`cleanInstance()` each fail their own test when mutated. Checked end to end in a throwaway
+container (network none, fake keys): the first-run bootstrap and a real browser Settings save both
+left `config.yml` without the stale or the file key and with the path.
+
+One decision the note did not settle: the Settings **Test** / root-folder buttons for a file-backed
+row send the key the *configured* instance read, matched by its `api_key_file` — never a file named
+only by the request — so a test request cannot read an arbitrary container path into an outbound
+header. An unsaved file-backed row answers "save first". (A save can still point `api_key_file` at
+any path the container can read; that is inherent to (d) and needs an authenticated admin.)
 
 **I9 note — filed 2026-09-24 while implementing I8.**
 

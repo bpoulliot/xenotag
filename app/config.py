@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import logging
 import os
 from pathlib import Path
@@ -22,6 +23,18 @@ class ArrInstance(BaseModel):
     name: str
     url: str
     api_key: str = ""
+    # Roadmap I9: a path to read api_key from instead (e.g. a Docker
+    # file-secret). When set, the file supplies the key at load and api_key is
+    # never written back to config.yml. The path itself is not a secret.
+    api_key_file: str = ""
+
+    @field_validator("api_key_file", mode="before")
+    @classmethod
+    def _blank_key_file(cls, v: object) -> object:
+        # `api_key_file:` with nothing after it is YAML null: treat it as unset.
+        if v is None:
+            return ""
+        return v.strip() if isinstance(v, str) else v
 
 
 class SonarrConfig(BaseModel):
@@ -359,8 +372,9 @@ ENV_OVERRIDABLE: dict[str, str] = {
 
 # Not here, and deliberately: `auth.password_hash` is a verifier rather than a
 # secret, and the first-run bootstrap has to be able to write it. The per-
-# instance Sonarr/Radarr keys live in a LIST, so they need an addressing scheme
-# a dotted path cannot express — roadmap I9.
+# instance Sonarr/Radarr keys live in a LIST, which a dotted path cannot
+# address; each instance names its own key file instead (`api_key_file`,
+# roadmap I9, below).
 
 # Dotted path -> the environment variable that supplied it, for the fields the
 # environment is supplying right now. Refreshed on every load and every save.
@@ -467,13 +481,102 @@ def overridden_fields() -> dict[str, str]:
     return dict(_env_overrides)
 
 
+# ---------------------------------------------------------------------------
+# Per-instance key files for Sonarr/Radarr (roadmap I9)
+#
+# The *arr keys live in a list, so the dotted-path table above cannot address
+# them: an index detaches when an instance is reordered, a name when it is
+# renamed. So the binding lives in the row itself -- `api_key_file` names the
+# file, and wherever the row moves the file moves with it. The rest is I8's
+# contract, unchanged: the file supplies the key on every load and every save,
+# an unreadable or empty file is fatal, and `api_key` is never written back for
+# a row that names a file. When a row carries both, the file wins -- it is the
+# deliberate source.
+# ---------------------------------------------------------------------------
+_ARR_SECTIONS = ("sonarr", "radarr")
+
+# (instance label, path) for every file-backed instance, as of the last load or
+# save. Paths are not secrets; the values read from them never go in here.
+_arr_key_files: list[tuple[str, str]] = []
+
+
+def _raw_instances(data: dict):
+    """Yield ``(label, instance dict)`` for every *arr instance in parsed ``data``."""
+    for section in _ARR_SECTIONS:
+        block = data.get(section)
+        instances = block.get("instances") if isinstance(block, dict) else None
+        if not isinstance(instances, list):
+            continue
+        for idx, inst in enumerate(instances):
+            if isinstance(inst, dict):
+                name = inst.get("name")
+                label = f"{section} instance {name!r}" if name else f"{section} instance #{idx + 1} (unnamed)"
+                yield label, inst
+
+
+def _key_file(inst: dict) -> str:
+    raw = inst.get("api_key_file")
+    return raw.strip() if isinstance(raw, str) else ""
+
+
+def _apply_arr_key_files(data: dict) -> dict:
+    """
+    Read each file-backed instance's key into ``data`` *in place*, and record
+    which instances are file-backed. Raises ConfigError when a named file is
+    unreadable or empty: naming a file is unambiguous intent, and carrying on
+    with a stale key from config.yml is the silent failure I8 exists to prevent.
+    """
+    global _arr_key_files
+    found: list[tuple[str, str]] = []
+    for label, inst in _raw_instances(data):
+        path = _key_file(inst)
+        if not path:
+            continue
+        try:
+            value = Path(path).read_text(encoding="utf-8").strip()
+        except OSError as exc:
+            raise ConfigError(f"{label}: its api_key_file could not be read: {exc}") from exc
+        if not value:
+            raise ConfigError(f"{label}: its api_key_file {path} is empty")
+        inst["api_key"] = value
+        found.append((label, path))
+    _arr_key_files = found
+    return data
+
+
+def _drop_file_backed_keys(data: dict) -> list[str]:
+    """Remove ``api_key`` from every instance in ``data`` that names a key file.
+
+    Returns the labels of the instances that had one to remove.
+    """
+    dropped = []
+    for label, inst in _raw_instances(data):
+        if _key_file(inst) and "api_key" in inst:
+            del inst["api_key"]
+            dropped.append(label)
+    return dropped
+
+
+def file_backed_instances() -> list[tuple[str, str]]:
+    """``(instance label, path)`` for every *arr instance whose key comes from a file."""
+    return list(_arr_key_files)
+
+
+def _apply_external_secrets(data: dict) -> dict:
+    """Both of the above: environment overrides, then per-instance key files."""
+    return _apply_arr_key_files(_apply_env_overrides(data))
+
+
 def log_env_overrides() -> None:
-    """Log which fields the environment supplied, by NAME only — never by value."""
+    """Log which secrets come from outside config.yml, by NAME only — never by value."""
     if not _env_overrides:
-        log.info("No config fields overridden by the environment — config.yml supplies all of them")
-        return
+        log.info("No config fields overridden by the environment")
     for path, var in sorted(_env_overrides.items()):
         log.info("Config field %s supplied by %s — it will not be written to config.yml", path, var)
+    if not _arr_key_files:
+        log.info("No Sonarr/Radarr instance reads its API key from a file")
+    for label, path in _arr_key_files:
+        log.info("%s: API key read from %s — it will not be written to config.yml", label, path)
 
 
 def _dump(data: dict) -> str:
@@ -481,10 +584,11 @@ def _dump(data: dict) -> str:
 
 
 def _persistable(cfg: AppConfig) -> dict:
-    """``cfg`` as a dict with every environment-supplied field removed."""
+    """``cfg`` as a dict with every environment- or file-supplied secret removed."""
     data = cfg.model_dump()
     for path in _env_overrides:
         _drop_nested(data, path)
+    _drop_file_backed_keys(data)
     return data
 
 
@@ -506,7 +610,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     if resolved.exists():
         with open(resolved) as f:
             data = yaml.safe_load(f) or {}
-    _config = AppConfig.model_validate(_apply_env_overrides(data))
+    _config = AppConfig.model_validate(_apply_external_secrets(data))
     return _config
 
 
@@ -522,14 +626,18 @@ def save_config(new_yaml: str) -> AppConfig:
 
     The submitted text is written verbatim -- it is the raw editor, and the
     operator's formatting is theirs -- unless it carries a field the
-    environment supplies. In that case the field is dropped and the file is
+    environment supplies, or an ``api_key`` beside an instance's
+    ``api_key_file``. In that case the secret is dropped and the file is
     re-dumped, so a raw edit cannot reintroduce a secret the file did not
     supply. (This is also how a stale secret already sitting in config.yml gets
     purged: enable the override, save once.)
     """
     data = yaml.safe_load(new_yaml) or {}
     submitted = [path for path in ENV_OVERRIDABLE if _has_nested(data, path)]
-    validated = AppConfig.model_validate(_apply_env_overrides(data), context={REFUSE_BAD_COLOURS: True})
+    # Before the key files are read into `data`: which file-backed rows came
+    # with an api_key of their own. The copy keeps the check off `data`.
+    file_shadowed = _drop_file_backed_keys(copy.deepcopy(data))
+    validated = AppConfig.model_validate(_apply_external_secrets(data), context={REFUSE_BAD_COLOURS: True})
     shadowed = [path for path in submitted if path in _env_overrides]
     for path in shadowed:
         log.warning(
@@ -537,7 +645,9 @@ def save_config(new_yaml: str) -> AppConfig:
             path,
             _env_overrides[path],
         )
-    _write(_dump(_persistable(validated)) if shadowed else new_yaml)
+    for label in file_shadowed:
+        log.warning("Dropping the api_key of %s from config.yml — it is read from its api_key_file", label)
+    _write(_dump(_persistable(validated)) if shadowed or file_shadowed else new_yaml)
     global _config
     _config = validated
     return validated
@@ -545,7 +655,7 @@ def save_config(new_yaml: str) -> AppConfig:
 
 def save_config_from_dict(data: dict) -> AppConfig:
     """Validate and persist config from a dict (structured settings API)."""
-    validated = AppConfig.model_validate(_apply_env_overrides(data), context={REFUSE_BAD_COLOURS: True})
+    validated = AppConfig.model_validate(_apply_external_secrets(data), context={REFUSE_BAD_COLOURS: True})
     _write(_dump(_persistable(validated)))
     global _config
     _config = validated
@@ -565,16 +675,17 @@ def config_as_yaml() -> str:
     if not (_config_path and _config_path.exists()):
         return ""
     text = _config_path.read_text()
-    if not _env_overrides:
+    if not _env_overrides and not _arr_key_files:
         return text
-    # The file may still hold a stale value for an overridden field; never hand
-    # that to the browser. Re-dumping loses comments, but only in the case
-    # where the alternative is leaking a secret the app no longer uses.
+    # The file may still hold a stale value for an overridden field, or a stale
+    # api_key beside an api_key_file; never hand that to the browser.
+    # Re-dumping loses comments, but only in the case where the alternative is
+    # leaking a secret the app no longer uses.
     data = yaml.safe_load(text) or {}
     # Materialise the list: _drop_nested has a side effect, so any() would
     # stop dropping at the first hit and leave later fields in the output.
     dropped = [_drop_nested(data, path) for path in _env_overrides]
-    if not any(dropped):
+    if not any(dropped) and not _drop_file_backed_keys(data):
         return text
     return _dump(data)
 
@@ -583,11 +694,16 @@ def config_as_dict_safe() -> dict:
     """
     Return config as a dict safe for the frontend: the password hash removed,
     every environment-supplied field blanked, and their paths listed under
-    ``env_managed_fields`` so the UI can render them read-only.
+    ``env_managed_fields`` so the UI can render them read-only. A file-backed
+    *arr instance keeps its ``api_key_file`` and has its ``api_key`` blanked;
+    the UI renders that row's key read-only.
     """
     d = get_config().model_dump()
     d.get("auth", {}).pop("password_hash", None)
     for path in _env_overrides:
         _set_nested(d, path, "")
+    for _label, inst in _raw_instances(d):
+        if _key_file(inst):
+            inst["api_key"] = ""
     d["env_managed_fields"] = sorted(_env_overrides)
     return d
