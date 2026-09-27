@@ -18,7 +18,7 @@ from .clients.readonly import ReadOnlyTransport
 from .clients.sonarr import SonarrClient
 from .config import AppConfig
 from .deleted_items import run_deleted_items
-from .overlay import BadgeGroup, apply_overlay
+from .overlay import BadgeGroup, apply_overlay, order_pills_by_language
 from .scanner import AudioTrack, MediaInfo, SubTrack, probe_file
 from .state import (
     MediaState,
@@ -322,7 +322,7 @@ def _make_badge_groups(
             langs = codec_langs.setdefault(t.codec, [])
             if t.lang and t.lang != "UND":
                 langs.append(t.lang)
-        audio_labels = [f"{codec} {' '.join(langs)}" if langs else codec for codec, langs in codec_langs.items()]
+        audio_labels = order_pills_by_language(codec_langs, img_cfg.prefer_languages)
         if audio_labels:
             groups.append(BadgeGroup(audio_labels, img_cfg.audio_badge_color, img_cfg.badge_text_color))
 
@@ -339,7 +339,7 @@ def _make_badge_groups(
             langs = fmt_langs.setdefault(t.format, [])
             if t.lang and t.lang != "UND":
                 langs.append(t.lang)
-        sub_labels = [f"{fmt} {' '.join(langs)}" if langs else fmt for fmt, langs in fmt_langs.items()]
+        sub_labels = order_pills_by_language(fmt_langs, img_cfg.prefer_languages)
         if sub_labels:
             groups.append(BadgeGroup(sub_labels, img_cfg.sub_badge_color, img_cfg.badge_text_color))
 

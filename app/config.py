@@ -269,6 +269,32 @@ class ImageConfig(BaseModel):
     show_sub_badges: bool = True
     show_rating_badge: bool = True
 
+    # Roadmap P7: language codes whose audio/subtitle pills come first, in this
+    # order; every other pill follows in its usual order. It reorders pills and
+    # never hides one. Codes as the badges spell them (EN, JA, ...). Empty -- the
+    # default -- renders exactly as before. Poster-only: tags are not affected,
+    # so it is not in the tag-config hash and changing it forces no re-tag.
+    prefer_languages: list[str] = Field(default_factory=list)
+
+    @field_validator("prefer_languages", mode="before")
+    @classmethod
+    def _normalise_prefer_languages(cls, v: object) -> object:
+        # A cosmetic setting must not stop the app starting (the B10 precedent):
+        # a bare string is split, anything else unusable is dropped.
+        if v is None:
+            return []
+        if isinstance(v, str):
+            v = v.replace(",", " ").split()
+        if not isinstance(v, list | tuple):
+            log.warning("image.prefer_languages %r is not a list; ignoring it", v)
+            return []
+        out: list[str] = []
+        for code in v:
+            code = str(code).strip().upper()
+            if code and code != "UND" and code not in out:
+                out.append(code)
+        return out
+
     # Pad non-portrait images to 2:3 before applying badges so they aren't
     # cropped when Jellyfin displays the poster in a portrait slot.
     normalize_portrait: bool = True

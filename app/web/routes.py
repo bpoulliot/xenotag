@@ -47,6 +47,8 @@ from ..scheduler import next_run_time, reschedule
 from ..state import (
     MediaState,
     clear_scan_errors,
+    get_language_counts,
+    get_last_scan,
     get_media_filtered,
     get_recent_scans,
     get_scan_errors,
@@ -685,6 +687,7 @@ async def preview_image(
     show_audio: str = "true",
     show_subs: str = "true",
     show_rating: str = "true",
+    prefer_languages: str = "",
     item_id: str = "",
     sample: str = "",
 ):
@@ -703,6 +706,7 @@ async def preview_image(
         show_audio=show_audio,
         show_subs=show_subs,
         show_rating=show_rating,
+        prefer_languages=prefer_languages,
     )
 
     # Build badge groups from preview params
@@ -714,12 +718,12 @@ async def preview_image(
             groups.append(BadgeGroup(video_labels, cfg_img.video_badge_color, cfg_img.badge_text_color))
 
     if cfg_img.show_audio_badges:
-        audio_labels = [a.strip() for a in audio.split(",") if a.strip()]
+        audio_labels = _preview_order([a.strip() for a in audio.split(",") if a.strip()], cfg_img.prefer_languages)
         if audio_labels:
             groups.append(BadgeGroup(audio_labels, cfg_img.audio_badge_color, cfg_img.badge_text_color))
 
     if cfg_img.show_sub_badges:
-        sub_labels = [s.strip() for s in subtitles.split(",") if s.strip()]
+        sub_labels = _preview_order([s.strip() for s in subtitles.split(",") if s.strip()], cfg_img.prefer_languages)
         if sub_labels:
             groups.append(BadgeGroup(sub_labels, cfg_img.sub_badge_color, cfg_img.badge_text_color))
 
@@ -770,6 +774,19 @@ async def preview_image(
 _CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
 
 
+def _preview_order(labels: list[str], prefer: list[str]) -> list[str]:
+    """Preview pills in ``image.prefer_languages`` order (roadmap P7).
+
+    The preview's sample labels arrive as finished strings ("EN DTS-HD"), so a
+    pill ranks by the best-preferred code among its words; the scan path orders
+    the structured tracks instead (``overlay.order_pills_by_language``).
+    """
+    if not prefer:
+        return labels
+    rank = {code: i for i, code in enumerate(prefer)}
+    return sorted(labels, key=lambda label: min((rank[w] for w in label.split() if w in rank), default=len(prefer)))
+
+
 def _image_config_from_params(
     *,
     position: str = "bottom-left",
@@ -785,6 +802,7 @@ def _image_config_from_params(
     show_audio: str = "true",
     show_subs: str = "true",
     show_rating: str = "true",
+    prefer_languages: str = "",
 ) -> ImageConfig:
     """The ImageConfig the Badge settings controls describe right now.
 
@@ -812,6 +830,7 @@ def _image_config_from_params(
         show_audio_badges=show_audio.lower() not in ("false", "0"),
         show_sub_badges=show_subs.lower() not in ("false", "0"),
         show_rating_badge=show_rating.lower() not in ("false", "0"),
+        prefer_languages=prefer_languages,
     )
 
 
@@ -851,6 +870,37 @@ async def badge_contrast_check(
         show_rating=show_rating,
     )
     return badge_contrast(cfg_img)
+
+
+_language_cache: dict[str, object] = {"key": None, "value": None}
+
+
+@router.get("/api/languages")
+async def index_languages(request: Request):
+    """Audio/subtitle language codes present in the index, most items first (roadmap P7).
+
+    The pick-list for ``image.prefer_languages``. Read-only. The count walks
+    every row's track JSON, so it is cached until the index changes: keyed on
+    the latest scan and the row count, which a scan or a deletion moves.
+    """
+    _require_user(request)
+    session = get_session()
+    try:
+        last = get_last_scan(session)
+        key = (
+            last.id if last else None,
+            last.completed_at if last else None,
+            session.query(MediaState).count(),
+        )
+        if _language_cache["key"] != key:
+            counts = get_language_counts(session)
+            _language_cache["value"] = [
+                {"code": code, "items": n} for code, n in sorted(counts.items(), key=lambda kv: (-kv[1], kv[0]))
+            ]
+            _language_cache["key"] = key
+    finally:
+        session.close()
+    return {"languages": _language_cache["value"], "preferred": get_config().image.prefer_languages}
 
 
 # ---------------------------------------------------------------------------

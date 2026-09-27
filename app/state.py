@@ -406,6 +406,31 @@ def clear_scan_errors(session: Session) -> None:
     session.commit()
 
 
+def get_language_counts(session: Session) -> dict[str, int]:
+    """Items carrying each audio or subtitle language code, from the index.
+
+    The pick-list source for ``image.prefer_languages`` (roadmap P7): only codes
+    actually present, spelled as the badges spell them. UND and empty are left
+    out -- they never appear on a badge. An item counts once per code, however
+    many of its tracks carry it.
+    """
+    counts: Counter[str] = Counter()
+    rows = session.query(MediaState.audio_tracks, MediaState.subtitle_tracks).yield_per(1000)
+    for audio_json, subs_json in rows:
+        codes: set[str] = set()
+        for raw in (audio_json, subs_json):
+            try:
+                tracks = json.loads(raw or "[]")
+            except ValueError:
+                continue
+            for t in tracks if isinstance(tracks, list) else []:
+                code = (t.get("lang") or "") if isinstance(t, dict) else ""
+                if code and code != "UND":
+                    codes.add(code)
+        counts.update(codes)
+    return dict(counts)
+
+
 def get_stats(session: Session) -> dict:
     total = session.query(MediaState).count()
     with_images = session.query(MediaState).filter(MediaState.image_path.isnot(None)).count()
