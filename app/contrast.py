@@ -160,7 +160,9 @@ def badge_contrast(cfg: ImageConfig) -> dict:
     # same way -- worst over black, white and grey -- whether or not the
     # checkbox is on, so a colour can be checked before it is switched on.
     backup = {
-        name: _badge_entry(getattr(cfg, f"backup_{colour_field}"), bool(getattr(cfg, show_field)), cfg.badge_text_color, alpha)
+        name: _badge_entry(
+            getattr(cfg, f"backup_{colour_field}"), bool(getattr(cfg, show_field)), cfg.badge_text_color, alpha
+        )
         for name, colour_field, show_field in BADGES
     }
 
