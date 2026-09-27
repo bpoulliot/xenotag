@@ -16,6 +16,7 @@ from slowapi import Limiter
 from slowapi.util import get_remote_address
 
 from .. import auth as _auth
+from .. import deleted_items as _deleted_items
 from ..arr_sync import load_report
 from ..clients.jellyfin import JellyfinClient
 from ..clients.radarr import RadarrClient
@@ -879,4 +880,35 @@ async def arr_sync_dry_run(request: Request):
         raise HTTPException(status_code=409, detail="A dry run is already running")
     arr_dry_run_state["running"] = True
     threading.Thread(target=run_arr_dry_run_background, args=(get_config(),), daemon=True).start()
+    return {"status": "started"}
+
+
+# ---------------------------------------------------------------------------
+# Deleted items (roadmap U2)
+# ---------------------------------------------------------------------------
+
+
+@router.get("/api/deleted-items/report")
+async def deleted_items_report(request: Request):
+    """The last deleted-items report -- from a scan, or from a report started below."""
+    _require_user(request)
+    cfg = get_config()
+    return {
+        "mode": cfg.deleted_items.mode,
+        "max_fraction": cfg.deleted_items.max_fraction,
+        "arr_writes_live": cfg.arr_sync.mode == "live",
+        "running": _deleted_items.state["running"],
+        "error": _deleted_items.state["error"],
+        "report": _deleted_items.load_report(),
+    }
+
+
+@router.post("/api/deleted-items/report")
+async def deleted_items_run_report(request: Request):
+    """Work out what the pass would remove. Always report-only, whatever deleted_items.mode says."""
+    _require_user(request)
+    if _deleted_items.state["running"]:
+        raise HTTPException(status_code=409, detail="A deleted-items report is already running")
+    _deleted_items.state["running"] = True
+    threading.Thread(target=_deleted_items.run_report_background, args=(get_config(),), daemon=True).start()
     return {"status": "started"}

@@ -49,6 +49,24 @@ class ArrSyncConfig(BaseModel):
     certification_fallback: bool = False
 
 
+class DeletedItemsConfig(BaseModel):
+    # Roadmap U2: when Jellyfin no longer has an item, its index row and the
+    # managed tags on the Sonarr/Radarr object it owned (same folder) are stale.
+    # Every scan works out what to remove; it ships as a report only.
+    #
+    #   "report": compute and report what would be removed, and change nothing.
+    #       The index is opened read-only and every *arr client is given a
+    #       transport that refuses anything but GET.
+    #   "remove": delete the index rows, and strip the managed tags from the
+    #       *arr objects -- the tags only while arr_sync.mode is "live" too.
+    mode: Literal["report", "remove"] = "report"
+    # Removal refuses when more than this fraction of the index would go. The
+    # first pass over production faced 11.2% (1,187 of 10,585 rows, 2026-09-27),
+    # a backlog nothing had ever cleared; losing a whole media mount would
+    # exceed it. A deliberate mass deletion needs this raised for one scan.
+    max_fraction: float = Field(default=0.15, gt=0, le=1)
+
+
 class ScanConfig(BaseModel):
     schedule: str = "0 3 * * *"
     incremental: bool = True
@@ -271,6 +289,7 @@ class AppConfig(BaseModel):
     sonarr: SonarrConfig = Field(default_factory=SonarrConfig)
     radarr: RadarrConfig = Field(default_factory=RadarrConfig)
     arr_sync: ArrSyncConfig = Field(default_factory=ArrSyncConfig)
+    deleted_items: DeletedItemsConfig = Field(default_factory=DeletedItemsConfig)
     scan: ScanConfig = Field(default_factory=ScanConfig)
     tags: TagsConfig = Field(default_factory=TagsConfig)
     image: ImageConfig = Field(default_factory=ImageConfig)

@@ -22,6 +22,7 @@ def _utcnow() -> datetime:
 
 _engine = None
 _SessionLocal = None
+_db_path: str | None = None
 
 
 class Base(DeclarativeBase):
@@ -93,11 +94,12 @@ def init_db(db_path: str | Path | None = None) -> None:
     never by ``create_all()``: see ``app.migrate`` for what happens to an empty, a
     pre-I3 or a drifted database. A drifted one raises and the app does not start.
     """
-    global _engine, _SessionLocal
+    global _engine, _SessionLocal, _db_path
     from .migrate import upgrade_to_head
 
-    path = db_path or os.environ.get("STATE_DB", "/config/state.db")
+    path = str(db_path or os.environ.get("STATE_DB", "/config/state.db"))
     upgrade_to_head(path)
+    _db_path = path
     _engine = create_engine(f"sqlite:///{path}", connect_args={"check_same_thread": False})
     event.listen(_engine, "connect", _configure_sqlite)
     _SessionLocal = sessionmaker(bind=_engine, autoflush=False, autocommit=False)
@@ -107,6 +109,17 @@ def get_session() -> Session:
     if _SessionLocal is None:
         init_db()
     return _SessionLocal()
+
+
+def current_db_path() -> str:
+    """The ``state.db`` the app's engine is open on (or will open)."""
+    return _db_path or os.environ.get("STATE_DB", "/config/state.db")
+
+
+def read_only_session(db_path: str | Path) -> Session:
+    """A session on ``db_path`` opened ``mode=ro``: SQLite itself refuses any write through it."""
+    engine = create_engine(f"sqlite:///file:{db_path}?mode=ro&uri=true")
+    return sessionmaker(bind=engine)()
 
 
 def upsert_media_state(
