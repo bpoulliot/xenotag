@@ -833,6 +833,8 @@ stacking fails 10, removing the narrowing fails 5, hardwiring the rating again f
 
 Not covered: a tag stack tall enough to reach a rating on the *opposite* edge. That needs a very
 short poster, and bounding pills to the poster generally is [P7]'s containment question.
+*(Measured 2026-09-26 under P7: it happens only on a canvas wider than 2.25:1 at `tv_plus`
+with `normalize_portrait` off.)*
 
 **B1 — FIXED 2026-09-22.** Measured, fixed and re-measured in one session. The measurement
 below was reproduced from scratch first and **agreed with the original to the decimal**, so the
@@ -2049,7 +2051,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | NEEDS DECISION | — |
-| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. | 4 | 3 | NEEDS MEASUREMENT | — |
+| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **NEEDS DECISION** (wrap / shrink / count) · ordering: its own note | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
@@ -2172,6 +2174,113 @@ lists; **(c)** a precedence list per category, video and rating included. **Reco
 item has 35 subtitle languages), and it is one new control rather than four. Per the
 constrained-controls rule it should be a pick-list of the language codes actually present in the
 index, not a free-text box. It changes pill order only — never which pills exist.
+
+**P7 containment — MEASURED 2026-09-26, relabelled NEEDS DECISION.** Probe
+`scripts/measure_pill_containment.py` (`--self-test` in CI). It renders through the real
+`render_badge_groups()`, with groups built by `pipeline._make_badge_groups()` from invented
+`MediaInfo`s, on blank synthetic canvases (no library file, no poster), and reads each render
+three ways: the rectangles from the `placed=` hook (as B10's test does), the text of every pill
+(a read-side wrap of `_pill_tile`), and the pixels painted in exactly each group's fill colour. The
+pixels must agree with the rectangles or the run is void: **0 disagreements in 6,144 renders.**
+The self-test fails both ways: a lone `SD` pill passes; a planted 12-row stack on a 1000×562
+canvas is reported crossing the margin, running off the canvas and covering the opposite-edge
+rating, by both the rectangles and the pixels. A rectangle moved 300 px from its pill and a pill
+missing from the hook are both caught.
+
+*Inputs.* Tag sets shaped on a read-only copy of prod `state.db` (10,583 rows): distinct subtitle
+languages per item p50 1 / p99 12 / p99.9 34 / max 52, audio p99.9 3 / max 21. Longest token is
+`DVB_SUBTITLE`, longest rating `Rated Not Rated`. Built as **p50** (`1080p H.264`, `AAC EN`,
+`SRT EN`, R), **p99** (`SRT` + 12 languages), **p99.9** (`HDR10`, `DD+` + 3, `PGS` + 35) and
+**max** (`4K H.265 HDR10`, `TrueHD` + 20, `AAC` + 1, `PGS` + 52, `SRT` + 3, `DVB_SUBTITLE`,
+`Rated Not Rated`). Grid: 2:3, 27:40, 16:9, 1:1 **and 2.39:1** (added: it is past the breakpoint
+below) × widths 300/600/1000/2000 × all three `badge_size`s × all 16 badge/rating corner pairs.
+`normalize_portrait` runs both off and on for the aspects it pads, and the canvas used is the one
+`apply_overlay()` would hand the renderer (`_pad_to_portrait()`'s own output). 6,144 renders,
+529 s.
+
+*Violations (a pill crossing the margin, or a tag overlapping the rating or another row):*
+
+| aspect | `normalize_portrait` | desktop | tv | tv_plus |
+|---|---|---|---|---|
+| 2:3, 27:40 | (never padded) | 0 / 512 | 0 / 512 | 0 / 512 |
+| 16:9, 1:1 | off | 0 / 512 | 0 / 512 | 0 / 512 |
+| 16:9, 1:1 | on (default) | 0 / 512 | 0 / 512 | 0 / 512 |
+| 2.39:1 | on (default) | 0 / 256 | 0 / 256 | 0 / 256 |
+| **2.39:1** | **off** | 0 / 256 | 0 / 256 | **192 / 256** |
+
+(Each cell covers the 4 tag sets × 4 widths × 16 corner pairs for its aspects.) All 192 violating
+renders are 2.39:1 with padding off at `tv_plus`, at **every** width and **every tag set, p50
+included**: it is the fixed row count that overflows, not the tags. In the 4 same-corner pairs (64
+renders) the stack climbs off the canvas, putting 2–3 pills past the edge; the worst case is 3,
+for example p99.9 at 2000 px with tags and rating both top-right. In the 8 different-edge pairs
+(128 renders) the tag stack covers the rating on the opposite edge. That is B10's
+"not covered" case, and it is real here. The 4 same-edge, opposite-side pairs pass.
+
+*What guarantees containment, and where it stops.*
+ - **Horizontal: guaranteed, by hiding.** `_render_group()` draws each group as **one row**
+   bounded by `max_row_w`. A label wider than the row is cut by `_truncate_label()` (`PGS EN JA…`),
+   pills past the row are replaced by a `…` pill, and a single token wider than the row (the
+   `_truncate_label()` fallback) is refused by the packer and becomes `…`. None of these can
+   overflow, and all of them hide information.
+ - **Vertical: nothing in the code bounds it.** It holds because the pipeline draws at most 3 tag
+   rows plus 1 rating row, and row height scales with poster width. So containment depends on
+   aspect alone. `--breakpoints` (1000 px wide, heaviest set, worst corner pair) gives the widest
+   canvas that still fits as **3.12:1 at desktop, 2.60:1 at tv, 2.25:1 at tv_plus**.
+   `normalize_portrait` (on by default, and on in prod) pads anything wider than 0.717:1 to 2:3,
+   so at defaults every aspect is contained. The preview route always renders 280×420. With
+   padding off, a target image wider than the breakpoint overflows. Prod runs `desktop` with
+   padding on, so prod is not exposed.
+
+*Hidden metadata: the part the P7+U8 direction rejects.* Tokens hidden out of tokens in the set,
+worst corner pair. It does not depend on width or aspect: at 300 px and 2000 px the counts differ
+by at most 1.
+
+| tag set | desktop | tv | tv_plus | labels dropped whole |
+|---|---|---|---|---|
+| p50 | 0 / 8 | 0 / 8 | 0 / 8 | 0 |
+| p99 | 9 / 19 | 11 / 19 | 12 / 19 | 0 |
+| p99.9 | 32 / 45 | 34 / 45 | 36 / 45 | 1 at tv_plus |
+| max | 70–71 / 87 | 75 / 87 | 77 / 87 | 3 (4 at tv_plus) |
+
+Every p99 render hides something. The worst corner pairs are same-edge, opposite-side: B10's
+narrowed row. The best pairs hide 4 / 6 / 8 of 19 at p99. **Production census** (`--db`, every row
+of the copy rendered at 1000×1500): **0 containment violations.** At `tv`, **136 of 10,583 items
+(1.29%) hide something**: 135 in subtitles and 2 in audio, 28 with a whole label dropped, a median
+of 21 and a maximum of 47 tokens hidden per item. At prod's own layout (`desktop`, tags bottom-left, rating top-left, read by key name from prod `config.yml`): **116 items (1.10%)**, all in subtitles (1 also in audio), 12 with a whole label dropped, a median of 20 and a maximum of 45 tokens hidden. Each census took ~10 min.
+
+*What showing everything would cost* (`--budget`, 1000×1500, default corners). This is arithmetic
+on the renderer's own font metrics and layout parameters, **not a render**, because no such layout
+exists. The columns are the rows today, the rows needed if each group wrapped onto further rows at
+token granularity, the rows the whole poster can hold, and the font size one row per group would
+need, against 56 / 72 / 88 px today:
+
+| tag set | size | rows today | rows if wrapped | rows the poster holds | font for one row |
+|---|---|---|---|---|---|
+| p99 | desktop / tv / tv_plus | 4 | 5 / 5 / 6 | 19 / 16 / 13 | 41.7 / 41.8 / 41.9 px |
+| p99.9 | desktop / tv / tv_plus | 4 | 7 / 8 / 10 | 19 / 16 / 13 | 14.9 px |
+| max | desktop / tv / tv_plus | 4 | 12 / 15 / 18 | 19 / 16 / 13 | 8.7 px |
+
+**Why NEEDS DECISION and not READY.** The margin is never crossed at defaults, so there is no
+plain overflow to fix, except the padding-off 2.39:1 case. Honouring the direction's "nothing
+hidden" is a trade that the code cannot make on its own. **Wrap** shows everything but covers the
+poster: p99.9 at tv_plus takes 10 of the 13 rows the poster holds, and the max item at tv_plus
+does not fit even edge to edge (18 > 13). **Shrink** keeps one row but needs 8.7–14.9 px text for
+the heavy sets, which cannot be read. **Clamp** (today) is bounded but hides, and its `…` does not
+say how much it hid. Every option then needs an **explicit vertical bound**: once rows vary, the
+fixed-row-count guarantee above is gone.
+
+**Options.** **(a)** Wrap, uncapped. **(b)** Shrink to fit, with no floor. **(c)** Keep one row
+per group, but replace `…` with a **counted pill** (`+33`) so nothing disappears without a trace.
+**(d)** Wrap each group up to a **row budget** (e.g. 2 rows), then a counted `+N` pill. **All of
+them** clamp the stack to the canvas height, which fixes the 2.39:1 case: when the rows do not fit,
+fewer rows go to wrapping; the rating is never covered.
+
+**Recommendation: (d), with a 2-row budget.** It shows every pill for most of the 1.29% (p99 needs
+1–2 extra rows), stays bounded on a heavy item, and turns silent hiding into a stated count. It
+also puts the queued `prefer_languages` ordering to work, because the preferred languages are then
+the ones that survive. The build's acceptance test is this probe's grid: zero violations, including
+2.39:1 with padding off. Any count left hidden must appear in a `+N` pill; today's `…` pill must
+not.
 
 ~~**P7 note.** With `show_video_badges`~~ / `show_audio_badges` / `show_sub_badges` /
 `show_rating_badge` all defaulting `True`, plus U4 adding per-language subtitle badges and U7

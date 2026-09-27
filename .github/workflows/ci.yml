@@ -102,6 +102,12 @@ jobs:
       - name: Palette separation sweep (B4 — defaults must stay tellable apart)
         run: python scripts/measure_palette_separation.py
 
+      # P7: renders through render_badge_groups() and proves the rectangle,
+      # text and pixel reads all see a planted overflow and pass a lone pill.
+      # The full grid (~8 min) and the state.db census are manual modes.
+      - name: Pill containment probe self-test
+        run: python scripts/measure_pill_containment.py --self-test
+
       # Catches a hand-edited app/static/ drifting from assets/brand/.
       - name: Brand assets match their sources
         run: python scripts/generate_brand_assets.py --check
