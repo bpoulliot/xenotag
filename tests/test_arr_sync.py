@@ -238,17 +238,18 @@ def test_shipped_default_is_dry_run_without_rating_fallback():
 
 
 def test_default_tag_config_hash_changes_only_by_design():
-    """B5's switches change the hash only when turned on; B9's respelling and B7's
-    language table change it for everyone.
+    """B5's switches change the hash only when turned on; B9's respelling, B7's
+    language table and U5's `xt-interlaced` change it for everyone.
 
-    Before B9 the defaults hashed to 3163f57ce472c152, before B7 to 09d02a2ffe47df66.
-    The vocabulary term moves every install once per bump, on purpose: every library
-    holds the old spellings.
+    Before B9 the defaults hashed to 3163f57ce472c152, before B7 to 09d02a2ffe47df66,
+    before U5 to d0c577fe5620e689. The vocabulary term moves every install once per
+    bump, on purpose: every library holds the old spellings, and U5's tag needs the
+    re-probe only a full scan does.
     """
-    assert pipeline._tag_config_hash(AppConfig()) == "d0c577fe5620e689"
-    assert pipeline._tag_config_hash(AppConfig()) not in ("3163f57ce472c152", "09d02a2ffe47df66")
-    assert pipeline._tag_config_hash(cfg("live")) != "d0c577fe5620e689"
-    assert pipeline._tag_config_hash(cfg("dry_run", cert_fallback=True)) != "d0c577fe5620e689"
+    assert pipeline._tag_config_hash(AppConfig()) == "ed8a1890a06dc045"
+    assert pipeline._tag_config_hash(AppConfig()) not in ("3163f57ce472c152", "09d02a2ffe47df66", "d0c577fe5620e689")
+    assert pipeline._tag_config_hash(cfg("live")) != "ed8a1890a06dc045"
+    assert pipeline._tag_config_hash(cfg("dry_run", cert_fallback=True)) != "ed8a1890a06dc045"
 
 
 # ── trap 1: an *arr id is per instance ──────────────────────────────────────
@@ -700,6 +701,61 @@ def test_index_dry_run_reads_a_copied_index_read_only(tmp_path, monkeypatch):
     assert report["items"]["no_probe_record"] == 1
     assert report["certification_fallback"]["would_fill"] == 1
     assert radarr.writes == [] and db.read_bytes() == before
+
+
+def test_index_dry_run_and_scan_agree_on_xt_interlaced(tmp_path, monkeypatch):
+    """U5: the dry run builds tags from the row, so the row must carry field_order.
+
+    Three items tagged by the scan path (interlaced, progressive, unknown), then the
+    index dry run over the same state.db: the tags each plans must be the scan's,
+    exactly. A fourth row written before revision 0002 (field_order NULL) plans no
+    `xt-interlaced` and raises nothing.
+    """
+    from app import migrate
+
+    db = tmp_path / "state.db"
+    migrate.upgrade_to_head(db)
+    radarr = FakeArr("radarr", [movie(n, i, n, f"/m/{i}") for n, i in enumerate("abcd", 1)])
+    items = [jf_movie(i, i, f"/m/{i}/{i}.mkv", Tmdb=str(n)) for n, i in enumerate("abcd", 1)]
+    planned: dict[str, dict[str, list[str]]] = {"scan": {}, "index": {}}
+    phase = ["scan"]
+    original = ArrTagSync.sync_item
+
+    def recording(self, item, tags_by_kind):
+        planned[phase[0]][item["Id"]] = tags_by_kind["radarr"]
+        return original(self, item, tags_by_kind)
+
+    monkeypatch.setattr(ArrTagSync, "sync_item", recording)
+
+    engine = create_engine(f"sqlite:///{db}")
+    s = sessionmaker(bind=engine)()
+    sync = make_sync(radarr_fakes=[radarr])
+    sync.resolve_all(items)
+    for item, field_order in zip(items[:3], ("tt", "progressive", "unknown"), strict=True):
+        info = MediaInfo("SD", ["EN"], ["eng"], "MPEG-2", None, [AudioTrack("EN", "DD")], [], field_order)
+        folder = tmp_path / item["Id"]
+        folder.mkdir()
+        pipeline._process_one_item(FakeJellyfin(), sync, s, cfg(), item, str(folder / "f.mkv"), "", 1.0, info)
+    s.close()
+    with engine.begin() as conn:  # a row as an image that knows only 0001 wrote it
+        conn.exec_driver_sql(
+            "INSERT INTO media_state (item_id, source, resolution, video_codec, audio_tracks, subtitle_tracks) "
+            """VALUES ('jellyfin:d', 'jellyfin', 'SD', 'MPEG-2', '[{"lang": "EN", "codec": "DD"}]', '[]')"""
+        )
+    engine.dispose()
+
+    def fake_clients(c, *, read_only=False, guards=None):
+        return FakeJellyfin(items), [], [client_for(radarr, "r0", read_only=True)]
+
+    monkeypatch.setattr(pipeline, "_clients_from_config", fake_clients)
+    phase[0] = "index"
+    report = pipeline.run_arr_dry_run(cfg(), db_path=db, store=False)
+
+    assert planned["index"].pop("d") == ["xt-SD", "xt-MPEG-2", "xt-EN", "xt-DD"]
+    assert planned["index"] == planned["scan"]
+    assert planned["scan"]["a"] == ["xt-SD", "xt-MPEG-2", "xt-interlaced", "xt-EN", "xt-DD"]
+    assert "xt-interlaced" not in planned["scan"]["b"] + planned["scan"]["c"]
+    assert report["items"].get("no_probe_record", 0) == 0 and radarr.writes == []
 
 
 # ── B11: the index dry run must not plan items the scan cannot reach ────────

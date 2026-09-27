@@ -22,7 +22,7 @@ from app.clients.jellyfin import JellyfinClient
 from app.config import AppConfig, TagsConfig
 from app.iso639 import ISO639_2_TO_1
 from app.scanner import AudioTrack, MediaInfo, SubTrack
-from app.tagger import build_tags, tag_label
+from app.tagger import INTERLACED_LABEL, build_tags, tag_label
 
 LEGAL = re.compile(r"[a-z0-9-]+")  # Radarr 6.3.0.10514's rule, applied after its own lowercasing
 
@@ -82,6 +82,7 @@ def non_language_vocabulary(tags: TagsConfig) -> set[str]:
         | _hdr_types()
         | _audio_codecs()
         | {tags.dual_audio_tag, tags.multi_audio_tag}
+        | {INTERLACED_LABEL}
         | set(RATINGS)
     )
 

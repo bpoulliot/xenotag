@@ -43,6 +43,7 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 
 ### Metadata Extraction
 - Extracts **resolution** (480p, 720p, 1080p, 4K), **video codec** (H.264, H.265/HEVC, AV1, VP9, etc.), and **HDR type** (HDR10, HDR10+, Dolby Vision, HLG) via `ffprobe`
+- Tags **interlaced** video `xt-interlaced` when ffprobe's field order says so (`tt`/`bb`/`tb`/`bt`). There is no progressive tag, and a stream that declares no field order is not tagged either way — common: about a third of a sampled library, mostly AV1 and HEVC. Tag only, no badge
 - Extracts **audio track languages** and **codecs** (TrueHD, DTS-HD, AC-3, AAC, etc.)
 - Extracts **subtitle track languages** and formats (PGS, SRT, ASS, embedded vs. external)
 - Reads **content rating** from Jellyfin; optionally falls back to the matched Sonarr/Radarr certification (off by default)
@@ -254,7 +255,7 @@ forces no re-tag.
 | `tags.legacy_prefixes` | list | `["mf-"]` | Prefixes from an earlier install to strip on sight — from the media server on every write, and from the local index at startup. A tag carrying `managed_prefix` is never stripped, even if a legacy prefix also matches it. |
 | `tags.dual_audio_tag` | string | `"dual-audio"` | Tag applied when exactly 2 audio languages detected |
 | `tags.multi_audio_tag` | string | `"multi-audio"` | Tag applied when 3+ audio languages detected |
-| `tags.destinations.video` | list | `["poster","jellyfin","sonarr","radarr"]` | Which destinations receive video tags |
+| `tags.destinations.video` | list | `["poster","jellyfin","sonarr","radarr"]` | Which destinations receive video tags (resolution, codec, HDR, `interlaced`; the poster shows no badge for `interlaced`) |
 | `tags.destinations.audio` | list | `["poster","jellyfin","sonarr","radarr"]` | Which destinations receive audio tags |
 | `tags.destinations.subtitles` | list | `["poster","jellyfin"]` | Which destinations receive subtitle tags |
 | `tags.destinations.rating` | list | `["poster"]` | Which destinations receive rating tags |

@@ -201,6 +201,7 @@ def _process_one_item(
         content_rating,
         cfg.tags,
         destination="jellyfin",
+        field_order=info.field_order,
     )
     sonarr_tags = build_tags(
         info.resolution,
@@ -211,6 +212,7 @@ def _process_one_item(
         content_rating,
         cfg.tags,
         destination="sonarr",
+        field_order=info.field_order,
     )
     radarr_tags = build_tags(
         info.resolution,
@@ -221,6 +223,7 @@ def _process_one_item(
         content_rating,
         cfg.tags,
         destination="radarr",
+        field_order=info.field_order,
     )
 
     try:
@@ -262,6 +265,7 @@ def _process_one_item(
         audio_tracks=[{"lang": t.lang, "codec": t.codec} for t in info.audio_tracks],
         subtitle_tracks=[{"lang": t.lang, "format": t.format, "embedded": t.embedded} for t in info.subtitle_tracks],
         content_rating=content_rating,
+        field_order=info.field_order,
     )
 
     return image_modified
@@ -671,9 +675,19 @@ def run_arr_dry_run(
                     continue
                 audio, subs = _tracks_from_row(row)
                 rating = jf_rating or arr_cert or None
+                # The same inputs the scan tagged with, read back from the row -- including
+                # field_order, NULL on a row not re-probed since U5 (so no `xt-interlaced`).
                 tags = {
                     kind: build_tags(
-                        row.resolution or "unknown", row.video_codec, row.hdr_type, audio, subs, rating, cfg.tags, kind
+                        row.resolution or "unknown",
+                        row.video_codec,
+                        row.hdr_type,
+                        audio,
+                        subs,
+                        rating,
+                        cfg.tags,
+                        kind,
+                        field_order=row.field_order,
                     )
                     for kind in ("sonarr", "radarr")
                 }
