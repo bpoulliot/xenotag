@@ -291,6 +291,23 @@ def test_a_row_delete_in_report_mode_is_refused_by_sqlite(tmp_path):
     assert "d-film" in row_ids(db)
 
 
+def test_run_opens_the_index_read_only_in_report_mode(tmp_path, monkeypatch):
+    """The session run_deleted_items hands a report-mode pass cannot delete, whatever the pass does."""
+    jf, db, _, _ = scenario(tmp_path)
+    outcome = {}
+
+    def rogue_run(self):
+        try:
+            self.delete_rows(["d-film"])
+        except OperationalError as exc:
+            outcome["refused"] = str(exc)
+        return self.report()
+
+    monkeypatch.setattr(DeletedItemsPass, "run", rogue_run)
+    run(monkeypatch, cfg("report"), jf, db)
+    assert "readonly" in outcome["refused"] and "d-film" in row_ids(db)
+
+
 def test_remove_refuses_to_run_in_report_mode(tmp_path):
     jf, db, _, _ = scenario(tmp_path)
     session = deleted_items.read_only_session(db)
