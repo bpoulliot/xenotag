@@ -147,6 +147,10 @@ class _Jellyfin:
     def get_items(self, library_ids=None):
         return self.items
 
+    def get_current_tags(self, item_ids):
+        tags = {i["Id"]: i.get("Tags") or [] for i in self.items}
+        return {i: list(tags[i]) for i in item_ids if i in tags}
+
     def set_managed_tags(self, item_id, item, prefix, tags, fallback_rating="", legacy_prefixes=()):
         self.tag_writes[item_id] = list(tags)
 

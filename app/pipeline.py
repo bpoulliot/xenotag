@@ -196,8 +196,8 @@ def _warn_tag_drift(session: object, jf: JellyfinClient, item: dict, prefix: str
     """Log one WARNING line if the item's managed tags changed since xenotag wrote them.
 
     Observes only; the write that follows replaces them as before. The tags are
-    ``jf.get_tags(item)`` -- the copy ``set_managed_tags()`` works from -- so no
-    extra request is made, and whatever feeds that write feeds this check.
+    ``jf.get_tags(item)`` -- the copy ``set_managed_tags()`` works from, read by
+    id just before (B18) -- so whatever feeds that write feeds this check.
     """
     item_id = item.get("Id", "")
     try:
@@ -276,9 +276,17 @@ def _process_one_item(
         field_order=info.field_order,
     )
 
-    _warn_tag_drift(session, jf, item, prefix)
     try:
-        jf.set_managed_tags(item_id, item, prefix, jf_tags, fallback_rating=arr_cert, legacy_prefixes=legacy_prefixes)
+        # B18: the listing's Tags can be stale, so the tags kept and compared are
+        # read by id; an item that read cannot find is not written.
+        current = jf.get_current_tags([item_id])
+        if item_id not in current:
+            raise LookupError("not returned by /Items?Ids=")
+        tag_item = {**item, "Tags": current[item_id]}
+        _warn_tag_drift(session, jf, tag_item, prefix)
+        jf.set_managed_tags(
+            item_id, tag_item, prefix, jf_tags, fallback_rating=arr_cert, legacy_prefixes=legacy_prefixes
+        )
     except Exception as exc:
         log.warning("Jellyfin tag error for %s: %s", name, exc)
 

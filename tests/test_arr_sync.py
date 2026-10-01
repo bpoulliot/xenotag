@@ -583,6 +583,11 @@ class FakeJellyfin:
         self.items = list(items)
         self.writes: list[tuple] = []
 
+    def get_current_tags(self, item_ids):
+        """Every id is served (B18): an item it lists keeps its ``Tags``, any other has none."""
+        tags = {i.get("Id"): i.get("Tags") or [] for i in self.items}
+        return {i: list(tags.get(i, [])) for i in item_ids}
+
     def set_managed_tags(self, item_id, item, prefix, tags, fallback_rating="", legacy_prefixes=()):
         self.writes.append((item_id, tuple(tags), fallback_rating))
 

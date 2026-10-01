@@ -140,6 +140,20 @@ class JellyfinClient:
     def get_tags(self, item: dict) -> list[str]:
         return item.get("Tags") or []
 
+    def get_current_tags(self, item_ids: list[str], batch_size: int = 100) -> dict[str, list[str]]:
+        """Each item's ``Tags`` as ``/Items?Ids=`` serves them, batched (B18).
+
+        The recursive listing ``get_items()`` reads can serve stale ``Tags``
+        (Jellyfin 10.11.10 did, for every item changed since some point), while
+        ``Ids=`` was current. An id Jellyfin does not return is absent here.
+        """
+        current: dict[str, list[str]] = {}
+        for start in range(0, len(item_ids), batch_size):
+            data = self._get("/Items", Ids=",".join(item_ids[start : start + batch_size]), Fields="Tags")
+            for item in data.get("Items", []):
+                current[item.get("Id", "")] = item.get("Tags") or []
+        return current
+
     def get_item_by_id(self, item_id: str) -> dict:
         """Fetch full item metadata via list endpoint (direct /Items/{id} requires extra auth in 10.9+)."""
         data = self._get("/Items", Ids=item_id, Fields="Tags,Genres,Studios,ProviderIds,Overview,OfficialRating")
