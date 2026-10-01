@@ -38,7 +38,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **LIVE 2026-09-26** (v1.7.0) — all five instances written and read back | — |
 | B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | **FIXED 2026-09-27; LIVE (v1.9.0)** | — |
 | B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | **FIXED 2026-09-27; LIVE (v1.9.0)** — production re-tagged 2026-09-27 11:41–12:52Z and read back | — |
-| B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | READY | — |
+| B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | **FIXED 2026-10-01** — merged, not released; still nil in production until U11 | — |
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27; LIVE (v1.8.0)** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged; production re-tagged 2026-09-27 09:00–10:15Z | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
@@ -795,6 +795,29 @@ refresh (B12's note).
 **Where things are:** `~/docker/xenotag/b9-retag-20260927/` (its README lists every snapshot and
 script). **Back out** (not needed): redeploy `:1.7.0` — its hash differs, so its first scan
 re-tags to the old spelling, which Radarr refuses again.
+
+**B8 — FIXED 2026-10-01 (merged, not released).** Built as the spec below says.
+`_resolve_webhook_jf_item()` takes Sonarr's `series.path` / Radarr's `movie.folderPath`, lists
+`JellyfinClient.get_item_paths("Series"|"Movie")` (recursive, `Fields=Path` only, paged like the
+scan's listing) and keeps the items with `_norm_path(path) in item_folders(item)` — B5's helpers,
+imported from `app/arr_sync.py`. Exactly one match → `get_item_by_id()` and processed; none → INFO
+"not in Jellyfin yet; the next scan will reach it"; more than one → WARNING naming the ids, nothing
+processed; no path in the payload → None with no request at all. `find_item_by_provider_id()` is
+deleted; nothing else called it. Part 2: `get_item_by_id()` requests `ITEM_FIELDS`.
+
+`tests/test_webhook_resolution.py` (14) runs the real client against a mock Jellyfin that, like the
+real one, honours only `IncludeItemTypes` and `Ids=`: HD/4K films and series sharing a Tmdb/Tvdb id
+each resolve to the payload's folder; trailing slashes match; a film payload pointed at a series
+item's folder (and the reverse) matches nothing, and the listing asks for `Movie`/`Series` with
+`Fields=Path`; a miss sends no provider-id query; two items in one folder process none; the Jellyfin
+branch asks for `ITEM_FIELDS`; and `handle_webhook()` hands both a Jellyfin and a Radarr event's
+item to `_process_one_item()` with its own file. On the old code 13 of 14 fail. README's webhook
+section now says how an event is matched and that a miss waits for the scan.
+
+**Left as it was:** the listing ignores `jellyfin.library_ids` and `scan.path_filters`, as the
+provider-id lookup did, so a webhook can process an item a scan would skip. The spec did not ask
+for it; if U11 wires a webhook, decide it there. **Value is still nil** in production: no \*arr
+has a webhook and Jellyfin has no webhook plugin (U11).
 
 **B8 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
