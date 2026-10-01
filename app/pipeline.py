@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from . import metrics
-from .arr_sync import MODE_DRY_RUN, MODE_LIVE, ArrTagSync, store_report
+from .arr_sync import MODE_DRY_RUN, MODE_LIVE, ArrTagSync, _norm_path, item_folders, store_report
 from .clients.jellyfin import JellyfinClient
 from .clients.radarr import RadarrClient
 from .clients.readonly import ReadOnlyTransport
@@ -807,29 +807,48 @@ def run_incremental_scan(cfg: AppConfig) -> None:
     _run_scan_recorded(cfg, incremental=True)
 
 
+# Where each *arr's webhook names the object's folder (B8, captured from Sonarr
+# 4.0.18 and Radarr 6.3.0): (payload key, path field, Jellyfin item type).
+_WEBHOOK_FOLDERS = {
+    "sonarr": ("series", "path", "Series"),
+    "radarr": ("movie", "folderPath", "Movie"),
+}
+
+
 def _resolve_webhook_jf_item(jf: JellyfinClient, source: str, payload: dict) -> dict | None:
-    """Resolve the Jellyfin item dict from an inbound webhook payload."""
+    """Resolve the Jellyfin item dict from an inbound webhook payload.
+
+    Sonarr/Radarr resolve by folder only (B8): no Jellyfin ``/Items`` parameter
+    filters by provider id (10.11.10 and 12.1.0 return the whole library), and a
+    provider id cannot tell an HD film from its 4K twin; the folder can. The match
+    is B5's -- ``item_folders()`` against the normalised payload path.
+    """
     if source == "jellyfin":
         item_id = payload.get("ItemId") or payload.get("item_id")
         if not item_id:
             return None
         return jf.get_item_by_id(item_id) or None
 
-    if source == "sonarr":
-        series = payload.get("series") or {}
-        tvdb_id = series.get("tvdbId")
-        if tvdb_id:
-            return jf.find_item_by_provider_id("Tvdb", str(tvdb_id))
+    if source not in _WEBHOOK_FOLDERS:
         return None
-
-    if source == "radarr":
-        movie = payload.get("movie") or {}
-        tmdb_id = movie.get("tmdbId")
-        if tmdb_id:
-            return jf.find_item_by_provider_id("Tmdb", str(tmdb_id))
+    key, field, item_type = _WEBHOOK_FOLDERS[source]
+    folder = _norm_path((payload.get(key) or {}).get(field))
+    if not folder:
         return None
-
-    return None
+    matches = [item for item in jf.get_item_paths(item_type) if folder in item_folders(item)]
+    if not matches:
+        log.info("Webhook %s: %s is not in Jellyfin yet; the next scan will reach it", source, folder)
+        return None
+    if len(matches) > 1:
+        log.warning(
+            "Webhook %s: %d Jellyfin items in %s (%s); processing none",
+            source,
+            len(matches),
+            folder,
+            ", ".join(m.get("Id", "") for m in matches),
+        )
+        return None
+    return jf.get_item_by_id(matches[0].get("Id", "")) or None
 
 
 def handle_webhook(cfg: AppConfig, source: str, payload: dict) -> None:

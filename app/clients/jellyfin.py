@@ -111,11 +111,21 @@ class JellyfinClient:
                     merged.append(item)
         return merged
 
-    def _fetch_items(self, parent_id: str | None = None) -> list[dict]:
+    def get_item_paths(self, item_type: str) -> list[dict]:
+        """Every Movie or Series with ``Path`` only, for resolving a webhook by folder (B8).
+
+        No ``MediaSources``: on production that made the listing 38.7 MB / 17 s
+        instead of 14.6 MB / 0.3 s, and ``Path`` is all ``item_folders()`` needs.
+        """
+        return self._fetch_items(item_types=item_type, fields="Path")
+
+    def _fetch_items(
+        self, parent_id: str | None = None, item_types: str = "Movie,Series", fields: str = ITEM_FIELDS
+    ) -> list[dict]:
         params: dict[str, Any] = {
             "Recursive": "true",
-            "IncludeItemTypes": "Movie,Series",
-            "Fields": ITEM_FIELDS,
+            "IncludeItemTypes": item_types,
+            "Fields": fields,
             "Limit": 500,
             "StartIndex": 0,
         }
@@ -155,8 +165,12 @@ class JellyfinClient:
         return current
 
     def get_item_by_id(self, item_id: str) -> dict:
-        """Fetch full item metadata via list endpoint (direct /Items/{id} requires extra auth in 10.9+)."""
-        data = self._get("/Items", Ids=item_id, Fields="Tags,Genres,Studios,ProviderIds,Overview,OfficialRating")
+        """Fetch full item metadata via list endpoint (direct /Items/{id} requires extra auth in 10.9+).
+
+        ``ITEM_FIELDS``, as the scan's listing asks: it carries ``Path``, without
+        which a webhook's item never has a file to probe (B8).
+        """
+        data = self._get("/Items", Ids=item_id, Fields=ITEM_FIELDS)
         items = data.get("Items", [])
         return items[0] if items else {}
 
@@ -207,18 +221,6 @@ class JellyfinClient:
             )
         except Exception as exc:
             log.warning("Jellyfin refresh failed for %s: %s", item_id, exc)
-
-    def find_item_by_provider_id(self, provider: str, value: str) -> dict | None:
-        """Find a Movie or Series by provider ID (e.g. provider='Tvdb', value='81189')."""
-        data = self._get(
-            "/Items",
-            Recursive="true",
-            IncludeItemTypes="Movie,Series",
-            Fields=ITEM_FIELDS,
-            AnyProviderIdEquals=f"{provider}.{value}",
-        )
-        items = data.get("Items", [])
-        return items[0] if items else None
 
     def upload_image(self, item_id: str, image_bytes: bytes, content_type: str = "image/jpeg") -> None:
         """Upload image bytes directly to Jellyfin as the Primary image (API fallback)."""
