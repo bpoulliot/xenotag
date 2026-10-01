@@ -52,7 +52,15 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | NEEDS DECISION | — |
 | B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | NEEDS DECISION | — |
 | B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | NEEDS DECISION | — |
-| B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | READY | — |
+| B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **FIXED 2026-10-01** — merged, not released | — |
+
+**B22 — FIXED 2026-10-01 (merged, not released).** As specified: `pipeline._run_scan_recorded()`
+calls `progress.finish(error=str(exc))` in its `except` before recording the failure and
+re-raising, so the lock is released and the UI shows the error. `tests/test_scan_lock.py` raises
+`RuntimeError("database is locked")` out of a first full and a first incremental scan and requires
+a **second** scan to run; both fail with the fix removed (the second call returns at
+`Scan already in progress, skipping`). A scan that exits normally still finishes itself, error and
+all (its own test). No scan-behaviour change beyond the raising path.
 
 **B22 — FILED 2026-09-27, found while building I5. Not fixed here. READY.** Demonstrated on
 the I5 branch: with `_run_scan` replaced by one that raises `RuntimeError("database is locked")`,
