@@ -421,7 +421,9 @@ Xenotag can process a single item immediately when Sonarr, Radarr, or Jellyfin f
 
 **Endpoint:** `POST /webhook/{source}` where `{source}` is `sonarr`, `radarr`, or `jellyfin`
 
-Configure the webhook URL in your *arr application's Connect settings. Xenotag will resolve the Jellyfin item, run `ffprobe`, apply tags, and update the poster overlay — all within seconds of the download completing.
+Configure the webhook URL in your *arr application's Connect settings. Xenotag will resolve the Jellyfin item, run `ffprobe`, apply tags, and update the poster overlay.
+
+A Sonarr or Radarr event is matched to its Jellyfin item **by folder** — the payload's `series.path` / `movie.folderPath` — so an HD film and its 4K twin each resolve to their own copy. If Jellyfin has no item in that folder yet (it has not picked up a new import), or more than one, the event is logged and skipped; the next scheduled scan reaches the item. A Jellyfin event carries the item id directly.
 
 ---
 

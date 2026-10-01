@@ -25,12 +25,19 @@ ROW = ["xt-1080p", "xt-H264", "xt-EN", "xt-AAC", "xt-PG"]
 
 
 class FakeJellyfin:
-    """Records every write; ``get_tags`` is the real client's (it reads the item dict)."""
+    """Records every write; ``get_tags`` is the real client's (it reads the item dict).
+
+    ``current`` is what ``/Items?Ids=`` serves (B18); ``_process`` makes it the item's own tags.
+    """
 
     get_tags = JellyfinClient.get_tags
 
-    def __init__(self):
+    def __init__(self, current=None):
+        self.current = dict(current or {})
         self.writes: list[tuple] = []
+
+    def get_current_tags(self, item_ids):
+        return {i: list(self.current[i]) for i in item_ids if i in self.current}
 
     def set_managed_tags(self, item_id, item, prefix, tags, fallback_rating="", legacy_prefixes=()):
         self.writes.append(("tags", item_id, tuple(item.get("Tags") or []), prefix, tuple(tags), fallback_rating))
@@ -64,7 +71,7 @@ def _info(codec="H.264"):
 def _process(session, item, tmp_path, info=None):
     cfg = AppConfig()
     arr = ArrTagSync(cfg, [], [])
-    jf = FakeJellyfin()
+    jf = FakeJellyfin({item["Id"]: item["Tags"]})
     folder = tmp_path / item["Id"]
     folder.mkdir(exist_ok=True)
     pipeline._process_one_item(jf, arr, session, cfg, item, str(folder / "f.mkv"), "", 1.0, info or _info())

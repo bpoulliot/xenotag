@@ -38,7 +38,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **LIVE 2026-09-26** (v1.7.0) — all five instances written and read back | — |
 | B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | **FIXED 2026-09-27; LIVE (v1.9.0)** | — |
 | B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | **FIXED 2026-09-27; LIVE (v1.9.0)** — production re-tagged 2026-09-27 11:41–12:52Z and read back | — |
-| B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | READY | — |
+| B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | **FIXED 2026-10-01** — merged, not released; still nil in production until U11 | — |
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27; LIVE (v1.8.0)** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged; production re-tagged 2026-09-27 09:00–10:15Z | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
@@ -48,11 +48,19 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | READY | — |
 | B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | NEEDS DECISION | — |
 | B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | NEEDS DECISION | — |
-| B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | READY | — |
+| B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | **FIXED 2026-10-01** — merged, not released | — |
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | NEEDS DECISION | — |
 | B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | NEEDS DECISION | — |
 | B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | NEEDS DECISION | — |
-| B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | READY | — |
+| B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **FIXED 2026-10-01** — merged, not released | — |
+
+**B22 — FIXED 2026-10-01 (merged, not released).** As specified: `pipeline._run_scan_recorded()`
+calls `progress.finish(error=str(exc))` in its `except` before recording the failure and
+re-raising, so the lock is released and the UI shows the error. `tests/test_scan_lock.py` raises
+`RuntimeError("database is locked")` out of a first full and a first incremental scan and requires
+a **second** scan to run; both fail with the fix removed (the second call returns at
+`Scan already in progress, skipping`). A scan that exits normally still finishes itself, error and
+all (its own test). No scan-behaviour change beyond the raising path.
 
 **B22 — FILED 2026-09-27, found while building I5. Not fixed here. READY.** Demonstrated on
 the I5 branch: with `_run_scan` replaced by one that raises `RuntimeError("database is locked")`,
@@ -160,6 +168,34 @@ next to the generated table; **(c)** give language tags their own namespace (`xt
 subtitles already have `sub-`) — a full vocabulary rename on every item. **Recommendation:
 (a)**, revisited only if a library ever carries one of them; (c) is the only clean fix and costs
 a re-tag of everything for no item today.
+
+**B18 — FIXED 2026-10-01 (merged, not released).** `JellyfinClient.get_current_tags(ids)` reads
+`GET /Items?Ids=…&Fields=Tags`, 100 ids a request, and returns `{id: Tags}` (an id Jellyfin does not
+return is absent). `_process_one_item()` calls it for the item **immediately before** the write and
+hands that copy to both U9's drift check and `set_managed_tags()`, so the non-managed tags kept and
+the drift compared are what Jellyfin holds now. An item the read cannot find, or a read that raises,
+is **not written** and is logged as a `Jellyfin tag error` — the same handling a failed write already
+gets; falling back to the listing would bring the defect back silently. (`tags_applied` is still
+recorded either way: that is B17, NEEDS DECISION, untouched.)
+
+*One call per item, not one batch per scan.* Items are written one at a time as their probes finish
+(a full scan takes over an hour on production), so a batch read up front would be about as stale as
+the listing; the client method is batched for callers that read many items (B17's read-back). Cost:
+one small GET per processed item (`Fields=Tags` only), next to the POST and refresh each already makes.
+
+`tests/test_current_tags.py` drives the real client over a mock transport whose listing copy is stale
+and whose `Ids=` read is current: the write keeps an operator tag only the `Ids=` read has and drops
+one only the listing has; a stale listing gives no false drift; drift visible only by id is reported;
+an item missing from the read is not POSTed; 250 ids go out as 100/100/50. With the fix removed (the
+listing copy passed through), the first three fail. Not measured on production: whether the listing
+goes stale again after a Jellyfin restart; this fix no longer depends on it.
+
+**Not changed, and worth knowing.** `set_managed_tags()` also writes back `Name`, `OfficialRating`,
+`Genres`, `Studios`, `Taglines`, `LockData`/`LockedFields` and `ProviderIds` from the listing copy.
+Only `Tags` was measured stale; if the listing caches the whole item, a write could revert those too.
+Not measured, so not fixed here — the B9 probes in `~/docker/xenotag/b9-retag-20260927/` can compare
+those fields between the listing and `Ids=`. `scripts/audit_legacy_tags.py --live` (U1) still counts
+Jellyfin's tags from the listing; its Jellyfin numbers inherit B18's staleness.
 
 **B18 — FILED 2026-09-27, found while reading back B9's re-tag. Not fixed here. READY.**
 
@@ -759,6 +795,29 @@ refresh (B12's note).
 **Where things are:** `~/docker/xenotag/b9-retag-20260927/` (its README lists every snapshot and
 script). **Back out** (not needed): redeploy `:1.7.0` — its hash differs, so its first scan
 re-tags to the old spelling, which Radarr refuses again.
+
+**B8 — FIXED 2026-10-01 (merged, not released).** Built as the spec below says.
+`_resolve_webhook_jf_item()` takes Sonarr's `series.path` / Radarr's `movie.folderPath`, lists
+`JellyfinClient.get_item_paths("Series"|"Movie")` (recursive, `Fields=Path` only, paged like the
+scan's listing) and keeps the items with `_norm_path(path) in item_folders(item)` — B5's helpers,
+imported from `app/arr_sync.py`. Exactly one match → `get_item_by_id()` and processed; none → INFO
+"not in Jellyfin yet; the next scan will reach it"; more than one → WARNING naming the ids, nothing
+processed; no path in the payload → None with no request at all. `find_item_by_provider_id()` is
+deleted; nothing else called it. Part 2: `get_item_by_id()` requests `ITEM_FIELDS`.
+
+`tests/test_webhook_resolution.py` (14) runs the real client against a mock Jellyfin that, like the
+real one, honours only `IncludeItemTypes` and `Ids=`: HD/4K films and series sharing a Tmdb/Tvdb id
+each resolve to the payload's folder; trailing slashes match; a film payload pointed at a series
+item's folder (and the reverse) matches nothing, and the listing asks for `Movie`/`Series` with
+`Fields=Path`; a miss sends no provider-id query; two items in one folder process none; the Jellyfin
+branch asks for `ITEM_FIELDS`; and `handle_webhook()` hands both a Jellyfin and a Radarr event's
+item to `_process_one_item()` with its own file. On the old code 13 of 14 fail. README's webhook
+section now says how an event is matched and that a miss waits for the scan.
+
+**Left as it was:** the listing ignores `jellyfin.library_ids` and `scan.path_filters`, as the
+provider-id lookup did, so a webhook can process an item a scan would skip. The spec did not ask
+for it; if U11 wires a webhook, decide it there. **Value is still nil** in production: no \*arr
+has a webhook and Jellyfin has no webhook plugin (U11).
 
 **B8 — FILED 2026-09-25, found while fixing B5. Not fixed here.**
 
