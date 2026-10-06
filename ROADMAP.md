@@ -43,16 +43,23 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
-| B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | NEEDS DECISION | — |
+| B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **READY (decided 2026-10-05)** | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | READY | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | READY | — |
-| B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | NEEDS DECISION | — |
-| B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | NEEDS DECISION | — |
+| B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | **READY (decided 2026-10-05)** | — |
+| B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **READY (decided 2026-10-05); BLOCKED on B18** | — |
 | B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | READY | — |
-| B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | NEEDS DECISION | — |
-| B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | NEEDS DECISION | — |
-| B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | NEEDS DECISION | — |
+| B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | **CLOSED (decided 2026-10-05)** — accept the overlap; the pinning test stays | — |
+| B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | **READY (decided 2026-10-05)** | — |
+| B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | **READY (decided 2026-10-05)** | — |
 | B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | READY | — |
+
+**Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
+sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
+its fix reads the item back by `Ids=` (B18, below). **B21, B13 and B20 (also relabelled READY
+below) must merge before the next release**: B13's rule change folds into `_tag_config_hash()`, so
+the first scan after it is a forced full re-tag with live `*arr` writes (as B9's and B7's were) —
+the release note must say so.
 
 **B22 — FILED 2026-09-27, found while building I5. Not fixed here. READY.** Demonstrated on
 the I5 branch: with `_run_scan` replaced by one that raises `RuntimeError("database is locked")`,
@@ -123,6 +130,11 @@ and [P6]'s probe re-runs unchanged — its self-test's end-to-end check is exact
 and fails today. Either (a) or (b) moves every poster saved below 100% toward the opacity it
 names (a saved 0.65 renders at an effective ~0.42 today).
 
+**OPERATOR DECISION 2026-10-05:** (b) — composite the pill correctly (`overlay.alpha_composite`),
+keep today's glow pixels; at 100% posters stay as they are (byte-identical at 100% is not yet
+confirmed by a render). Relabelled **READY**; must merge before the next release — see the
+build-order note above.
+
 **B20 — FILED 2026-09-27, found while fixing B7. Not fixed here. NEEDS DECISION.**
 
 B7's operator decision sends a language tag that is not 2–3 ASCII letters to `UND` with a
@@ -142,6 +154,9 @@ the generated table would need to carry them. **Recommendation: (b).** The brack
 ISO 639-2 code already, so nothing is guessed; bare names (c) are a lookup by English spelling,
 which is a new vocabulary. The census: `scripts/measure_language_renames.py`.
 
+**OPERATOR DECISION 2026-10-05:** (b) — accept `Name[xxx]` and read the bracketed code. Relabelled
+**READY**; must merge before the next release — see the build-order note above.
+
 **B19 — FILED 2026-09-27, found while fixing B7. Not fixed here. NEEDS DECISION.**
 
 B7 made every language tag its ISO 639-1 code, from the complete table. Three of those codes
@@ -160,6 +175,12 @@ next to the generated table; **(c)** give language tags their own namespace (`xt
 subtitles already have `sub-`) — a full vocabulary rename on every item. **Recommendation:
 (a)**, revisited only if a library ever carries one of them; (c) is the only clean fix and costs
 a re-tag of everything for no item today.
+
+**OPERATOR DECISION 2026-10-05:** (a) — accept the overlap (Sindhi `SD`, Divehi `DV`, South
+Ndebele `NR`); 0 items today. Relabelled **CLOSED**; revisit only if a library ever carries one of
+the three. The pinning test
+(`test_the_2_letter_codes_that_are_also_other_tags_are_known`) stays, as the guard against a
+fourth collision.
 
 **B18 — FILED 2026-09-27, found while reading back B9's re-tag. Not fixed here. READY.**
 
@@ -215,6 +236,10 @@ films read back **by id** still carry `xt-H.264` after the scan's tag write retu
 refresh was sent — B9's leftovers and new lost updates are indistinguishable from here — and 5 of
 the largest series timed out client-side again (30 s). No new evidence on the options.
 
+**OPERATOR DECISION 2026-10-05:** (a) + (c) — read the item back by `Ids=` (B18) once the refresh
+has settled, retry once, and record `tags_applied` from what was read; record nothing on a failed
+write so the next scan retries. Relabelled **READY**; depends on B18 and builds after it.
+
 **B16 — FILED 2026-09-27 by I13 (CodeQL #8). NEEDS DECISION.**
 
 `auth.bootstrap()` runs at every start; when `auth.password_hash` is empty and `XENOTAG_PASSWORD`
@@ -230,6 +255,10 @@ delete the file on the first password change; (c) refuse to start without `XENOT
 (breaks the `docker run` quickstart); (d) keep logging it, but force a change at first login.
 **Recommendation: (b)** — same first-run experience, the secret lives where `config.yml` already
 does. Needs no schema change.
+
+**OPERATOR DECISION 2026-10-05:** (b) — write the generated first-run password to a 0600 file
+under `/config` (`initial-password`), log only the path, delete the file on the first password
+change. Relabelled **READY**.
 
 **B15 — FILED 2026-09-27 by I13 (CodeQL #6, #7). READY.**
 
@@ -401,6 +430,12 @@ on every item; the pixel numbers were not re-probed).
 No option introduces a tag label: `xt-4k`, `xt-1080p`, `xt-720p`, `xt-480p` and `xt-sd` are all
 legal in Radarr's `[a-z0-9-]` (B9). Value 3→4 (hundreds of items, not two) and Complexity 1→2
 (the delivery question) on this measurement.
+
+**OPERATOR DECISION 2026-10-05:** height-or-width, 5% tolerance, HD classes only (745 items; both
+filed cases move to the class the file lists); DVDs **stay SD**. Delivery: **(a)** — fold a
+resolution-rule version into `_tag_config_hash()`, so the upgrade forces one full re-tag.
+Relabelled **READY**; must merge before the next release, with B20 and B21 — see the build-order
+note above. The forced re-tag writes live `*arr` tags, same as B9's and B7's did.
 
 **B12 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
 
@@ -1776,7 +1811,7 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
 | U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted and collapse what is redundant or never queried. | 4 | 3 | **CLOSED 2026-09-23** — measured, then the operator ruled out cutting tags; what remains is [P7] | — |
 | U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | Override half **CLOSED** · drift-detection half **SHIPPED 2026-09-27** (merged, not released) | — |
-| U11 | **Nothing sends xenotag a webhook.** 0 notifications on all five production \*arrs and no Jellyfin webhook plugin, so U3's event path (and B8's fix) never runs; wiring one adds an event-driven writer to live \*arrs | 2 | 2 | NEEDS DECISION | — |
+| U11 | **Nothing sends xenotag a webhook.** 0 notifications on all five production \*arrs and no Jellyfin webhook plugin, so U3's event path (and B8's fix) never runs; wiring one adds an event-driven writer to live \*arrs | 2 | 2 | **CLOSED (decided 2026-10-05)** — unwired | — |
 
 **U11 — FILED 2026-09-27, found while measuring B8. Not built here.**
 
@@ -1804,6 +1839,9 @@ dormant path is correct, and U3's GitHub #22 closes as built but unused. (2) Wir
 B8 ships: secret, pinned address, `Download`+`Rename`, plus a resolve retry.
 **Recommendation: (1)** unless a day's latency on new imports has actually bothered someone. It
 is the operator's call because it decides whether xenotag becomes event-driven at all.
+
+**OPERATOR DECISION 2026-10-05:** (1) — leave webhooks unwired. B8 still gets fixed (the folder
+resolve) so the path is right if one is ever wired. Relabelled **CLOSED**.
 
 **Sweep 2026-09-26 — U2, U3, U4.**
 
@@ -1936,6 +1974,10 @@ recount, a writable report session, \*arr clients always writable, no bound, del
 **To enable (the operator):** read the production report (Settings → Deleted items, or
 `deleted-items-report.json` beside `state.db`), then set `deleted_items: {mode: remove}` in the YAML
 editor or `config.yml`. The next scan acts; no re-tag is forced. Back out: `mode: report`.
+
+**OPERATOR NOTE 2026-10-05:** the operator will flip `deleted_items: {mode: remove}` once the
+report above is re-run — the report of record is scan 148 (2026-09-27), now roughly 8 days old.
+Readiness unchanged; this just records the re-run that is owed first.
 
 **Not covered:** an \*arr object carrying managed tags whose folder holds no live item and that no
 index row points at (a row removed by hand) is never found — 0 exist today (the cross-check above).
@@ -2240,7 +2282,7 @@ webhook resolves the wrong item.)*
 | I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | READY (measured 2026-09-26) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
 | I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure. **Triaged 2026-09-27:** five are false positives (probes committed); #6/#7 → B15, #8 → B16. What remains is dismissing the five on GitHub with the reasons recorded below | 3 | 1 | READY (measured 2026-09-27) | — |
-| I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | NEEDS DECISION | — |
+| I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **DECIDED 2026-10-05** — waits on the production upgrade | — |
 
 **I14 — FILED 2026-09-27, found while measuring B8. Not fixed here.**
 
@@ -2257,6 +2299,12 @@ not production's version. **Recommendation: (1)**, since dev exists to reproduce
 operator's call because re-seeding replaces the dev library that earlier sessions seeded (Firefly and
 Serenity would have to be re-identified). The sibling trap is already known: `sonarr-dev` pulls
 `:develop` and has to be pinned by an override.
+
+**OPERATOR DECISION 2026-10-05:** not (1) as filed — instead of pinning `jellyfin-dev` back to
+production's current 10.11.10, move it to Jellyfin 12.2 **together with** production's own
+upgrade, when that happens. Production's upgrade is expected "maybe tomorrow"; nothing in this
+repo changes until it does. Relabelled **DECIDED**, waiting on the production upgrade, not
+NEEDS DECISION.
 
 **Sweep 2026-09-26 — I1–I6.**
 
@@ -2830,7 +2878,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **BLOCKED on [B21]** (decided 2026-09-26; work held in PR #95) | — |
-| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **NEEDS DECISION** (wrap / shrink / count) · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
+| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **READY (decided 2026-10-05)** — (d), 2-row budget · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
@@ -3128,6 +3176,9 @@ also puts the `prefer_languages` ordering (shipped 2026-09-27) to work, because 
 the ones that survive. The build's acceptance test is this probe's grid: zero violations, including
 2.39:1 with padding off. Any count left hidden must appear in a `+N` pill; today's `…` pill must
 not.
+
+**OPERATOR DECISION 2026-10-05:** (d), 2-row budget — wrap each group up to 2 rows, then a counted
+`+N` pill; clamp the stack to the canvas height; today's `…` pill goes. Relabelled **READY**.
 
 ~~**P7 note.** With `show_video_badges`~~ / `show_audio_badges` / `show_sub_badges` /
 `show_rating_badge` all defaulting `True`, plus U4 adding per-language subtitle badges and U7
@@ -3579,14 +3630,14 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a READY (dashboard grid overflow) · P4b NEEDS DECISION (header, phone tables) — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a READY (dashboard grid overflow) · P4b **READY for the header only (decided 2026-10-05)**, media browser deferred to the post-feature UI pass — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
 | P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| I7 | pillow-simd acceleration (measured 2026-09-26: overlay ≈ 8–11% of full-scan wall, pillow-simd could save ≤ ~3%; recommend close) | 2 | 3 | NEEDS DECISION | [#20](https://github.com/bpoulliot/xenotag/issues/20) |
+| I7 | pillow-simd acceleration (measured 2026-09-26: overlay ≈ 8–11% of full-scan wall, pillow-simd could save ≤ ~3%; recommend close) | 2 | 3 | **CLOSED (decided 2026-10-05)** | [#20](https://github.com/bpoulliot/xenotag/issues/20) |
 
 > **Renumbered 2026-09-22:** this was a second `I6`, colliding with the ntfy item in Near-term.
 > Referenced as `I6` in anything predating this date, it means whichever of the two fits context.
@@ -3753,6 +3804,10 @@ labels say what would make each one startable.
      now**, and decide (b)–(d) in the post-feature UI pass — a tagger's operator browses this
      table at a desk, and the phone case is checking a scan, which the Overview card covers.
 
+   **OPERATOR DECISION 2026-10-05:** header **(b)** — wrap plus `.nav{margin-left:8px}` below
+   600 px. Media browser **(a)** — leave it; decide (b)–(d) in the post-feature UI pass. Header
+   half relabelled **READY**; the media-browser half stays open, deferred, not NEEDS DECISION.
+
    Not determined: real library data (longest titles, most tags) — the synthetic rows were made
    long on purpose but are not a sample; Preview with a reachable Jellyfin (its sample posters
    come from Jellyfin — here the synthetic backgrounds were used); touch-target sizes; heights
@@ -3831,6 +3886,9 @@ releases wait on the fork tracking upstream. It would also risk P5's byte-identi
 Pillow builds only. If full-scan time ever matters, the lever is the serial consumer:
 moving the overlay off it, or finding out what the other ~310–440 ms/item is. That is not filed,
 because no decision waits on it today.
+
+**OPERATOR DECISION 2026-10-05:** close — pillow-simd is not worth it, as recommended. Relabelled
+**CLOSED**. Closing GitHub #20 to match is the operator's own step, not done here.
 
 **GitHub issues with no roadmap item** (found by the sweep, not assigned IDs here): **#12**
 *Subtitle cleanup* — deletes subtitle files/streams not on a keep-list, a destructive write to
