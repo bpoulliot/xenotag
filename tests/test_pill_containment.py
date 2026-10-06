@@ -428,3 +428,26 @@ def test_the_reference_copy_is_still_the_pre_p7_code():
     texts, _ = _texts_and_image(old_render_badge_groups, Image.new("RGBA", (300, 450)), groups, rating, cfg)
     assert any("…" in t for t in texts), texts
     _ = (_GLOW_MARGIN, _load_font, _place_pill)  # the reference's own dependencies
+
+
+def test_a_label_with_legacy_numeric_languages_is_counted_exactly():
+    """A stale index row can still hold numeric "languages" (`10`, `12`) from file
+    names. Split mid-label, a continuation pill such as `AR 10 UK` must not be
+    read back as one head: the renderer carries each pill's badges instead."""
+    codes = LANGS[:9] + ["10"] + LANGS[9:17] + ["12"] + LANGS[17:22] + ["11"]
+    group = BadgeGroup(["SRT " + " ".join(codes)], ImageConfig().sub_badge_color)
+    for width, size in itertools.product((300, 600, 1000, 2000), SIZES):
+        cfg = ImageConfig(badge_size=size)
+        c = check(render((width, width * 3 // 2), [group], None, cfg))
+        assert c["miscounted"] == 0 and c["order"] == 0, (width, size, c)
+
+
+def test_trimming_for_the_count_pill_counts_carried_badges():
+    """`_close_row()` trims by the badges each pill carries. Trimmed to nothing, a
+    continuation pill `AR 10` is two badges, though its text reads as one head."""
+    font = _load_font(40)
+    fill = ImageConfig().sub_badge_color
+    pill = ("AR 10", ov._pill_width(font, "AR 10", 8), fill, "#ffffff", ("AR", "10"))
+    plus = ov._pill_width(font, "+5", 8)
+    row, left = ov._close_row([pill], plus, [(3, fill, "#ffffff")], font, 8, 10)
+    assert [p[0] for p in row] == ["+5"] and left == []

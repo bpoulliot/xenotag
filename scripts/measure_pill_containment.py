@@ -238,24 +238,37 @@ def atoms(label: str) -> list[str]:
 def hidden_counts(labels: list[str], drawn: list[str]) -> dict:
     """Compare a group's labels with the pill texts drawn in its colour, in order.
 
-    ``+N`` pills are read as counts. A pre-P7 cut label (``PGS EN JA…``) is
-    read without its ``…``, and the ``…`` itself is counted."""
+    ``+N`` pills are read as counts. Every other pill must be a run of the
+    group's own badges, in order -- matched against the labels' badges, never
+    re-parsed from the pill: a continuation pill such as ``AR 10 UK`` (a label
+    holding a legacy numeric language) does not say where its badges split.
+    A pre-P7 cut label (``PGS EN JA…``) is read without its ``…``, and the
+    ``…`` itself is counted."""
     ellipsis = sum(ELLIPSIS in d for d in drawn)
     counted = sum(int(m.group(1)) for d in drawn if (m := COUNT_PILL.fullmatch(d)))
-    shown = [a for d in drawn if d != ELLIPSIS and not COUNT_PILL.fullmatch(d) for a in atoms(d.rstrip(ELLIPSIS))]
+    pills = [d.rstrip(ELLIPSIS).strip() for d in drawn if d != ELLIPSIS and not COUNT_PILL.fullmatch(d)]
     wanted = [(i, a) for i, label in enumerate(labels) for a in atoms(label)]
-    # Leftmost subsequence match: every badge drawn must be one of the group's,
-    # in the group's order.
+    seq = [a for _, a in wanted]
     matched: list[int] = []
     pos = 0
     out_of_order = 0
-    for a in shown:
-        j = next((k for k in range(pos, len(wanted)) if wanted[k][1] == a), None)
-        if j is None:
+    for text in pills:
+        # The earliest run seq[j:j+k] at or after pos that spells this pill.
+        hit = next(
+            (
+                (j, k)
+                for j in range(pos, len(seq))
+                for k in range(1, len(seq) - j + 1)
+                if " ".join(seq[j : j + k]) == text
+            ),
+            None,
+        )
+        if hit is None:
             out_of_order += 1
             continue
-        matched.append(wanted[j][0])
-        pos = j + 1
+        j, k = hit
+        matched.extend(wanted[m][0] for m in range(j, j + k))
+        pos = j + k
     per_label = [matched.count(i) for i in range(len(labels))]
     total = [len(atoms(label)) for label in labels]
     hidden = len(wanted) - len(matched)
@@ -684,6 +697,11 @@ def self_test() -> int:
     expect(old["ellipsis"] == 2 and old["miscounted"] == 3, f"the pre-P7 cut label and … pill are caught {old}")
     expect(hidden_counts(label, ["PGS DE EN", "+2"])["order"] == 1, "badges drawn out of their order are caught")
     expect(hidden_counts(["TrueHD Atmos EN"], ["TrueHD", "+2"])["order"] == 1, "a split two-word codec is caught")
+    legacy = ["SRT VI AR 10 UK EN"]  # a stale row's numeric "language", split mid-label
+    expect(
+        hidden_counts(legacy, ["SRT VI", "AR 10 UK", "+1"])["miscounted"] == 0,
+        "a continuation pill starting with a code before a numeric token is matched as badges",
+    )
 
     # Hidden metadata must be seen: 35 languages in one label on a 300 px poster,
     # and a single token too wide for the row.

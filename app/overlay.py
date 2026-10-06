@@ -271,8 +271,11 @@ def _measure_group_height(
 # whatever still does not fit is counted in a "+N" pill closing its last row.
 _ROW_BUDGET = 2
 
-# One pill as laid out: (text, width px, fill colour, text colour).
-_Pill = tuple[str, int, str, str]
+# One pill as laid out: (text, width px, fill colour, text colour, its badges).
+# The badges are carried, never re-read from the text: a continuation pill's
+# text alone does not say where its badges split (``AR 10 UK`` from a label
+# holding a legacy numeric language would parse as the one head ``AR 10``).
+_Pill = tuple[str, int, str, str, tuple[str, ...]]
 
 
 # A language code as the scanner writes it (`_lang3_to_lang2()`): ISO 639-1, or
@@ -285,8 +288,8 @@ def _atoms(label: str) -> list[str]:
 
     The head is the codec or format and is never split, though it may be two
     words (``TrueHD Atmos``, ``DD+ Atmos``). Everything after it in an audio or
-    subtitle label is a language code. A continuation pill (languages only)
-    takes its first code as its head, which is still one unit.
+    subtitle label is a language code. Labels only: a pill's text is never
+    re-parsed (see `_Pill`).
     """
     tokens = label.split()
     head = tokens[:1]
@@ -307,7 +310,7 @@ def _flow_rows(
     font,
     pad_h: int,
     col_gap: int,
-) -> tuple[list[list[tuple[str, int]]], int]:
+) -> tuple[list[list[tuple[tuple[str, ...], int]]], int]:
     """Flow ``labels`` over ``len(widths)`` rows, row i at most ``widths[i]`` px wide.
 
     The unit is the badge -- a label's codec or format, or one of its language
@@ -318,7 +321,7 @@ def _flow_rows(
     alone once a row has other pills on it. Order is kept throughout, so
     ``prefer_languages`` decides what survives.
 
-    Returns the rows as ``(text, width)`` pills and the number of badges that
+    Returns the rows as ``(badges, width)`` pills and the number of badges that
     did not fit, which the caller counts in a ``+N`` pill. A badge wider than
     every row cannot be drawn at all; it is counted and skipped.
     """
@@ -335,7 +338,7 @@ def _flow_rows(
         if tokens:
             queue.append(tokens)
 
-    rows: list[list[tuple[str, int]]] = [[]]
+    rows: list[list[tuple[tuple[str, ...], int]]] = [[]]
     used = [0]
     for i, tokens in enumerate(queue):
         while tokens:
@@ -354,9 +357,8 @@ def _flow_rows(
                     continue
             if k == 0:
                 break
-            text = " ".join(tokens[:k])
-            w = _pill_width(font, text, pad_h)
-            rows[r].append((text, w))
+            w = _pill_width(font, " ".join(tokens[:k]), pad_h)
+            rows[r].append((tuple(tokens[:k]), w))
             used[r] += gap + w
             tokens = tokens[k:]
             if tokens and has_next:
@@ -394,19 +396,18 @@ def _close_row(
         for n, fill, text in counts:
             if n:
                 label = f"+{n}"
-                out.append((label, _pill_width(font, label, pad_h), fill, text))
+                out.append((label, _pill_width(font, label, pad_h), fill, text, ()))
         return out
 
     def row_width(pills: list[_Pill]) -> int:
         return sum(p[1] for p in pills) + col_gap * max(0, len(pills) - 1)
 
     while row and row_width(row + tail()) > width:
-        text, _, fill, text_color = row.pop()
-        tokens = _atoms(text)
+        _, _, fill, text_color, badges = row.pop()
         counts[0][0] += 1
-        if len(tokens) > 1:
-            text = " ".join(tokens[:-1])
-            row.append((text, _pill_width(font, text, pad_h), fill, text_color))
+        if len(badges) > 1:
+            text = " ".join(badges[:-1])
+            row.append((text, _pill_width(font, text, pad_h), fill, text_color, badges[:-1]))
     closing = tail()
     left: list[tuple[int, str, str]] = []
     while closing and row_width(row + closing) > width:
@@ -452,9 +453,9 @@ def _draw_rows(
             y = img_h - margin - pill_h - y_offset - (n - 1 - i) * (pill_h + row_gap)
         else:
             y = margin + y_offset + i * (pill_h + row_gap)
-        row_w = sum(w for _, w, _, _ in row) + col_gap * (len(row) - 1)
+        row_w = sum(pill[1] for pill in row) + col_gap * (len(row) - 1)
         x = (img_w - margin - row_w) if is_right else margin
-        for text, w, fill, text_color in row:
+        for text, w, fill, text_color, _ in row:
             _place_pill(overlay, (x - gm, y - gm), text, fill, text_color, alpha, font_size, pad_h, pad_v)
             rects.append((x, y, w, pill_h))
             x += w + col_gap
@@ -483,7 +484,9 @@ def _layout_group(
     """
     widths = [row_w - (reserve_w if i == narrow else 0) for i in range(n_rows)]
     flowed, hidden = _flow_rows(group.labels, widths, font, pad_h, col_gap)
-    rows: list[list[_Pill]] = [[(t, w, group.fill_color, group.text_color) for t, w in r] for r in flowed]
+    rows: list[list[_Pill]] = [
+        [(" ".join(badges), w, group.fill_color, group.text_color, badges) for badges, w in r] for r in flowed
+    ]
     rows += [[] for _ in range(n_rows - len(rows))]
     counts = [(hidden, group.fill_color, group.text_color), *counted]
     left: list[tuple[int, str, str]] = []
