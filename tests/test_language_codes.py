@@ -148,6 +148,49 @@ def test_a_malformed_code_is_und_with_a_warning_naming_the_file(code, caplog):
     assert repr(code) in caplog.text
 
 
+# Roadmap B20, decided (b): an old `.ogm` file's `Name[xxx]` is read as its bracketed code,
+# which then goes through the same rule as any code. A bare name is not a code.
+@pytest.mark.parametrize(
+    "tag, label",
+    [("English[eng]", "EN"), ("Japanese[jpn]", "JA"), ("ENGLISH[ENG]", "EN"), (" Persian [per] ", "FA")]
+    + [("Cantonese[yue]", "YUE"), ("English[en]", "EN"), ("Egyptian[egy]", "EGY")],
+)
+def test_a_name_with_a_bracketed_code_reads_the_code(tag, label, caplog):
+    with caplog.at_level(logging.WARNING, logger="app.scanner"):
+        assert _lang3_to_lang2(tag, "/m/ep01.ogm") == label
+    assert caplog.records == []
+
+
+@pytest.mark.parametrize("tag", ["Unknown[und]", "Unknown[unknown]"])
+def test_a_bracketed_no_language_is_und_quietly(tag, caplog):
+    """`[unknown]` is not 2-3 letters, so it is malformed, not `und` -- see the next test."""
+    with caplog.at_level(logging.WARNING, logger="app.scanner"):
+        result = _lang3_to_lang2(tag, "/m/ep01.ogm")
+    assert result == "UND"
+    assert len(caplog.records) == (0 if tag == "Unknown[und]" else 1)
+
+
+@pytest.mark.parametrize("tag", ["Foo[aac]", "Foo[dts]", "None[zxx]"])
+def test_a_bracketed_code_the_rule_refuses_is_und_with_a_warning(tag, caplog):
+    with caplog.at_level(logging.WARNING, logger="app.scanner"):
+        assert _lang3_to_lang2(tag, "/m/ep01.ogm") == "UND"
+    assert len(caplog.records) == 1
+    assert "/m/ep01.ogm" in caplog.text
+
+
+@pytest.mark.parametrize(
+    "tag",
+    # bare names stay UND (B20 decided not (c)); and only exactly `<name>[<2-3 letters>]` is read
+    ["English", "Japanese", "[eng]", "Foo[eng][jpn]", "English[]", "English[e]", "English[engl]"]
+    + ["English[eng", "English eng]", "English[eng]x", "[eng]English", "English[e1]", "English[[eng]]"],
+)
+def test_anything_else_shaped_like_a_name_is_und_with_a_warning(tag, caplog):
+    with caplog.at_level(logging.WARNING, logger="app.scanner"):
+        assert _lang3_to_lang2(tag, "/m/ep01.ogm") == "UND"
+    assert len(caplog.records) == 1
+    assert repr(tag) in caplog.text and "/m/ep01.ogm" in caplog.text
+
+
 def test_zxx_is_und_with_a_warning(caplog):
     with caplog.at_level(logging.WARNING, logger="app.scanner"):
         assert _lang3_to_lang2("zxx", "/m/b.mkv") == "UND"

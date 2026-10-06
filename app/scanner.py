@@ -301,6 +301,8 @@ def _normalize_audio_codec(s: dict) -> str:
 
 
 _LANG_CODE = re.compile(r"[a-z]{2,3}")  # the shape of an ISO 639-1 or 639-2 code, ASCII only
+# `English[eng]`, as old `.ogm` files spell it (roadmap B20): a name, then one bracketed code.
+_NAMED_LANG_CODE = re.compile(r"[^\[\]]+\[([a-z]{2,3})\]")
 
 # Every label a language tag shares the `xt-` namespace with that the scanner itself
 # emits. A 3-letter code with no 2-letter form is kept as itself, and one outside
@@ -329,9 +331,13 @@ def _lang3_to_lang2(lang3: str, source: str | Path | None = None) -> str:
     as itself. `und`/`unknown`/nothing is `UND`. So is `zxx` ("no linguistic
     content") and anything that is not 2-3 ASCII letters (`"eng"`), with a WARNING
     naming ``source`` -- the file -- because those are metadata to fix, not a
-    language to guess.
+    language to guess. A name with one bracketed code (`English[eng]`, roadmap B20)
+    is read as that code; a bare name (`English`) is still `UND`.
     """
     code = lang3.lower().strip()
+    named = _NAMED_LANG_CODE.fullmatch(code)
+    if named:
+        code = named.group(1)
     if code in ("", "und", "unknown"):
         return "UND"
     if not _LANG_CODE.fullmatch(code):
