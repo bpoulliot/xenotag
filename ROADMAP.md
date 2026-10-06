@@ -52,7 +52,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | **CLOSED (decided 2026-10-05)** — accept the overlap; the pinning test stays | — |
 | B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | **READY (decided 2026-10-05)** | — |
 | B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | **READY (decided 2026-10-05)** | — |
-| B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | READY | — |
+| B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113); merged, not released) | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -61,7 +61,17 @@ below) must merge before the next release**: B13's rule change folds into `_tag_
 the first scan after it is a forced full re-tag with live `*arr` writes (as B9's and B7's were) —
 the release note must say so.
 
-**B22 — FILED 2026-09-27, found while building I5. Not fixed here. READY.** Demonstrated on
+**B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113), merged, not released).**
+`_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
+failure and re-raises, as before. It does that only while `progress.running` is still True, so a
+`_run_scan()` exit that already called `finish()` stands, and nothing is finished twice. A
+`finally` was rejected because it would also run on the happy path. No other caller takes
+`try_start()`. `tests/test_scan_lock.py` has 7 tests, and 5 of them fail without the fix: the repro
+below for both scan types, the next scan running, and a real `start_scan_run()` that raises
+`sqlite3.OperationalError`. The other two check that the happy path and a scan that already
+finished call `finish()` exactly once. No tag-hash change, so no re-tag. The filing follows.
+
+*Filed 2026-09-27, found while building I5:* Demonstrated on
 the I5 branch: with `_run_scan` replaced by one that raises `RuntimeError("database is locked")`,
 `run_incremental_scan()` re-raises, `progress.running` stays **True**, and the next
 `run_incremental_scan()` returns at once with `Scan already in progress, skipping`. The scheduler
