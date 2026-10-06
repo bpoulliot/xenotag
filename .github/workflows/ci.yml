@@ -39,7 +39,7 @@ jobs:
         run: bandit -r app/ -ll --exclude app/static
 
       - name: Security scan — dependencies (pip-audit)
-        run: pip-audit -r requirements.txt
+        run: pip-audit -r requirements.txt -r requirements-dev.txt
 
   tests:
     runs-on: ubuntu-latest
@@ -52,7 +52,7 @@ jobs:
           cache: pip
 
       - name: Install project dependencies
-        run: pip install -r requirements.txt pytest
+        run: pip install -r requirements.txt -r requirements-dev.txt pytest
 
       - name: Tests (pytest)
         run: pytest tests/ -q
