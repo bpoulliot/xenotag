@@ -67,7 +67,7 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 - **Rating badge**: content rating in its own corner (`image.rating_position`, default top-left); sharing a corner with the other badges stacks them instead of overlapping
 - Badge position configurable: bottom-left, bottom-right, top-left, top-right
 - Configurable opacity, font size, badge colors per group (video, audio, subtitle, rating)
-- Long language lists truncate gracefully with `…` rather than overflowing the poster edge
+- Every badge stays inside the poster margins: a long group wraps onto a second row, and anything that still does not fit is counted in a `+N` pill of the group's colour, never dropped silently. Preferred languages (`image.prefer_languages`) come first, so they are the ones shown. The rating badge is never covered, even on a very wide image with `normalize_portrait` off
 - Automatic portrait padding for square or landscape source images (blurred edge-fill extension)
 - Original posters are backed up with a `.orig` suffix before the first overlay
 
