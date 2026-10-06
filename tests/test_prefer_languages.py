@@ -11,6 +11,7 @@ Renders go through the real ``pipeline._make_badge_groups()`` and
 
 from __future__ import annotations
 
+import asyncio
 import io
 import json
 import random
@@ -351,12 +352,19 @@ def test_the_languages_route_lists_codes_most_items_first_and_follows_the_index(
     assert "KO" in codes
 
 
-def test_the_preview_honours_the_setting(client):
-    from app.web.routes import _preview_order
+def test_the_preview_honours_the_setting(client, monkeypatch):
+    from app.web import routes
+
+    # B14: the preview orders through _make_badge_groups(), as a scan does.
+    seen = []
+    render = routes.generate_preview_bytes
+    monkeypatch.setattr(routes, "generate_preview_bytes", lambda g, r, c, base_image_bytes=None: seen.append(g) or b"")
+    for prefer, want in (("fr,ja", ["AAC FR JA", "DTS-HD EN"]), ("", ["DTS-HD EN", "AAC JA FR"])):
+        asyncio.run(routes.preview_image(None, audio="EN DTS-HD,JA AAC,FR AAC", prefer_languages=prefer))
+        assert seen.pop()[1].labels == want
+    monkeypatch.setattr(routes, "generate_preview_bytes", render)
 
     http, _ = client
-    assert _preview_order(["EN DTS-HD", "JA AAC", "FR AAC"], ["FR", "JA"]) == ["FR AAC", "JA AAC", "EN DTS-HD"]
-    assert _preview_order(["EN DTS-HD", "JA AAC"], []) == ["EN DTS-HD", "JA AAC"]
     r = http.get("/preview/image", params={"audio": "EN DTS-HD,JA AAC", "prefer_languages": "ja"})
     assert r.status_code == 200
     assert r.headers["content-type"] == "image/jpeg"
