@@ -24,7 +24,15 @@ from __future__ import annotations
 from PIL import Image
 
 from .config import ImageConfig
-from .overlay import _GLOW_MARGIN, _load_font, _parse_color, _render_pill_tile, badge_alpha
+from .overlay import (
+    _GLOW_MARGIN,
+    _composite_pill,
+    _load_font,
+    _parse_color,
+    _render_glow,
+    _render_pill_tile,
+    badge_alpha,
+)
 
 # WCAG 2.x thresholds for normal-size text. The large-text exemption (3:1 /
 # 4.5:1) is not claimed: badges are sized against a 1000px reference poster,
@@ -108,10 +116,16 @@ def render_over(
 
     The tile comes from the uncached renderer, so a measurement never reads a
     tile rendered for something else and never leaves one in `_PILL_CACHE`.
+    It is drawn the way a poster draws it -- `_composite_pill()` onto a
+    transparent row layer, then that layer onto the backdrop -- so the pixel
+    sampled here is the pixel `render_badge_groups()` puts on a poster of this
+    colour (roadmap B21: until that was so, below 100% they differed).
     """
     tile = _render_pill_tile(text, fill_hex, text_hex, alpha, font_size, pad_h, pad_v)
+    layer = Image.new("RGBA", tile.size, (0, 0, 0, 0))
+    _composite_pill(layer, (0, 0), _render_glow(tile.size), tile)
     base = Image.new("RGBA", tile.size, (*backdrop, 255))
-    base.alpha_composite(tile)
+    base.alpha_composite(layer)
     return base.convert("RGB"), pill_box(text, font_size, pad_h, pad_v)
 
 

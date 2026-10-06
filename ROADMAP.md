@@ -51,14 +51,14 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | **SHIPPED 2026-10-06** ([#114](https://github.com/bpoulliot/xenotag/pull/114); merged, not released) | — |
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | **CLOSED (decided 2026-10-05)** — accept the overlap; the pinning test stays | — |
 | B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | **SHIPPED 2026-10-06** ([#123](https://github.com/bpoulliot/xenotag/pull/123); merged, not released) — `Name[xxx]` reads the code; *Tenchi in Tokyo* only partly fixed (25 bare-name episodes stay `UND`) | — |
-| B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | **READY (decided 2026-10-05)** | — |
+| B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | **SHIPPED 2026-10-06** ([#124](https://github.com/bpoulliot/xenotag/pull/124); merged, not released) — option (b); 100% posters byte-identical | — |
 | B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113); merged, not released) | — |
 | B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | READY | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
 its fix reads the item back by `Ids=` (B18, below). **B21, B13 and B20 (also relabelled READY
-below) must merge before the next release**: B13's rule change folds into `_tag_config_hash()`, so
+below) must merge before the next release** (B20 merged #123, B21 merged #124, 2026-10-06): B13's rule change folds into `_tag_config_hash()`, so
 the first scan after it is a forced full re-tag with live `*arr` writes (as B9's and B7's were) —
 the release note must say so.
 
@@ -86,7 +86,52 @@ failure is recorded, and the host's 26-hour no-successful-scan alert fires. **Fi
 re-raising, and test that a second scan then runs. Not done in I5 because it changes scan
 behaviour, not observability.
 
-**B21 — FILED 2026-09-27, found while building P6. Not fixed here. NEEDS DECISION.** It blocks
+**B21 — SHIPPED 2026-10-06 ([#124](https://github.com/bpoulliot/xenotag/pull/124), merged, not released).** Option (b), as decided.
+`_composite_pill()` places each pill in two steps: the glow — now its own image, `_render_glow()`,
+cached by tile size — is pasted with itself as the mask exactly as before, so it still lands
+squared; the pill (fill + label, `_render_pill_tile()`) is then `alpha_composite`d onto the row
+layer, so the fill lands at `badge_opacity`. `app.contrast.render_over()` draws through the same
+`_composite_pill()` onto a transparent layer, so the chips, the opacity-slider line and
+`measure_badge_contrast.py` sample the pixel the poster gets rather than a model of it.
+
+**Measured** with `scripts/measure_pill_composite.py` (new; self-test fails both ways: a 1-level
+nudge, an alpha-254 compositor and B21 itself are each caught, a render against itself is silent),
+Pillow 12.3.0, DejaVu Sans Bold, against a copy of the old paste (`legacy_place`, checked
+byte-identical to origin/main `5476f24` on all 16 synthetic scenes at 65%):
+
+ - **100% is byte-identical** — the note's open question. The 4 README overlay configs on their
+   own sample backgrounds and on flat white, black, grey 128 and a gradient (1000×1500): 20/20
+   renders, max difference **0**, **0** pixels. The 16 synthetic ones also match sha256s taken
+   from origin/main, stored in `tests/test_pill_composite.py`. Why it holds: at 100% a pill tile's
+   alpha only ever takes **(0, 255)** (the rounded rectangle is not antialiased; the label is drawn
+   over an opaque fill), measured over 11 labels × 3 badge sizes × 3 poster widths — so no pixel is
+   partly pill, and a paste and a composite agree on every one. The "edge may move by a level"
+   worry does not arise. At 65% the same scenes move by up to 52 levels.
+ - **Chip = poster** for all four badges at 65 / 80 / 90 / 100% on black, white and grey posters:
+   difference **0** levels per channel (the tests' tolerance is 0). The old paste reproduces the
+   table below to the decimal (e.g. rating at 80% on white: chip 4.52, poster 3.60).
+ - **The algebra case:** rating `#73485b` over black at 65% now renders **(74, 47, 59)** =
+   fill·a (a = 165/255); the old paste rendered (31, 20, 25) = fill·a³.
+ - **The glow is unchanged.** The 1–8 px band left of a pill on grey 128 reads
+   120, 117, 115, 115, 116, 118, 120, 122 old and new, at 100% and at 65% — the faint dark shadow
+   described below is still there, as (b) chose.
+ - **The opacity floors are true again on the poster:** worst shipped badge over black/white/grey,
+   1% steps — **AA 80%, AAA 98%** (old paste: 87% / 99%). `config.py` and the README quote 0.80 /
+   0.98 and now say it is the poster's figure.
+ - `assets/readme/` did **not** move (its fixtures use the 100% default); `--check` passes.
+
+**Consequence for the operator.** Production runs at **100%, so no production poster changes.**
+A poster saved below 100% renders at the opacity it names from now on — a saved 0.65 showed the
+poster through as if it were ~0.42 — but **nothing is re-rendered until a full scan** (there is no
+overlay hash), so such posters move at the next full scan, not at upgrade.
+
+[P6]'s probe self-test (`measure_adaptive_palette.py --self-test` on PR #95's branch) fails its
+three end-to-end checks on that branch and **passes with this fix merged in** (checked on a local
+scratch merge, not pushed). P6 is unblocked; its branch needs `main` merged.
+
+The filing follows.
+
+**B21 — FILED 2026-09-27, found while building P6.** It blocked
 [P6], whose whole regime is below 100%.
 
 **The mechanism.** `_render_group()` places every tile on a transparent row layer with
@@ -143,7 +188,7 @@ names (a saved 0.65 renders at an effective ~0.42 today).
 
 **OPERATOR DECISION 2026-10-05:** (b) — composite the pill correctly (`overlay.alpha_composite`),
 keep today's glow pixels; at 100% posters stay as they are (byte-identical at 100% is not yet
-confirmed by a render). Relabelled **READY**; must merge before the next release — see the
+confirmed by a render — *confirmed 2026-10-06, see the SHIPPED block above*). Relabelled **READY**; must merge before the next release — see the
 build-order note above.
 
 **B20 — SHIPPED 2026-10-06 ([#123](https://github.com/bpoulliot/xenotag/pull/123), merged, not released).**
@@ -1594,7 +1639,8 @@ the pill's own antialiased edge still lands on glow), and `badge_opacity` defaul
 The glow survives as what it was meant to be — a halo *around* the pill.
 
 `badge_opacity` is still a knob, and it is still a contrast control. Measured floors for the
-shipped palette: **0.89 for AAA, 0.73 for AA**; the old 0.65 default rendered 3.7:1.
+shipped palette: **0.89 for AAA, 0.73 for AA**; the old 0.65 default rendered 3.7:1. *(Palette 1, through the instrument; B4 moved them to
+0.98 / 0.80, and [B21] found the poster did not match the instrument below 100% until 2026-10-06.)*
 
 ### Consequences worth knowing
 
@@ -1649,7 +1695,8 @@ moving the probe's internals into `app/` changed no number.
 **Opacity floors for the shipped palette**, at the slider's own 1 % steps: **98 % is the lowest
 that holds AAA, 80 % the lowest that holds AA** (97 % → 6.90, 79 % → 4.39, 65 % → 3.19, the
 worst badge always `rating` on white). These confirm the figures `config.py` and the README
-already quote.
+already quote. *(True of the chip; the poster needed 99% / 87% until [B21] shipped, 2026-10-06,
+since when both are true of the poster — re-measured by `scripts/measure_pill_composite.py`.)*
 
 ### The premise was half wrong: something DID check a colour — the wrong number, and it prevented
 
@@ -3068,7 +3115,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **BLOCKED on [B21]** (decided 2026-09-26; work held in PR #95) | — |
+| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **READY — unblocked 2026-10-06:** [B21] shipped (#124) (decided 2026-09-26; work held in PR #95, which needs `main` merged; its self-test passes with B21 in) | — |
 | P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **READY (decided 2026-10-05)** — (d), 2-row budget · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
@@ -3136,6 +3183,12 @@ that fails if the cache key is not widened with the palette choice.
 **OPERATOR DECISION 2026-09-26:** (1a) main + backup palette chosen per badge row by the luminance of the region
 under it, and (2a) one checkbox, off by default, whose backup pickers carry B2's contrast chips;
 the backup palette must clear B4's dE 5.
+
+**P6 — UNBLOCKED 2026-10-06: [B21] shipped (#124), option (b).** The poster now composites a
+translucent pill the way the instrument does (chip = poster to the level, 65–100%), so the numbers
+below — all taken through the instrument's model — describe what renders. PR #95's probe
+self-test, red on its branch, passes once B21 is merged in (local scratch merge). What is left is
+what the last bullet lists, after merging `main` into the held branch.
 
 **P6 — STOPPED 2026-09-27 on [B21]; the work is held, unmerged, in PR #95 (`HOLD:`).** Measuring
 the threshold showed the poster path does not composite a translucent pill the way B1's instrument
@@ -3628,7 +3681,7 @@ Three consequences worth knowing:
    partly with lightness, which put `rating` at 7.48:1 — just over AAA. Re-measured: **0.98 is the
    AAA floor and 0.80 the AA floor** (they were 0.89 and 0.73). Palette A had the same ~7.5 worst
    case, so this is the price of colour-blind separation, not of B specifically. `config.py` and the
-   README quote the new floors.
+   README quote the new floors. *(Instrument figures; on the poster they hold only since [B21], 2026-10-06.)*
  - **The preview route had to opt out.** It builds `ImageConfig` from query parameters, which to
    the migration looks exactly like an unversioned legacy config, so previewing the old navy would
    have rendered indigo. It now passes the current version explicitly. A test pins this, and

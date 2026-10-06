@@ -40,6 +40,7 @@ def _load_font(size: int) -> ImageFont.FreeTypeFont | ImageFont.ImageFont:
 
 # ── Pill tile cache ──────────────────────────────────────────────────────────
 _PILL_CACHE: dict[tuple, Image.Image] = {}
+_GLOW_CACHE: dict[tuple[int, int], Image.Image] = {}
 _GLOW_MARGIN = 14
 _GLOW_EXPAND = 4
 _GLOW_BLUR = 6
@@ -86,6 +87,7 @@ def order_pills_by_language(pills: dict[str, list[str]], prefer: list[str]) -> l
 
 def clear_pill_cache() -> None:
     _PILL_CACHE.clear()
+    _GLOW_CACHE.clear()
 
 
 def _pill_tile(
@@ -120,11 +122,15 @@ def _render_pill_tile(
     pad_h: int,
     pad_v: int,
 ) -> Image.Image:
-    """Render one pill tile, bypassing the cache.
+    """Render one pill tile -- the fill and its label, no glow -- bypassing the cache.
 
     `_pill_tile()` is the only caller on the poster path. The contrast check in
     `app.contrast` calls this directly, so measuring a colour the operator is
     only trying out neither reads a cached tile nor leaves one behind.
+
+    The tile is `_GLOW_MARGIN` larger than the pill on every side, so it lines
+    up with the glow `_render_glow()` draws for the same size; `_composite_pill()`
+    puts the two together.
     """
     font = _load_font(font_size)
     fill_rgb = _parse_color(fill_hex)
@@ -136,9 +142,27 @@ def _render_pill_tile(
     pill_w = bbox[2] - bbox[0] + pad_h * 2
 
     gm = _GLOW_MARGIN
-    tile = Image.new("RGBA", (pill_w + 2 * gm, pill_h + 2 * gm), (0, 0, 0, 0))
+    pill = Image.new("RGBA", (pill_w + 2 * gm, pill_h + 2 * gm), (0, 0, 0, 0))
+    pd = ImageDraw.Draw(pill)
+    pd.rounded_rectangle([(gm, gm), (gm + pill_w, gm + pill_h)], radius=8, fill=(*fill_rgb, alpha))
+    text_h = bbox[3] - bbox[1]
+    ty = gm + pad_v + (ref_h - text_h) // 2 - bbox[1]
+    pd.text((gm + pad_h - bbox[0], ty), text, font=font, fill=(*text_rgb, 255))
+    return pill
 
-    glow = Image.new("RGBA", tile.size, (0, 0, 0, 0))
+
+def _glow_tile(size: tuple[int, int]) -> Image.Image:
+    """The glow for a pill tile of `size`, cached. It depends on nothing else."""
+    if size not in _GLOW_CACHE:
+        _GLOW_CACHE[size] = _render_glow(size)
+    return _GLOW_CACHE[size]
+
+
+def _render_glow(size: tuple[int, int]) -> Image.Image:
+    """Render the white halo for a pill tile of `size` (the tile's, glow margin included)."""
+    gm = _GLOW_MARGIN
+    pill_w, pill_h = size[0] - 2 * gm, size[1] - 2 * gm
+    glow = Image.new("RGBA", size, (0, 0, 0, 0))
     gd = ImageDraw.Draw(glow)
     gd.rounded_rectangle(
         [(gm - _GLOW_EXPAND, gm - _GLOW_EXPAND), (gm + pill_w + _GLOW_EXPAND, gm + pill_h + _GLOW_EXPAND)],
@@ -153,7 +177,8 @@ def _render_pill_tile(
     # (roadmap B1: 3.7-5.3:1 against text the config claimed was 9.4-11.0:1).
     # Punched out, the glow is what it was meant to be -- a halo AROUND the
     # pill -- and the rendered fill is the configured colour. Deflated by 1px
-    # so the pill's own antialiased edge still lands on glow, not a hard cut.
+    # so the pill's outermost pixel ring still lands on glow, not a hard cut
+    # (the rectangle itself is not antialiased: at 100% that ring is opaque).
     # NOTE: filter() returns a new image, so the Draw handle must be rebound.
     gd = ImageDraw.Draw(glow)
     gd.rounded_rectangle(
@@ -161,15 +186,29 @@ def _render_pill_tile(
         radius=7,
         fill=(0, 0, 0, 0),
     )
+    return glow
 
-    pill = Image.new("RGBA", tile.size, (0, 0, 0, 0))
-    pd = ImageDraw.Draw(pill)
-    pd.rounded_rectangle([(gm, gm), (gm + pill_w, gm + pill_h)], radius=8, fill=(*fill_rgb, alpha))
-    text_h = bbox[3] - bbox[1]
-    ty = gm + pad_v + (ref_h - text_h) // 2 - bbox[1]
-    pd.text((gm + pad_h - bbox[0], ty), text, font=font, fill=(*text_rgb, 255))
 
-    return Image.alpha_composite(glow, pill)
+def _composite_pill(layer: Image.Image, xy: tuple[int, int], glow: Image.Image, pill: Image.Image) -> None:
+    """Draw one pill and its glow onto `layer`, a transparent row layer, at `xy`.
+
+    The two are composited differently, on purpose (roadmap B21, decision (b)):
+
+    - The glow is pasted with itself as the mask, as it always was. A masked
+      paste blends every band, alpha included, so the glow lands squared --
+      and that is the look every poster has had, so it is kept.
+    - The pill is alpha-composited, so its fill lands at exactly the alpha
+      `badge_opacity` names. Pasted the same way as the glow, the fill landed
+      at a**3 over (1 - a**2) of the poster -- at a saved 0.65 the poster showed
+      through as if the opacity were 0.42 -- and `app.contrast`, which models
+      a, measured a badge no poster had.
+
+    At 100% the two are byte-identical to the old single paste: the pill's
+    rounded rectangle is not antialiased, so every pixel of it is either fully
+    opaque or not the pill at all (measured, `scripts/measure_pill_composite.py`).
+    """
+    layer.paste(glow, xy, glow)
+    layer.alpha_composite(pill, dest=xy)
 
 
 def badge_alpha(opacity: float) -> int:
@@ -242,6 +281,21 @@ def _truncate_label(label: str, max_w: int, font, pad_h: int) -> str:
         if _pw(candidate) <= max_w:
             return candidate
     return tokens[0]  # first token alone can't be truncated further
+
+
+def _place_pill(
+    layer: Image.Image,
+    xy: tuple[int, int],
+    text: str,
+    fill_hex: str,
+    text_hex: str,
+    alpha: int,
+    font_size: int,
+    pad_h: int,
+    pad_v: int,
+) -> None:
+    tile = _pill_tile(text, fill_hex, text_hex, alpha, font_size, pad_h, pad_v)
+    _composite_pill(layer, xy, _glow_tile(tile.size), tile)
 
 
 def _render_group(
@@ -324,8 +378,7 @@ def _render_group(
     gm = _GLOW_MARGIN
     rects = []
     for badge, bw in row:
-        tile = _pill_tile(badge, fill_color, text_color, alpha, font_size, pad_h, pad_v)
-        overlay.paste(tile, (x - gm, y - gm), tile)
+        _place_pill(overlay, (x - gm, y - gm), badge, fill_color, text_color, alpha, font_size, pad_h, pad_v)
         rects.append((x, y, bw, pill_h))
         x += bw + col_gap
 
