@@ -47,7 +47,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116); merged, not released) | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115); merged, not released) | — |
 | B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | **READY (decided 2026-10-05)** | — |
-| B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **READY (decided 2026-10-05)**; B18 merged (#114), so it is unblocked | — |
+| B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **SHIPPED 2026-10-06** ([#121](https://github.com/bpoulliot/xenotag/pull/121); merged, not released) — **changes scan behaviour at the next release** | — |
 | B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | **SHIPPED 2026-10-06** ([#114](https://github.com/bpoulliot/xenotag/pull/114); merged, not released) | — |
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | **CLOSED (decided 2026-10-05)** — accept the overlap; the pinning test stays | — |
 | B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | **READY (decided 2026-10-05)** | — |
@@ -235,7 +235,43 @@ used the same call. **Fix:** read each item's current tags with `GET /Items?Ids=
 produces false `Tag drift` warnings in a scan; the warning reads `jf.get_tags(item)`, the same copy
 `set_managed_tags()` uses, so this fix corrects both.
 
-**B17 — FILED 2026-09-27, found while reading back B9's re-tag. Not fixed here. NEEDS DECISION.**
+**B17 — SHIPPED 2026-10-06 ([#121](https://github.com/bpoulliot/xenotag/pull/121), merged, not released).**
+As decided, (a) + (c). `_process_one_item()` no longer writes the `state.db` row when the tag POST
+returns. After the write, and the refresh if the overlay rewrote the poster, the item's tags are read
+back by `Ids=` (B18's `get_current_tags()`). The read waits until `TAG_READBACK_SETTLE_S = 2.0` s
+have passed since the item's last write or refresh. If the item's `xt-` tags match what was written,
+the row is recorded as before. If they do not, the item is written once more, from the tags just
+read (so a non-managed tag gained meanwhile is kept), and read again. Fixed by the retry, it is
+recorded and counted in `xenotag_tag_writeback_mismatch_total{result="fixed"}`. Still wrong, the
+`xt-` tags that were **read** are recorded, one WARNING (`Tag write did not stick: …`) names the item
+and the diff, and `{result="unresolved"}` counts it. That row's mtime advances, so incremental scans
+leave it; U9's drift check then compares against what Jellyfin really has. **Nothing is recorded**
+(no `tags_applied`, no mtime advance), so the next scan retries the item, when the tag write raises
+(the 8 client timeouts), when the retry raises, when a read-back raises, or when the read does not
+return the id. The scan never fails on any of these; it logs one `Tag read-back:` summary line at
+the end. The refresh is requested exactly as before ((b) was not chosen).
+- **Batched, per B18 batch.** A scan reads back each 100-item batch with one `Ids=` GET once the
+  batch's writes are done. That is one extra read-only GET per 100 items written, about 95 on a full
+  scan of the current 9,450 items (so ~190 `Ids=` reads in all, with B18's). A batch with undone
+  writes adds one POST per undone item and one more GET. It is not merged with the next batch's B18
+  read: the ids differ, and 200 ids are two GETs anyway at `TAG_READ_BATCH = 100`. A webhook reads
+  back its one item at once.
+- **Settling: partly measured.** The bursts re-saved items 60–700 ms after the refresh. 2 s is about
+  three times the worst of those, bounded, and waited at most once per batch (twice with a retry).
+  The wait counts from the batch's last write, so earlier items have had longer, and the probe pool
+  keeps working meanwhile. **A loaded production Jellyfin may need more**; an undo landing after the
+  read is not caught. That cannot be measured from here without writing to production. The counter
+  and the WARNING are how to tell after a release.
+- **Release note:** this changes production scan behaviour at the next release. The first scan
+  after it may log `Tag write did not stick` or `Tag read-back:` lines that earlier releases never
+  printed, because the case was not looked for, not because it is new.
+- Tests: `tests/test_tag_readback.py` covers a write that sticks; identical write calls on the happy
+  path, with the read-back after the refresh; undone once, then fixed by the retry; undone twice
+  (records what was read); only undone items retried; a write that raises; a read-back that raises
+  (the scan finishes); a retry whose read-back raises; an id not returned; the settle delay; and the
+  single-item path. All 11 fail against the pre-B17 `pipeline.py`.
+
+*Filed 2026-09-27, found while reading back B9's re-tag:*
 
 `_process_one_item()` writes the tags (`POST /Items/{id}`), and when the overlay rewrote the
 poster — every item, in a full scan — asks Jellyfin to refresh the item

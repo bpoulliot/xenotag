@@ -8,6 +8,7 @@ import threading
 import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from dataclasses import dataclass
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -259,6 +260,154 @@ def _with_current_tags(jf: JellyfinClient, items: list[dict], fallbacks: _TagFal
     return [{**item, "Tags": current[item.get("Id", "")]} if item.get("Id", "") in current else item for item in items]
 
 
+# Roadmap B17: in B9's re-tag Jellyfin re-saved 22 of 9,340 items with their old
+# tags 60-700 ms after the refresh xenotag requests. A write is read back only once
+# this long has passed since the item's last write or refresh -- about three times
+# the worst delay seen. Bounded on purpose; a loaded production Jellyfin may need more.
+TAG_READBACK_SETTLE_S = 2.0
+
+
+@dataclass
+class _PendingRecord:
+    """An item whose tag write returned, waiting for its read-back before it is recorded (B17)."""
+
+    item: dict
+    written: list[str]
+    fallback_rating: str
+    record: dict  # upsert_media_state() arguments other than tags_applied
+    settled_from: float  # time.monotonic() of the item's last write or refresh
+
+
+class _Readback:
+    """One scan's read-back outcomes (B17); logged once at the end."""
+
+    def __init__(self) -> None:
+        self.fixed = 0
+        self.unresolved = 0
+        self.unrecorded = 0
+
+    def summary(self) -> str | None:
+        if not (self.fixed or self.unresolved or self.unrecorded):
+            return None
+        return (
+            f"Tag read-back: {self.fixed} undone write(s) fixed by a retry, {self.unresolved} still wrong "
+            f"(recorded as read), {self.unrecorded} not recorded (the next scan retries them) (roadmap B17)"
+        )
+
+
+def _settle(since: float) -> None:
+    wait = since + TAG_READBACK_SETTLE_S - time.monotonic()
+    if wait > 0:
+        time.sleep(wait)
+
+
+def _read_back(jf: JellyfinClient, pending: list[_PendingRecord], readback: _Readback) -> dict[str, list[str]] | None:
+    ids = [p.item.get("Id", "") for p in pending]
+    try:
+        return jf.get_current_tags(ids)
+    except Exception as exc:
+        log.warning(
+            "Tag read-back failed for %d item(s) (%s); recording none of them, the next scan retries (roadmap B17)",
+            len(ids),
+            exc,
+        )
+        readback.unrecorded += len(ids)
+        return None
+
+
+def _record(session: object, p: _PendingRecord, tags_applied: list[str]) -> None:
+    upsert_media_state(session, tags_applied=tags_applied, **p.record)
+
+
+def _record_after_readback(
+    jf: JellyfinClient, session: object, cfg: AppConfig, pending: list[_PendingRecord], readback: _Readback
+) -> None:
+    """Read back what ``pending`` wrote, write once more what Jellyfin undid, and record (roadmap B17).
+
+    One ``Ids=`` read (B18) for all of ``pending``, after the settle delay. An
+    item whose managed tags read back as written is recorded as written. One that
+    does not is written again -- from the tags just read, so a non-managed tag
+    gained meanwhile is kept -- and read again; if it is still wrong, the tags
+    that were *read* are recorded, with one WARNING and a count. An item that
+    cannot be read, or whose retry raises, is not recorded, so the next scan
+    reaches it again.
+    """
+    if not pending:
+        return
+    prefix = cfg.tags.managed_prefix
+
+    def managed(tags: list[str]) -> list[str]:
+        return [t for t in tags if t.startswith(prefix)]
+
+    def missing(p: _PendingRecord) -> None:
+        log.info(
+            "Tag read-back: %s (%s) not returned by /Items?Ids=; not recorded", p.item.get("Name"), p.item.get("Id")
+        )
+        readback.unrecorded += 1
+
+    _settle(max(p.settled_from for p in pending))
+    current = _read_back(jf, pending, readback)
+    if current is None:
+        return
+    undone: list[tuple[_PendingRecord, list[str]]] = []
+    for p in pending:
+        tags = current.get(p.item.get("Id", ""))
+        if tags is None:
+            missing(p)
+        elif set(managed(tags)) == set(managed(p.written)):
+            _record(session, p, p.written)
+        else:
+            undone.append((p, tags))
+    if not undone:
+        return
+
+    retried: list[_PendingRecord] = []
+    for p, tags in undone:
+        try:
+            jf.set_managed_tags(
+                p.item.get("Id", ""),
+                {**p.item, "Tags": tags},
+                prefix,
+                p.written,
+                fallback_rating=p.fallback_rating,
+                legacy_prefixes=cfg.tags.legacy_prefixes,
+            )
+        except Exception as exc:
+            log.warning("Jellyfin tag retry error for %s: %s; not recorded", p.item.get("Name"), exc)
+            readback.unrecorded += 1
+            continue
+        retried.append(p)
+    if not retried:
+        return
+    _settle(time.monotonic())
+    again = _read_back(jf, retried, readback)
+    if again is None:
+        return
+    for p in retried:
+        tags = again.get(p.item.get("Id", ""))
+        if tags is None:
+            missing(p)
+            continue
+        read = managed(tags)
+        wanted = set(managed(p.written))
+        if set(read) == wanted:
+            readback.fixed += 1
+            metrics.tag_writeback_mismatch(metrics.MISMATCH_FIXED)
+            _record(session, p, p.written)
+            continue
+        log.warning(
+            "Tag write did not stick: %s (%s) — after one retry Jellyfin lacks %s and has %s not written; "
+            "recording what it has (roadmap B17)",
+            p.item.get("Name"),
+            p.item.get("Id"),
+            sorted(wanted - set(read)),
+            sorted(set(read) - wanted),
+        )
+        readback.unresolved += 1
+        metrics.tag_writeback_mismatch(metrics.MISMATCH_UNRESOLVED)
+        _record(session, p, read)
+
+
 def _process_one_item(
     jf: JellyfinClient,
     arr: ArrTagSync,
@@ -269,8 +418,14 @@ def _process_one_item(
     item_root: str,
     mtime: float,
     info: MediaInfo,
+    pending: list[_PendingRecord] | None = None,
 ) -> bool:
-    """Tag, overlay, and persist one media item. Returns True if an image was modified."""
+    """Tag, overlay, and persist one media item. Returns True if an image was modified.
+
+    The row is written only after the tags are read back (roadmap B17): at once
+    for a single item, or -- when the scan passes ``pending`` -- by the scan, for
+    its whole batch. A tag write that raises records nothing for the item.
+    """
     item_id = item.get("Id", "")
     name = item.get("Name", item_id)
     prefix = cfg.tags.managed_prefix
@@ -318,8 +473,10 @@ def _process_one_item(
     _warn_tag_drift(session, jf, item, prefix)
     try:
         jf.set_managed_tags(item_id, item, prefix, jf_tags, fallback_rating=arr_cert, legacy_prefixes=legacy_prefixes)
+        wrote = True
     except Exception as exc:
-        log.warning("Jellyfin tag error for %s: %s", name, exc)
+        log.warning("Jellyfin tag error for %s: %s; not recorded, the next scan retries (roadmap B17)", name, exc)
+        wrote = False
 
     # Resolved per instance by provider id + folder; a dry run only counts.
     arr.sync_item(item, {"sonarr": sonarr_tags, "radarr": radarr_tags})
@@ -340,24 +497,35 @@ def _process_one_item(
         except Exception as exc:
             log.warning("Overlay error for %s: %s", name, exc)
 
-    upsert_media_state(
-        session,
-        item_id=f"jellyfin:{item_id}",
-        source="jellyfin",
-        file_path=file_path,
-        resolution=info.resolution,
-        languages=info.languages,
-        tags_applied=jf_tags,
-        image_path=str(modified_path) if modified_path else None,
-        file_mtime=mtime,
-        video_codec=info.video_codec,
-        hdr_type=info.hdr_type,
-        audio_tracks=[{"lang": t.lang, "codec": t.codec} for t in info.audio_tracks],
-        subtitle_tracks=[{"lang": t.lang, "format": t.format, "embedded": t.embedded} for t in info.subtitle_tracks],
-        content_rating=content_rating,
-        field_order=info.field_order,
+    if not wrote:
+        return image_modified
+    record = _PendingRecord(
+        item=item,
+        written=jf_tags,
+        fallback_rating=arr_cert,
+        record={
+            "item_id": f"jellyfin:{item_id}",
+            "source": "jellyfin",
+            "file_path": file_path,
+            "resolution": info.resolution,
+            "languages": info.languages,
+            "image_path": str(modified_path) if modified_path else None,
+            "file_mtime": mtime,
+            "video_codec": info.video_codec,
+            "hdr_type": info.hdr_type,
+            "audio_tracks": [{"lang": t.lang, "codec": t.codec} for t in info.audio_tracks],
+            "subtitle_tracks": [
+                {"lang": t.lang, "format": t.format, "embedded": t.embedded} for t in info.subtitle_tracks
+            ],
+            "content_rating": content_rating,
+            "field_order": info.field_order,
+        },
+        settled_from=time.monotonic(),
     )
-
+    if pending is None:
+        _record_after_readback(jf, session, cfg, [record], _Readback())
+    else:
+        pending.append(record)
     return image_modified
 
 
@@ -589,6 +757,7 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
     log.info("Phase 1b complete: %d items queued for probe", len(to_probe))
     max_workers = min(cfg.scan.max_workers, max(1, len(to_probe)))
     tag_fallbacks = _TagFallbacks()
+    readback = _Readback()
     if to_probe:
         total_probe = len(to_probe)
         log.info("Phase 2+3: probing and tagging %d items with %d workers…", total_probe, max_workers)
@@ -607,13 +776,17 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
             if not batch:
                 return
             current = _with_current_tags(jf, [b[0] for b in batch], tag_fallbacks)
+            # Rows are written after the batch's tags are read back (B17).
+            pending: list[_PendingRecord] = []
             for (_, fp, item_root, mtime, info), item in zip(batch, current, strict=True):
                 item_id = item.get("Id", "")
                 name = item.get("Name", item_id)
                 progress.current_item = name
                 progress.emit(f"  scanning: {name}")
                 try:
-                    image_modified = _process_one_item(jf, arr, session, cfg, item, fp, item_root, mtime, info)
+                    image_modified = _process_one_item(
+                        jf, arr, session, cfg, item, fp, item_root, mtime, info, pending=pending
+                    )
                     tagged += 1
                     images_modified += image_modified
                     progress.emit(
@@ -624,6 +797,11 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
                     log.error("Unhandled error processing %s: %s", name, exc, exc_info=True)
                     _record_scan_error(session, item_id, name, fp, f"process_error: {exc}")
                 progress.done += 0.5
+            try:
+                _record_after_readback(jf, session, cfg, pending, readback)
+            except Exception as exc:  # never fails the scan; unrecorded items are retried
+                log.error("Tag read-back/record failed for a batch of %d: %s", len(pending), exc, exc_info=True)
+                session.rollback()
 
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_to_path = {pool.submit(probe_file, fp): fp for fp in path_to_item}
@@ -660,6 +838,9 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
                 process_batch()
     if tag_fallbacks.count:
         log.warning("Current tags: %d item(s) used the listing's copy this scan (roadmap B18)", tag_fallbacks.count)
+    if summary := readback.summary():
+        log.warning(summary)
+        progress.emit(f"[xenotag] {summary}")
     set_meta(session, _TAG_CONFIG_KEY, current_hash)
     finish_scan_run(session, run, scanned=items_count, tagged=tagged, images=images_modified)
     session.close()

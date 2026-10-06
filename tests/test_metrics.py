@@ -51,6 +51,7 @@ XENOTAG_FAMILIES = {
     "xenotag_arr_sync_halted",
     "xenotag_arr_last_halt_timestamp_seconds",
     "xenotag_tag_drift",
+    "xenotag_tag_writeback_mismatch",
 }
 
 
@@ -172,7 +173,7 @@ def test_a_scan_records_success_counts_and_every_error_shape(tmp_path, monkeypat
     ]
     monkeypatch.setattr(pipeline, "probe_file", lambda p: None if "unprobeable" in str(p) else _info())
 
-    def process(jf, arr, session, c, item, *rest):
+    def process(jf, arr, session, c, item, *rest, **kw):
         if item["Id"] == "boom":
             raise RuntimeError("disk on fire")
         return True

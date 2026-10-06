@@ -582,9 +582,15 @@ class FakeJellyfin:
     def __init__(self, items=()):
         self.items = list(items)
         self.writes: list[tuple] = []
+        self.tags: dict[str, list[str]] = {}
 
     def set_managed_tags(self, item_id, item, prefix, tags, fallback_rating="", legacy_prefixes=()):
         self.writes.append((item_id, tuple(tags), fallback_rating))
+        self.tags[item_id] = list(tags)
+
+    def get_current_tags(self, item_ids):
+        """The read-back (B17) sees what was written; an item never written reads as untagged."""
+        return {i: self.tags.get(i, []) for i in item_ids}
 
     def refresh_item(self, item_id):
         self.writes.append(("refresh", item_id))
