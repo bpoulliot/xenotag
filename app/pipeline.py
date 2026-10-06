@@ -272,7 +272,6 @@ class _PendingRecord:
     """An item whose tag write returned, waiting for its read-back before it is recorded (B17)."""
 
     item: dict
-    file_path: str
     written: list[str]
     fallback_rating: str
     record: dict  # upsert_media_state() arguments other than tags_applied
@@ -341,7 +340,9 @@ def _record_after_readback(
         return [t for t in tags if t.startswith(prefix)]
 
     def missing(p: _PendingRecord) -> None:
-        log.info("Tag read-back: %s (%s) not returned by /Items?Ids=; not recorded", p.item.get("Name"), p.item.get("Id"))
+        log.info(
+            "Tag read-back: %s (%s) not returned by /Items?Ids=; not recorded", p.item.get("Name"), p.item.get("Id")
+        )
         readback.unrecorded += 1
 
     _settle(max(p.settled_from for p in pending))
@@ -500,7 +501,6 @@ def _process_one_item(
         return image_modified
     record = _PendingRecord(
         item=item,
-        file_path=file_path,
         written=jf_tags,
         fallback_rating=arr_cert,
         record={
