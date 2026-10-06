@@ -177,7 +177,8 @@ def _render_glow(size: tuple[int, int]) -> Image.Image:
     # (roadmap B1: 3.7-5.3:1 against text the config claimed was 9.4-11.0:1).
     # Punched out, the glow is what it was meant to be -- a halo AROUND the
     # pill -- and the rendered fill is the configured colour. Deflated by 1px
-    # so the pill's own antialiased edge still lands on glow, not a hard cut.
+    # so the pill's outermost pixel ring still lands on glow, not a hard cut
+    # (the rectangle itself is not antialiased: at 100% that ring is opaque).
     # NOTE: filter() returns a new image, so the Draw handle must be rebound.
     gd = ImageDraw.Draw(glow)
     gd.rounded_rectangle(

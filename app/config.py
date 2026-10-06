@@ -192,7 +192,9 @@ class ImageConfig(BaseModel):
     # show through and drops the rendered contrast of the label against the
     # fill. Measured over black/white/grey backdrops with the palette below
     # (scripts/measure_badge_contrast.py): 1.0 -> 7.48:1 worst case, 0.98 is
-    # the floor for AAA, 0.80 the floor for AA. The palette-2 colours trade
+    # the floor for AAA, 0.80 the floor for AA -- on the poster as well as in
+    # the probe since roadmap B21 (before it, the poster needed 0.99 / 0.87;
+    # scripts/measure_pill_composite.py re-derives both). The palette-2 colours trade
     # headroom for separation -- under palette 1 these floors were 0.89/0.73 --
     # so there is almost no room below 1.0 before AAA goes. 0.65, the default
     # until roadmap B1, now renders 3.2:1 and fails both.
