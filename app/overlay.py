@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import io
 import logging
+import re
 import shutil
 import string
 from dataclasses import dataclass
@@ -266,21 +267,243 @@ def _measure_group_height(
     return ref_h + pad_v * 2
 
 
-def _truncate_label(label: str, max_w: int, font, pad_h: int) -> str:
-    """Trim trailing space-separated tokens from label until its pill fits within max_w px."""
+# Roadmap P7, decision (d): a tag group wraps onto at most this many rows, and
+# whatever still does not fit is counted in a "+N" pill closing its last row.
+_ROW_BUDGET = 2
 
-    def _pw(s: str) -> int:
-        bb = font.getbbox(s)
-        return bb[2] - bb[0] + pad_h * 2
+# One pill as laid out: (text, width px, fill colour, text colour).
+_Pill = tuple[str, int, str, str]
 
-    if _pw(label) <= max_w:
-        return label
+
+# A language code as the scanner writes it (`_lang3_to_lang2()`): ISO 639-1, or
+# the 3-letter code where there is none, upper case.
+_LANG_CODE = re.compile(r"[A-Z]{2,3}")
+
+
+def _atoms(label: str) -> list[str]:
+    """A pill label's units: its head, then one per language code.
+
+    The head is the codec or format and is never split, though it may be two
+    words (``TrueHD Atmos``, ``DD+ Atmos``). Everything after it in an audio or
+    subtitle label is a language code. A continuation pill (languages only)
+    takes its first code as its head, which is still one unit.
+    """
     tokens = label.split()
-    for i in range(len(tokens) - 1, 0, -1):
-        candidate = " ".join(tokens[:i]) + "…"
-        if _pw(candidate) <= max_w:
-            return candidate
-    return tokens[0]  # first token alone can't be truncated further
+    head = tokens[:1]
+    rest = tokens[1:]
+    while rest and not _LANG_CODE.fullmatch(rest[0]):
+        head.append(rest.pop(0))
+    return [" ".join(head), *rest] if head else []
+
+
+def _pill_width(font, text: str, pad_h: int) -> int:
+    bb = font.getbbox(text)
+    return bb[2] - bb[0] + pad_h * 2
+
+
+def _flow_rows(
+    labels: list[str],
+    widths: list[int],
+    font,
+    pad_h: int,
+    col_gap: int,
+) -> tuple[list[list[tuple[str, int]]], int]:
+    """Flow ``labels`` over ``len(widths)`` rows, row i at most ``widths[i]`` px wide.
+
+    The unit is the badge -- a label's codec or format, or one of its language
+    codes (`_atoms()`; roadmap P7). A label is one pill while it fits. One that
+    does not fit the space left on a row starts the next row if it would fit
+    there whole, and is otherwise split between badges, its remaining languages
+    continuing as a pill on the next row; it is never split after its head
+    alone once a row has other pills on it. Order is kept throughout, so
+    ``prefer_languages`` decides what survives.
+
+    Returns the rows as ``(text, width)`` pills and the number of badges that
+    did not fit, which the caller counts in a ``+N`` pill. A badge wider than
+    every row cannot be drawn at all; it is counted and skipped.
+    """
+    widest = max(widths)
+    queue: list[list[str]] = []
+    hidden = 0
+    for label in labels:
+        tokens = []
+        for token in _atoms(label):
+            if _pill_width(font, token, pad_h) <= widest:
+                tokens.append(token)
+            else:
+                hidden += 1
+        if tokens:
+            queue.append(tokens)
+
+    rows: list[list[tuple[str, int]]] = [[]]
+    used = [0]
+    for i, tokens in enumerate(queue):
+        while tokens:
+            r = len(rows) - 1
+            gap = col_gap if rows[r] else 0
+            room = widths[r] - used[r] - gap
+            k = len(tokens)
+            while k and _pill_width(font, " ".join(tokens[:k]), pad_h) > room:
+                k -= 1
+            has_next = r + 1 < len(widths)
+            if k < len(tokens) and has_next:
+                fits_next = _pill_width(font, " ".join(tokens), pad_h) <= widths[r + 1]
+                if k == 0 or (rows[r] and (k < 2 or fits_next)):
+                    rows.append([])
+                    used.append(0)
+                    continue
+            if k == 0:
+                break
+            text = " ".join(tokens[:k])
+            w = _pill_width(font, text, pad_h)
+            rows[r].append((text, w))
+            used[r] += gap + w
+            tokens = tokens[k:]
+            if tokens and has_next:
+                rows.append([])
+                used.append(0)
+            elif tokens:
+                break
+        if tokens:
+            hidden += len(tokens) + sum(len(t) for t in queue[i + 1 :])
+            break
+    return rows, hidden
+
+
+def _close_row(
+    row: list[_Pill],
+    width: int,
+    counts: list[tuple[int, str, str]],
+    font,
+    pad_h: int,
+    col_gap: int,
+) -> tuple[list[_Pill], list[tuple[int, str, str]]]:
+    """End ``row`` with a ``+N`` pill for each ``(n, fill, text)`` in ``counts``.
+
+    ``counts[0]`` is the row's own group; badges trimmed off the row's tail to
+    make room are added to it, so N stays the exact number of badges not drawn.
+    Further entries count groups the canvas had no row for, in their own colour.
+    Returns the row and the entries that did not fit even on an emptied row,
+    for the caller to close onto another row.
+    """
+    row = list(row)
+    counts = [list(c) for c in counts]
+
+    def tail() -> list[_Pill]:
+        out = []
+        for n, fill, text in counts:
+            if n:
+                label = f"+{n}"
+                out.append((label, _pill_width(font, label, pad_h), fill, text))
+        return out
+
+    def row_width(pills: list[_Pill]) -> int:
+        return sum(p[1] for p in pills) + col_gap * max(0, len(pills) - 1)
+
+    while row and row_width(row + tail()) > width:
+        text, _, fill, text_color = row.pop()
+        tokens = _atoms(text)
+        counts[0][0] += 1
+        if len(tokens) > 1:
+            text = " ".join(tokens[:-1])
+            row.append((text, _pill_width(font, text, pad_h), fill, text_color))
+    closing = tail()
+    left: list[tuple[int, str, str]] = []
+    while closing and row_width(row + closing) > width:
+        closing.pop()
+        left.insert(0, tuple(counts.pop()))
+    return row + closing, left
+
+
+def _draw_rows(
+    base: Image.Image,
+    rows: list[list[_Pill]],
+    position: str,
+    alpha: int,
+    font_size: int,
+    pad_h: int,
+    pad_v: int,
+    col_gap: int,
+    row_gap: int,
+    margin: int,
+    y_offset: int = 0,
+) -> tuple[Image.Image, list[tuple[int, int, int, int]]]:
+    """Draw one group's rows as a block ``y_offset`` px in from its corner's edge.
+
+    The rows read top to bottom at every corner; each is aligned to its corner's
+    side. Returns the image and the ``(x, y, w, h)`` of every pill placed.
+    """
+    if not any(rows):
+        return base, []
+
+    img_w, img_h = base.size
+    pill_h = _measure_group_height(font_size, pad_v)
+    is_bottom = "bottom" in position
+    is_right = "right" in position
+    n = len(rows)
+
+    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
+    gm = _GLOW_MARGIN
+    rects = []
+    for i, row in enumerate(rows):
+        if not row:
+            continue
+        if is_bottom:
+            y = img_h - margin - pill_h - y_offset - (n - 1 - i) * (pill_h + row_gap)
+        else:
+            y = margin + y_offset + i * (pill_h + row_gap)
+        row_w = sum(w for _, w, _, _ in row) + col_gap * (len(row) - 1)
+        x = (img_w - margin - row_w) if is_right else margin
+        for text, w, fill, text_color in row:
+            _place_pill(overlay, (x - gm, y - gm), text, fill, text_color, alpha, font_size, pad_h, pad_v)
+            rects.append((x, y, w, pill_h))
+            x += w + col_gap
+
+    return Image.alpha_composite(base, overlay), rects
+
+
+def _layout_group(
+    group: BadgeGroup,
+    n_rows: int,
+    row_w: int,
+    narrow: int | None,
+    reserve_w: int,
+    font,
+    pad_h: int,
+    col_gap: int,
+    counted: list[tuple[int, str, str]] = (),
+) -> tuple[list[list[_Pill]], list[tuple[int, str, str]]]:
+    """Lay ``group`` out over ``n_rows`` rows, closing the last with its ``+N``.
+
+    Row ``narrow`` (if any) is ``reserve_w`` px shorter: it shares its band with
+    the rating across the poster (roadmap B10). Each ``(n, fill, text)`` in
+    ``counted`` is a group with no row of its own, closed onto this group's last
+    row as ``+n`` in its colour. Returns the rows and the ``counted`` entries
+    that did not fit there.
+    """
+    widths = [row_w - (reserve_w if i == narrow else 0) for i in range(n_rows)]
+    flowed, hidden = _flow_rows(group.labels, widths, font, pad_h, col_gap)
+    rows: list[list[_Pill]] = [[(t, w, group.fill_color, group.text_color) for t, w in r] for r in flowed]
+    rows += [[] for _ in range(n_rows - len(rows))]
+    counts = [(hidden, group.fill_color, group.text_color), *counted]
+    left: list[tuple[int, str, str]] = []
+    if any(n for n, _, _ in counts):
+        rows[-1], left = _close_row(rows[-1], widths[-1], counts, font, pad_h, col_gap)
+    return rows, left
+
+
+def _rows_wanted(group: BadgeGroup, row_w: int, narrow_last: bool | None, reserve_w: int, font, pad_h, col_gap) -> int:
+    """The fewest rows, up to ``_ROW_BUDGET``, that show every token of ``group``.
+
+    ``narrow_last`` says which row shares the rating's band: the last (True),
+    the first (False) or none (None).
+    """
+    for n in range(1, _ROW_BUDGET + 1):
+        narrow = None if narrow_last is None else (n - 1 if narrow_last else 0)
+        widths = [row_w - (reserve_w if i == narrow else 0) for i in range(n)]
+        if _flow_rows(group.labels, widths, font, pad_h, col_gap)[1] == 0:
+            return n
+    return _ROW_BUDGET
 
 
 def _place_pill(
@@ -298,93 +521,6 @@ def _place_pill(
     _composite_pill(layer, xy, _glow_tile(tile.size), tile)
 
 
-def _render_group(
-    base: Image.Image,
-    labels: list[str],
-    position: str,
-    fill_color: str,
-    text_color: str,
-    alpha: int,
-    font_size: int,
-    pad_h: int,
-    pad_v: int,
-    col_gap: int,
-    margin: int,
-    y_offset: int = 0,
-    reserve_w: int = 0,
-) -> tuple[Image.Image, list[tuple[int, int, int, int]]]:
-    """Render one badge group as a single row onto base. Overflow replaced with … pill.
-
-    ``reserve_w`` narrows the row by that many pixels from the far side, for a row
-    that shares its band with another group across the poster (roadmap B10).
-    Returns the image and the ``(x, y, w, h)`` of every pill placed.
-    """
-    if not labels:
-        return base, []
-
-    font = _load_font(font_size)
-    img_w, img_h = base.size
-
-    ref_h = font.getbbox("AgfpQ")[3] - font.getbbox("AgfpQ")[1]
-    pill_h = ref_h + pad_v * 2
-    max_row_w = img_w - 2 * margin - reserve_w
-
-    # Truncate any label whose pill would alone exceed the row width, then compute sizes
-    badge_sizes: list[tuple[str, int]] = []
-    for badge in labels:
-        badge = _truncate_label(badge, max_row_w, font, pad_h)
-        bbox = font.getbbox(badge)
-        w = bbox[2] - bbox[0] + pad_h * 2
-        badge_sizes.append((badge, w))
-
-    e_text = "…"
-    e_bbox = font.getbbox(e_text)
-    e_w = e_bbox[2] - e_bbox[0] + pad_h * 2
-
-    # Greedy single-row pack; append … when overflow
-    row: list[tuple[str, int]] = []
-    used_w = 0
-    overflowed = False
-    for badge, bw in badge_sizes:
-        needed = bw if not row else bw + col_gap
-        if used_w + needed <= max_row_w:
-            row.append((badge, bw))
-            used_w += needed
-        else:
-            overflowed = True
-            break
-
-    if overflowed:
-        e_needed = col_gap + e_w
-        # Trim tail to make room for …, but always keep at least 1 real badge
-        while len(row) > 1 and used_w + e_needed > max_row_w:
-            _, removed_bw = row.pop()
-            used_w -= removed_bw + col_gap
-        if used_w + e_needed <= max_row_w:
-            row.append((e_text, e_w))
-        # else: exactly 1 badge fills the row — silently omit ellipsis, badge presence implies content
-
-    if not row:
-        return base, []
-
-    row_w = sum(bw for _, bw in row) + col_gap * (len(row) - 1)
-    is_bottom = "bottom" in position
-    is_right = "right" in position
-
-    y = (img_h - margin - pill_h - y_offset) if is_bottom else (margin + y_offset)
-    x = (img_w - margin - row_w) if is_right else margin
-
-    overlay = Image.new("RGBA", base.size, (0, 0, 0, 0))
-    gm = _GLOW_MARGIN
-    rects = []
-    for badge, bw in row:
-        _place_pill(overlay, (x - gm, y - gm), badge, fill_color, text_color, alpha, font_size, pad_h, pad_v)
-        rects.append((x, y, bw, pill_h))
-        x += bw + col_gap
-
-    return Image.alpha_composite(base, overlay), rects
-
-
 def render_badge_groups(
     base: Image.Image,
     groups: list[BadgeGroup],
@@ -398,12 +534,15 @@ def render_badge_groups(
     pill drawn, ``kind`` being "rating" or "tags" -- so tests can check layout
     against the real render path rather than a re-implementation of it.
     """
-    img_w, _ = base.size
+    img_w, img_h = base.size
     p = _compute_layout_params(img_w, cfg)
 
     result = base.convert("RGBA") if base.mode != "RGBA" else base
-    common = (p["alpha"], p["font_size"], p["pad_h"], p["pad_v"], p["col_gap"], p["margin"])
+    font = _load_font(p["font_size"])
     row_h = _measure_group_height(p["font_size"], p["pad_v"])
+    pitch = row_h + p["row_gap"]
+    row_w = img_w - 2 * p["margin"]
+    draw = (p["alpha"], p["font_size"], p["pad_h"], p["pad_v"], p["col_gap"], p["row_gap"], p["margin"])
 
     # Roadmap B10. The rating and the tag rows each have their own corner, and
     # every combination must render without overlap:
@@ -413,43 +552,67 @@ def render_badge_groups(
     #   sides                   narrowed so it stops short of the rating (a tag
     #                           row may otherwise span the poster's full width);
     #   different edges      -> independent.
-    # The rating is placed first because it owns its corner.
+    # The rating is placed first because it owns its corner. It is one row.
     rating_rects: list[tuple[int, int, int, int]] = []
     if rating_group and rating_group.labels:
-        result, rating_rects = _render_group(
-            result,
-            rating_group.labels,
-            cfg.rating_position,
-            rating_group.fill_color,
-            rating_group.text_color,
-            *common,
-        )
+        rows, _ = _layout_group(rating_group, 1, row_w, None, 0, font, p["pad_h"], p["col_gap"])
+        result, rating_rects = _draw_rows(result, rows, cfg.rating_position, *draw)
         if placed is not None:
             placed.extend(("rating", r) for r in rating_rects)
 
     same_corner = bool(rating_rects) and cfg.rating_position == cfg.badge_position
     same_edge = bool(rating_rects) and cfg.rating_position.split("-")[0] == cfg.badge_position.split("-")[0]
+    shares_band = same_edge and not same_corner
     rating_w = max(x + w for x, _, w, _ in rating_rects) - min(x for x, _, _, _ in rating_rects) if rating_rects else 0
+    reserve_w = rating_w + p["col_gap"] if shares_band else 0
+
+    # Roadmap P7, decision (d). The tag stack is clamped to the canvas: it gets
+    # the rows between the margins, less the rating's row unless the rating
+    # shares a band with a narrowed tag row -- so the rating is never covered.
+    # Each group gets one row, then up to _ROW_BUDGET as rows allow; what is
+    # given up when they do not is the lowest-priority group's first, priority
+    # being group order (video, audio, subtitles): its wrap row, then -- on a
+    # canvas with fewer rows than groups -- its whole row, which is then
+    # counted, in its own colour, at the end of the last group that has one
+    # (and of the group before it, should that row fill up).
+    tag_groups = [g for g in groups if g.labels]
+    avail = img_h - 2 * p["margin"] - (0 if shares_band or not rating_rects else pitch)
+    slots = max(0, (avail + p["row_gap"]) // pitch)
+    kept, dropped = tag_groups[:slots], tag_groups[slots:]
+
+    # The group drawn at the edge (the last, stacked first) owns the band row:
+    # its last row when the tags are at the bottom, its first at the top.
+    is_bottom = "bottom" in cfg.badge_position
+    spare = slots - len(kept)
+    n_rows = []
+    for i, group in enumerate(kept):
+        narrow_last = is_bottom if shares_band and i == len(kept) - 1 else None
+        want = _rows_wanted(group, row_w, narrow_last, reserve_w, font, p["pad_h"], p["col_gap"])
+        extra = min(want - 1, spare)
+        spare -= extra
+        n_rows.append(1 + extra)
 
     # Tag groups at cfg.badge_position, stacked away from the edge.
-    cumulative_offset = row_h + p["row_gap"] if same_corner else 0
-    for group in reversed(groups):
-        if not group.labels:
-            continue
-        shares_band = same_edge and not same_corner and cumulative_offset == 0
-        result, rects = _render_group(
-            result,
-            group.labels,
-            cfg.badge_position,
-            group.fill_color,
-            group.text_color,
-            *common,
-            y_offset=cumulative_offset,
-            reserve_w=rating_w + p["col_gap"] if shares_band else 0,
+    pending = [(sum(len(_atoms(label)) for label in g.labels), g.fill_color, g.text_color) for g in dropped]
+    cumulative_offset = pitch if same_corner else 0
+    for i in reversed(range(len(kept))):
+        edge = i == len(kept) - 1
+        narrow = (n_rows[i] - 1 if is_bottom else 0) if shares_band and edge else None
+        rows, pending = _layout_group(
+            kept[i],
+            n_rows[i],
+            row_w,
+            narrow,
+            reserve_w,
+            font,
+            p["pad_h"],
+            p["col_gap"],
+            counted=pending,
         )
+        result, rects = _draw_rows(result, rows, cfg.badge_position, *draw, y_offset=cumulative_offset)
         if placed is not None:
             placed.extend(("tags", r) for r in rects)
-        cumulative_offset += row_h + p["row_gap"]
+        cumulative_offset += n_rows[i] * pitch
 
     return result
 
