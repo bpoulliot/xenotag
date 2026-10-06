@@ -239,17 +239,19 @@ def test_shipped_default_is_dry_run_without_rating_fallback():
 
 def test_default_tag_config_hash_changes_only_by_design():
     """B5's switches change the hash only when turned on; B9's respelling, B7's
-    language table and U5's `xt-interlaced` change it for everyone.
+    language table, U5's `xt-interlaced` and B13's resolution rule change it for everyone.
 
     Before B9 the defaults hashed to 3163f57ce472c152, before B7 to 09d02a2ffe47df66,
-    before U5 to d0c577fe5620e689. The vocabulary term moves every install once per
-    bump, on purpose: every library holds the old spellings, and U5's tag needs the
+    before U5 to d0c577fe5620e689, before B13 to ed8a1890a06dc045. The vocabulary and
+    resolution-rule terms move every install once per bump, on purpose: every library
+    holds the old spellings and classes, and U5's tag and B13's classes need the
     re-probe only a full scan does.
     """
-    assert pipeline._tag_config_hash(AppConfig()) == "ed8a1890a06dc045"
-    assert pipeline._tag_config_hash(AppConfig()) not in ("3163f57ce472c152", "09d02a2ffe47df66", "d0c577fe5620e689")
-    assert pipeline._tag_config_hash(cfg("live")) != "ed8a1890a06dc045"
-    assert pipeline._tag_config_hash(cfg("dry_run", cert_fallback=True)) != "ed8a1890a06dc045"
+    old = ("3163f57ce472c152", "09d02a2ffe47df66", "d0c577fe5620e689", "ed8a1890a06dc045")
+    assert pipeline._tag_config_hash(AppConfig()) == "7a0b22544d89aff4"
+    assert pipeline._tag_config_hash(AppConfig()) not in old
+    assert pipeline._tag_config_hash(cfg("live")) != "7a0b22544d89aff4"
+    assert pipeline._tag_config_hash(cfg("dry_run", cert_fallback=True)) != "7a0b22544d89aff4"
 
 
 # ── trap 1: an *arr id is per instance ──────────────────────────────────────

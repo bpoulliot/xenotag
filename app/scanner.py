@@ -16,12 +16,26 @@ log = logging.getLogger(__name__)
 # terminologic alike (`fre`/`fra` -> `FR`, `per`/`fas` -> `FA`).
 LANG_MAP: dict[str, str] = {code: two.upper() for code, two in ISO639_2_TO_1.items() if two}
 
-RESOLUTION_THRESHOLDS = [
-    (3840, "4K"),
-    (1920, "1080p"),
-    (1280, "720p"),
-    (854, "480p"),
+# Resolution classes, highest first: (width, height, label). A stream is in a class
+# when its width OR its height reaches the class's less RESOLUTION_TOLERANCE_PCT, and
+# the highest class it reaches wins (roadmap B13, operator decision 2026-10-05), so a
+# 3836x1604 scope crop and a 3584x2160 open matte are 4K and a 1440x1080 or 1904x1072
+# frame is 1080p. Height counts for the HD classes only: 480p has no height, so it is
+# width alone (854 less 5% = 811.3), and 720x480, 640x480 and 720x576 DVD frames stay SD.
+RESOLUTION_CLASSES: list[tuple[int, int | None, str]] = [
+    (3840, 2160, "4K"),
+    (1920, 1080, "1080p"),
+    (1280, 720, "720p"),
+    (854, None, "480p"),
 ]
+RESOLUTION_TOLERANCE_PCT = 5
+
+# Bump when the rule above moves an existing file to another class. The class is
+# stored in media_state, not the frame size, so an unchanged file keeps its old class
+# until it is probed again: pipeline._tag_config_hash() folds this in, so the
+# upgrade's first scan is a full re-tag that re-probes everything.
+# 1: width alone, exact (`>= 3840` -> 4K); 2: width or height, 5%, HD classes only (B13).
+RESOLUTION_RULE_VERSION = 2
 
 _VIDEO_CODEC_MAP = {
     "h264": "H.264",
@@ -189,12 +203,19 @@ def probe_file(path: str | Path) -> MediaInfo | None:
     )
 
 
+def _reaches(size: int, class_size: int) -> bool:
+    """``size`` is at least ``class_size`` less the tolerance (integer arithmetic, no rounding)."""
+    return size * 100 >= class_size * (100 - RESOLUTION_TOLERANCE_PCT)
+
+
 def _detect_resolution(streams: list[dict]) -> str:
+    """The first video stream's class (see RESOLUTION_CLASSES); ``unknown`` with no video stream."""
     for s in streams:
         if s.get("codec_type") == "video":
-            width = s.get("width", 0)
-            for threshold, label in RESOLUTION_THRESHOLDS:
-                if width >= threshold:
+            width = s.get("width") or 0
+            height = s.get("height") or 0
+            for class_width, class_height, label in RESOLUTION_CLASSES:
+                if _reaches(width, class_width) or (class_height is not None and _reaches(height, class_height)):
                     return label
             return "SD"
     return "unknown"
@@ -290,7 +311,7 @@ _LANG_CODE = re.compile(r"[a-z]{2,3}")  # the shape of an ISO 639-1 or 639-2 cod
 _NON_LANGUAGE_LABELS = frozenset(
     label.upper()
     for label in (
-        *(label for _, label in RESOLUTION_THRESHOLDS),
+        *(label for _, _, label in RESOLUTION_CLASSES),
         "SD",
         *_VIDEO_CODEC_MAP.values(),
         *("DV", "HDR10+", "HDR10", "HLG"),

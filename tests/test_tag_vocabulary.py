@@ -76,7 +76,7 @@ def non_language_vocabulary(tags: TagsConfig) -> set[str]:
     """Every label that is not a language: built on its own, so a language label that
     spells the same string as one of these is still visible (B7)."""
     return (
-        {label for _, label in scanner.RESOLUTION_THRESHOLDS}
+        {label for _, _, label in scanner.RESOLUTION_CLASSES}
         | {"SD"}
         | set(scanner._VIDEO_CODEC_MAP.values())
         | _hdr_types()

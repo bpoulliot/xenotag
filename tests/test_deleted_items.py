@@ -200,7 +200,7 @@ def test_shipped_default_is_report_only():
 def test_the_mode_forces_no_re_tag():
     """Turning removal on must not change the tag-config hash: it removes, it does not re-tag."""
     assert pipeline._tag_config_hash(cfg("remove", "dry_run")) == pipeline._tag_config_hash(AppConfig())
-    assert pipeline._tag_config_hash(AppConfig()) == "ed8a1890a06dc045"
+    assert pipeline._tag_config_hash(AppConfig()) == "7a0b22544d89aff4"
 
 
 @pytest.mark.parametrize(
