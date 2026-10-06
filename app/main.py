@@ -15,7 +15,7 @@ from starlette.responses import Response
 
 from . import auth as _auth
 from . import metrics
-from .config import AppConfig, get_config, load_config, log_env_overrides, save_auth
+from .config import AppConfig, get_config, initial_password_path, load_config, log_env_overrides, save_auth
 from .pipeline import run_incremental_scan
 from .scheduler import start, stop
 from .state import get_session, init_db, purge_legacy_tags
@@ -89,7 +89,7 @@ async def lifespan(app: FastAPI):
     init_db()
     metrics.seed_from_disk()
     _purge_legacy_tags(cfg)
-    _auth.bootstrap(cfg.auth, save_auth)
+    _auth.bootstrap(cfg.auth, save_auth, initial_password_path())
     start(cfg.scan.schedule, lambda: run_incremental_scan(get_config()))
     yield
     stop()
