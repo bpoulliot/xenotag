@@ -13,7 +13,7 @@ from pathlib import Path
 from sqlalchemy.orm import Session
 
 from . import metrics
-from .arr_sync import MODE_DRY_RUN, MODE_LIVE, ArrTagSync, store_report
+from .arr_sync import MODE_DRY_RUN, MODE_LIVE, ArrTagSync, _norm_path, item_folders, store_report
 from .clients.jellyfin import TAG_READ_BATCH, JellyfinClient
 from .clients.radarr import RadarrClient
 from .clients.readonly import ReadOnlyTransport
@@ -866,7 +866,12 @@ def run_incremental_scan(cfg: AppConfig) -> None:
 
 
 def _resolve_webhook_jf_item(jf: JellyfinClient, source: str, payload: dict) -> dict | None:
-    """Resolve the Jellyfin item dict from an inbound webhook payload."""
+    """Resolve the Jellyfin item dict from an inbound webhook payload.
+
+    Sonarr/Radarr payloads resolve by FOLDER only (roadmap B8): Jellyfin ignores
+    every provider-id filter, and a provider id cannot tell an HD copy from its
+    4K twin, while the folder can. The match is B5's own ``item_folders()``.
+    """
     if source == "jellyfin":
         item_id = payload.get("ItemId") or payload.get("item_id")
         if not item_id:
@@ -874,20 +879,23 @@ def _resolve_webhook_jf_item(jf: JellyfinClient, source: str, payload: dict) -> 
         return jf.get_item_by_id(item_id) or None
 
     if source == "sonarr":
-        series = payload.get("series") or {}
-        tvdb_id = series.get("tvdbId")
-        if tvdb_id:
-            return jf.find_item_by_provider_id("Tvdb", str(tvdb_id))
+        folder, item_type = (payload.get("series") or {}).get("path"), "Series"
+    elif source == "radarr":
+        folder, item_type = (payload.get("movie") or {}).get("folderPath"), "Movie"
+    else:
         return None
-
-    if source == "radarr":
-        movie = payload.get("movie") or {}
-        tmdb_id = movie.get("tmdbId")
-        if tmdb_id:
-            return jf.find_item_by_provider_id("Tmdb", str(tmdb_id))
+    folder = _norm_path(folder)
+    if not folder:
         return None
-
-    return None
+    matches = [i for i in jf.list_item_paths(item_type) if folder in item_folders(i)]
+    if not matches:
+        log.info("Webhook %s: %s not in Jellyfin yet; the next scan will reach it", source, folder)
+        return None
+    if len(matches) > 1:
+        ids = ", ".join(i.get("Id", "?") for i in matches)
+        log.warning("Webhook %s: %s matches %d Jellyfin items (%s); not guessing", source, folder, len(matches), ids)
+        return None
+    return jf.get_item_by_id(matches[0].get("Id", "")) or None
 
 
 def handle_webhook(cfg: AppConfig, source: str, payload: dict) -> None:
