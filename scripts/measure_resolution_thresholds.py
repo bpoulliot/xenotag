@@ -1,22 +1,28 @@
 #!/usr/bin/env python3
 """How many items sit just under a resolution threshold, and what each candidate rule changes (B13).
 
-``scanner._detect_resolution()`` names a file's class from its first video
-stream's WIDTH alone (``>= 3840`` -> 4K, 1920 -> 1080p, 1280 -> 720p, 854 ->
-480p, else SD), so a 3836-wide scope crop is 1080p. This probe reads every
-item's video ``Width``x``Height`` from Jellyfin, buckets how far below each
-threshold the width falls (0-1 %, 1-5 %, 5-10 %) and by aspect, and counts the
-items each candidate rule would put in a different class from today's rule --
-which it IMPORTS, never re-implements.
+Before B13, ``scanner._detect_resolution()`` named a file's class from its first
+video stream's WIDTH alone (``>= 3840`` -> 4K, 1920 -> 1080p, 1280 -> 720p, 854
+-> 480p, else SD), so a 3836-wide scope crop was 1080p. That rule is kept here,
+frozen, as ``before_b13()`` -- the baseline every count is taken against, since
+it is what the tags on the library were written with. Since B13 (operator
+decision 2026-10-05) the shipped rule is width OR height within 5 %, HD classes
+only (the ``hw-5%-hd`` row); ``shipped()`` IMPORTS it, never re-implements it,
+and the self-test fails unless the two agree.
 
-Candidate rules (all keep today's class names, so no new tag label appears):
+This probe reads every item's video ``Width``x``Height`` from Jellyfin, buckets
+how far below each threshold the width falls (0-1 %, 1-5 %, 5-10 %) and by
+aspect, and counts the items each candidate rule would put in a different class
+from ``before_b13()``.
+
+Candidate rules (all keep the class names, so no new tag label appears):
 
 * ``width-N%``    -- width against each threshold less N %.
 * ``h-or-w``      -- width reaches the width threshold OR height reaches
   2160 / 1080 / 720 / 480.
 * ``nominal``     -- ``max(W/16, H/9) * 9`` (the 16:9-equivalent line count),
   rounded to the nearest of 2160 / 1080 / 720 / 480 (linear midpoints); below
-  480 it is SD, the same boundary as today's 854-wide 480p floor.
+  480 it is SD, the same boundary as the old 854-wide 480p floor.
 
     python3 scripts/measure_resolution_thresholds.py --self-test
     python3 scripts/measure_resolution_thresholds.py --config /path/config.yml \\
@@ -29,7 +35,7 @@ list (``cfg.jellyfin.library_ids``, deduplicated across libraries as
 scan uses (``pipeline._get_first_episode_path``). A movie's class comes from
 its own item's streams, a series' from that first episode -- the two things a
 scan tags. ``--episodes`` adds every episode as an untagged distribution.
-``--state-db`` (a COPY) cross-checks today's rule on Jellyfin's numbers
+``--state-db`` (a COPY) cross-checks both rules on Jellyfin's numbers
 against the class the last scan recorded. ``--arr-plans`` is a directory of B5
 go-live reports whose ``plan`` rows map a Jellyfin item to each *arr object
 that owns it; a class change is one tag rename on Jellyfin plus one per owner.
@@ -48,7 +54,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
-from app.scanner import RESOLUTION_THRESHOLDS, _detect_resolution  # noqa: E402
+from app.scanner import _detect_resolution  # noqa: E402
 
 CLASSES = ["4K", "1080p", "720p", "480p", "SD", "unknown"]
 HEIGHTS = {"4K": 2160, "1080p": 1080, "720p": 720, "480p": 480}
@@ -68,7 +74,19 @@ KNOWN = [("Return to Silent Hill (4K)", 3836, 1604), ("Dr. Strangelove (4K)", 35
 # --------------------------------------------------------------------------- rules
 
 
-def today(w: int, h: int) -> str:
+# The pre-B13 width thresholds, frozen: the library's tags were written with them.
+RESOLUTION_THRESHOLDS = [(3840, "4K"), (1920, "1080p"), (1280, "720p"), (854, "480p")]
+
+
+def before_b13(w: int, h: int) -> str:
+    """The rule before B13: width alone, exact."""
+    for threshold, label in RESOLUTION_THRESHOLDS:
+        if w >= threshold:
+            return label
+    return "SD"
+
+
+def shipped(w: int, h: int) -> str:
     """The shipped rule, by calling the shipped function."""
     return _detect_resolution([{"codec_type": "video", "width": w, "height": h}])
 
@@ -113,6 +131,7 @@ RULES = {
     "hw-1%-hd": h_or_w_tol(1, hd_only=True),
     "hw-5%-hd": h_or_w_tol(5, hd_only=True),
     "nominal": nominal,
+    "shipped": shipped,
 }
 
 
@@ -178,7 +197,7 @@ def analyse(records: list[dict], owners: dict[str, int] | None = None, state: di
     rules: dict = {
         name: {"trans": Counter(), "pairs": Counter(), "items": 0, "arr": 0, "owners": Counter()} for name in RULES
     }
-    under_1080: Counter = Counter()  # tagged items today 720p with W in [1728, 1920) or H >= 1080
+    under_1080: Counter = Counter()  # tagged items 720p before B13 with W in [1728, 1920) or H >= 1080
     cross: Counter = Counter()
     ids = {r["id"] for r in records}
     alts: Counter = Counter()
@@ -186,8 +205,8 @@ def analyse(records: list[dict], owners: dict[str, int] | None = None, state: di
         for alt in r.get("alts") or []:
             twin = "separately tagged item" if alt["id"] in ids else "version inside this item"
             alts[twin] += 1
-            if r["has_video"] and alt["has_video"] and today(alt["w"], alt["h"]) != today(r["w"], r["h"]):
-                alts[f"{twin}, today's class differs from the item's"] += 1
+            if r["has_video"] and alt["has_video"] and before_b13(alt["w"], alt["h"]) != before_b13(r["w"], r["h"]):
+                alts[f"{twin}, the old class differs from the item's"] += 1
         kind = r["kind"]
         out["n"][kind] += 1
         for flag in ("image_first", "multi_source"):
@@ -208,11 +227,12 @@ def analyse(records: list[dict], owners: dict[str, int] | None = None, state: di
         aspect_all[aspect(w, h)] += 1
         if b:
             band_aspect[b][aspect(w, h)] += 1
-        now = today(w, h)
+        now = before_b13(w, h)
         if now == "720p" and (w >= 1728 or h >= 1080):
             under_1080[(w, h)] += 1
         if state is not None:
-            cross[(now, state.get(r["id"], "no row"))] += 1
+            cross[("before B13", now, state.get(r["id"], "no row"))] += 1
+            cross[("shipped", shipped(w, h), state.get(r["id"], "no row"))] += 1
         for name, rule in RULES.items():
             new = rule(w, h)
             if new != now:
@@ -261,7 +281,7 @@ def render(res: dict, owners_source: str) -> str:
     add("")
     add("All tagged items by aspect: " + ", ".join(f"{a} {res['aspect_all'][a]}" for a in names))
     add("")
-    add(f"## Candidate rules vs today (tagged items; *arr owners from {owners_source})")
+    add(f"## Candidate rules vs the pre-B13 rule (tagged items; *arr owners from {owners_source})")
     add("| rule | items changing class | Jellyfin renames | *arr renames | items by owner count | transitions |")
     add("|---|---:|---:|---:|---|---|")
     for name, r in res["rules"].items():
@@ -280,23 +300,25 @@ def render(res: dict, owners_source: str) -> str:
     add(", ".join(f"{k}: {n}" for k, n in sorted(res["alts"].items())) or "-")
     add("")
     add("## Known cases")
-    add("| case | WxH | today | " + " | ".join(RULES) + " |")
+    add("| case | WxH | before B13 | " + " | ".join(RULES) + " |")
     add("|---|---|---|" + "---|" * len(RULES))
     for label, w, h in KNOWN:
-        add(f"| {label} | {w}x{h} | {today(w, h)} | " + " | ".join(rule(w, h) for rule in RULES.values()) + " |")
+        add(f"| {label} | {w}x{h} | {before_b13(w, h)} | " + " | ".join(rule(w, h) for rule in RULES.values()) + " |")
     add("")
-    add("## Today 720p, but W >= 1728 or H >= 1080 (1080p crops and 1440x1080-style frames)")
+    add("## 720p before B13, but W >= 1728 or H >= 1080 (1080p crops and 1440x1080-style frames)")
     u = res["under_1080"]
     add(f"{sum(u.values())} items: " + (", ".join(f"{w}x{h} ({n})" for (w, h), n in u.most_common(40)) or "-"))
     if res["cross"]:
         add("")
-        add("## Cross-check: today's rule on Jellyfin's numbers vs the class state.db recorded")
-        agree = sum(n for (a, b), n in res["cross"].items() if a == b)
-        total = sum(res["cross"].values())
-        add(f"agree {agree}/{total}; disagreements: ")
-        for (a, b), n in sorted(res["cross"].items(), key=lambda kv: -kv[1]):
-            if a != b:
-                add(f"- jellyfin->{a}, state.db {b}: {n}")
+        add("## Cross-check: each rule on Jellyfin's numbers vs the class state.db recorded")
+        add("(before the B13 re-tag state.db should agree with the old rule; after it, with the shipped one)")
+        for rule in ("before B13", "shipped"):
+            rows = {(a, b): n for (r, a, b), n in res["cross"].items() if r == rule}
+            agree = sum(n for (a, b), n in rows.items() if a == b)
+            add(f"- {rule}: agree {agree}/{sum(rows.values())}; disagreements:")
+            for (a, b), n in sorted(rows.items(), key=lambda kv: -kv[1]):
+                if a != b:
+                    add(f"  - jellyfin->{a}, state.db {b}: {n}")
     return "\n".join(lines)
 
 
@@ -464,16 +486,40 @@ def self_test() -> int:
     if not _band_failures(_mutant_band):
         check("the band checks did not catch a mutant that bands the threshold itself")
 
-    # today() is the imported rule: the filing's cases must come out as filed.
+    # before_b13() is the frozen old rule: the filing's cases must come out as filed.
     for (w, h), want in {(3836, 1604): "1080p", (3584, 2160): "1080p", (3840, 2160): "4K", (1916, 800): "720p"}.items():
-        if today(w, h) != want:
-            check(f"today({w}x{h}) = {today(w, h)}, want {want}")
-    # A zero tolerance must agree with today everywhere; a positive one must not.
+        if before_b13(w, h) != want:
+            check(f"before_b13({w}x{h}) = {before_b13(w, h)}, want {want}")
+    # A zero tolerance must agree with the old rule everywhere; a positive one must not.
     grid = [(w, h) for w in range(600, 4200, 7) for h in (480, 576, 800, 1080, 1604, 2160)]
-    if [p for p in grid if width_tol(0)(*p) != today(*p)]:
-        check("width-0% disagrees with today's rule")
-    if all(width_tol(1)(*p) == today(*p) for p in grid):
-        check("width-1% never differs from today's rule")
+    if [p for p in grid if width_tol(0)(*p) != before_b13(*p)]:
+        check("width-0% disagrees with the pre-B13 rule")
+    if all(width_tol(1)(*p) == before_b13(*p) for p in grid):
+        check("width-1% never differs from the pre-B13 rule")
+
+    # shipped() is the imported rule, and it must be the decided row (hw-5%-hd) -- the
+    # row whose 745 the roadmap records. The same check must reject its neighbours:
+    # the 1% row, and the 5% row that also uses height for 480p (DVDs -> 480p).
+    wide = [(w, h) for w in range(0, 4200, 3) for h in range(0, 2300, 7)]
+    if [p for p in wide if shipped(*p) != RULES["hw-5%-hd"](*p)]:
+        check("the shipped rule is not hw-5%-hd")
+    for name, mutant in (("hw-1%-hd", RULES["hw-1%-hd"]), ("hw-5% (480p by height)", h_or_w_tol(5))):
+        if all(mutant(*p) == RULES["hw-5%-hd"](*p) for p in wide):
+            check(f"the shipped-rule check cannot tell hw-5%-hd from {name}")
+    for (w, h), want in {
+        (3836, 1604): "4K",
+        (3584, 2160): "4K",
+        (1440, 1080): "1080p",
+        (1792, 1080): "1080p",
+        (1904, 1072): "1080p",
+        (1918, 1080): "1080p",
+        (720, 480): "SD",
+        (640, 480): "SD",
+        (704, 480): "SD",
+        (720, 576): "SD",
+    }.items():
+        if shipped(w, h) != want:
+            check(f"shipped({w}x{h}) = {shipped(w, h)}, want {want}")
     expect = {
         ("width-1%", 3836, 1604): "4K",
         ("width-1%", 3584, 2160): "1080p",
@@ -567,13 +613,22 @@ def self_test() -> int:
     want_alts = {
         "separately tagged item": 1,
         "version inside this item": 1,
-        "version inside this item, today's class differs from the item's": 1,
+        "version inside this item, the old class differs from the item's": 1,
     }
     if dict(res["alts"]) != want_alts:
         check(f"alt versions on the fixture: {dict(res['alts'])}")
     if res["flags"]["series"]["no_video"] != 1:
         check("the no-video series was not flagged")
-    if res["cross"] != Counter({("1080p", "1080p"): 1, ("1080p", "720p"): 1}):
+    rs = res["rules"]["shipped"]
+    if (rs["items"], rs["arr"], dict(rs["trans"])) != (1, 2, {("1080p", "4K"): 1}):
+        check(f"shipped on the fixture: {rs['items']} items, {rs['arr']} arr, {dict(rs['trans'])}")
+    want_cross = {
+        ("before B13", "1080p", "1080p"): 1,
+        ("before B13", "1080p", "720p"): 1,
+        ("shipped", "4K", "1080p"): 1,
+        ("shipped", "1080p", "720p"): 1,
+    }
+    if res["cross"] != Counter(want_cross):
         check(f"state cross-check on the fixture: {dict(res['cross'])}")
 
     for f in fails:

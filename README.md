@@ -43,6 +43,7 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 
 ### Metadata Extraction
 - Extracts **resolution** (480p, 720p, 1080p, 4K), **video codec** (H.264, H.265/HEVC, AV1, VP9, etc.), and **HDR type** (HDR10, HDR10+, Dolby Vision, HLG) via `ffprobe`
+- A **resolution class** is reached when the video's width *or* height is within 5% of the class's: 3840×2160 (4K), 1920×1080 (1080p), 1280×720 (720p) — so a 3836×1604 scope crop or a 3584×2160 open matte is 4K, and a 1440×1080 frame is 1080p. 480p is width alone (≥ 812, i.e. 854 less 5%), so DVD frames (720×480, 720×576) are SD
 - Tags **interlaced** video `xt-interlaced` when ffprobe's field order says so (`tt`/`bb`/`tb`/`bt`). There is no progressive tag, and a stream that declares no field order is not tagged either way — common: about a third of a sampled library, mostly AV1 and HEVC. Tag only, no badge
 - Extracts **audio track languages** and **codecs** (TrueHD, DTS-HD, AC-3, AAC, etc.)
 - Extracts **subtitle track languages** and formats (PGS, SRT, ASS, embedded vs. external)
@@ -77,7 +78,7 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 - **Scheduled scans**: configurable cron expression (default: weekly)
 - Parallel `ffprobe` via configurable worker pool (`scan.max_workers`)
 - Path filters: limit scanning to specific mount prefixes
-- Tag config change detection: automatically forces a full re-tag when tag settings change, or when an upgrade changes how tags are spelled
+- Tag config change detection: automatically forces a full re-tag when tag settings change, or when an upgrade changes how tags are spelled or how a file's resolution is classed (that first scan re-probes every file and rewrites the changed tags on Jellyfin and on every live Sonarr/Radarr)
 - Per-item error tracking: probe failures, missing files, process errors — visible in the dashboard
 
 ### Web UI

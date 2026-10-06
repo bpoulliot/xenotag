@@ -22,7 +22,7 @@ from .clients.sonarr import SonarrClient
 from .config import AppConfig
 from .deleted_items import run_deleted_items
 from .overlay import BadgeGroup, apply_overlay, order_pills_by_language
-from .scanner import AudioTrack, MediaInfo, SubTrack, probe_file
+from .scanner import RESOLUTION_RULE_VERSION, AudioTrack, MediaInfo, SubTrack, probe_file
 from .state import (
     MediaState,
     ScanError,
@@ -108,6 +108,15 @@ _TAG_CONFIG_KEY = "tag_config_hash"
 
 
 def _tag_config_hash(cfg: AppConfig) -> str:
+    """What the tags depend on; when it differs from the stored hash, the next scan is a full re-tag.
+
+    A config change moves it, and so do two code versions on purpose: a tag
+    respelling (``TAG_VOCABULARY``) and a resolution-rule change
+    (``RESOLUTION_RULE_VERSION``, roadmap B13). Bumping either makes the upgrade's
+    first scan a full re-tag -- it re-probes every file and writes every changed
+    tag, on Jellyfin and on every live *arr -- because otherwise an unchanged file
+    keeps what the old code gave it. Nothing else in a release forces one.
+    """
     dest = cfg.tags.destinations
     raw = (
         f"{cfg.tags.managed_prefix}|{cfg.tags.dual_audio_tag}|{cfg.tags.multi_audio_tag}"
@@ -119,10 +128,13 @@ def _tag_config_hash(cfg: AppConfig) -> str:
         # Code, not config: an upgrade that respells existing tags (B9) must force
         # one full re-tag, or unchanged files keep the old spelling forever.
         f"|vocab:{TAG_VOCABULARY}"
+        # Code too: media_state keeps the class, not the frame size, so a new rule
+        # reaches an unchanged file only through a re-probe (B13).
+        f"|resolution-rule:{RESOLUTION_RULE_VERSION}"
     )
-    # Appended only when switched ON, so the shipped defaults hash exactly as
-    # before and an upgrade does not force a full rescan. Turning either on
-    # does: the next scan re-tags everything, which is what going live means.
+    # Appended only when switched ON, so the shipped defaults hash the same with
+    # them off. Turning either on forces a full re-tag: the next scan re-tags
+    # everything, which is what going live means.
     if cfg.arr_sync.mode == MODE_LIVE:
         raw += "|arr:live"
     if cfg.arr_sync.certification_fallback:

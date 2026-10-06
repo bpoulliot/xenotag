@@ -43,7 +43,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
-| B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **READY (decided 2026-10-05)** | — |
+| B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **SHIPPED 2026-10-06** ([#122](https://github.com/bpoulliot/xenotag/pull/122); merged, not released) — **the next release's first scan is a full re-tag with live \*arr writes** (~747 renames + posters) | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116); merged, not released) | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115); merged, not released) | — |
 | B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | **READY (decided 2026-10-05)** | — |
@@ -529,6 +529,44 @@ filed cases move to the class the file lists); DVDs **stay SD**. Delivery: **(a)
 resolution-rule version into `_tag_config_hash()`, so the upgrade forces one full re-tag.
 Relabelled **READY**; must merge before the next release, with B20 and B21 — see the build-order
 note above. The forced re-tag writes live `*arr` tags, same as B9's and B7's did.
+
+**B13 — SHIPPED 2026-10-06 ([#122](https://github.com/bpoulliot/xenotag/pull/122), merged, not released).**
+`scanner._detect_resolution()` now uses `RESOLUTION_CLASSES` ((3840, 2160, 4K), (1920, 1080, 1080p),
+(1280, 720, 720p), (854, no height, 480p)) with `RESOLUTION_TOLERANCE_PCT = 5`. A stream is in a class
+when its width or height reaches the class's value less 5% (integer test, `size·100 ≥ class·95`), and
+the highest class wins. 480p has no height, so it is width ≥ 812 alone, and DVD frames stay SD.
+`RESOLUTION_RULE_VERSION = 2` is folded into `_tag_config_hash()` (`|resolution-rule:2`), so the
+default-config hash goes from `ed8a1890a06dc045` to `7a0b22544d89aff4`.
+
+**⚠ Release note — the next release's first scan is a FULL RE-TAG WITH LIVE `*arr` WRITES**, like
+v1.9.0's. It re-probes every file and moves about 747 items' resolution tags: one rename on Jellyfin
+plus one on each owning `*arr` (about 741, counted from B5's go-live plans), and one poster re-render
+each. Production is live on all five `*arr`s with an empty recycle bin. Nothing has run it.
+After the re-tag, read back by `Ids=` (B18), not the recursive listing.
+
+*Proof.* The probe now keeps the pre-B13 rule frozen as `before_b13()` (what the library's tags were
+written with) and imports the shipped rule as the `shipped` row. Its `--self-test` (CI) fails unless
+`shipped` equals `hw-5%-hd` on a 0–4200 × 0–2300 grid. It was shown to fail on a 1% tolerance and on
+using height at 480p, and to pass again when restored. `tests/test_resolution_rule.py` pins:
+- the filed files and the commonest moved pairs (1440×1080, 1792×1080, 1904×1072, 1918×1080 → 1080p);
+- the DVD shapes (SD) and the 5% edges;
+- that the hash moves with the version;
+- that an install with unchanged config on the new code re-tags once and then not again, with a
+  control where the current version stored is not re-tagged.
+
+Suite 788 → 835.
+
+*Live re-sweep 2026-10-06* (production, 2,501 GETs through `ReadOnlyTransport`, 0 blocked; the five
+B5 plans; a copy of `state.db`). The library has grown to 6,977 movies + 2,473 series. The `shipped`
+row equals `hw-5%-hd`: **747** items, 741 `*arr` renames: 720p→1080p 669, 480p→720p 61, SD→480p 12,
+1080p→4K 3, 480p→1080p 2. Against the table's 745, only 720p→1080p moved (+2):
+- 4 movers were created after the 09-27 sweep (09-28 and 10-03 ×3, all 720p→1080p, none in a B5
+  plan);
+- the owned movers fell from 743 to 741, so 2 have left the library or been replaced.
+
+The two departed items could not be named, because the 09-27 per-item records were not kept. The
+pre-B13 rule still agrees with `state.db` on 9,438 of 9,438 items, and `shipped` disagrees with it
+on exactly the 747.
 
 **B12 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
 
