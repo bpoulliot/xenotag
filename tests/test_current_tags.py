@@ -56,7 +56,9 @@ class FakeServer:
         if request.method == "POST" and path.endswith("/Refresh"):
             return httpx.Response(204)
         if request.method == "POST" and path.startswith("/Items/"):
-            self.writes[path.split("/")[2]] = json.loads(request.content)
+            body = json.loads(request.content)
+            self.writes[path.split("/")[2]] = body
+            self.current[path.split("/")[2]] = body["Tags"]  # a write that sticks (B17 reads it back)
             return httpx.Response(204)
         return httpx.Response(404)
 
@@ -211,8 +213,10 @@ def test_scan_reads_in_batches_each_before_its_writes(scan, monkeypatch):
     server = FakeServer([movie(i, []) for i in ids], {i: [] for i in ids})
     run(server)
     reads = _ids_reads(server)
-    assert sorted(len(b) for b in reads) == [1, 2, 2]
-    assert sorted(i for b in reads for i in b) == sorted(ids)
+    # Each batch is read twice: before its writes (B18) and after them, the read-back (B17).
+    assert sorted(len(b) for b in reads) == [1, 1, 2, 2, 2, 2]
+    assert sorted(i for b in reads for i in b) == sorted(ids * 2)
+    assert [sorted(b) for b in reads[0::2]] == [sorted(b) for b in reads[1::2]]
     assert set(server.writes) == set(ids)
     # Every write follows the Ids= read that covered it, and precedes the next read.
     seq = [("read", tuple(q["Ids"].split(","))) for m, p, q in server.log if "Ids" in q]
@@ -221,7 +225,7 @@ def test_scan_reads_in_batches_each_before_its_writes(scan, monkeypatch):
         for m, p, q in server.log
         if "Ids" in q or (m == "POST" and not p.endswith("/Refresh"))
     ]
-    assert len(seq) == 3
+    assert len(seq) == 6
     current: tuple = ()
     for kind, what in order:
         if kind == "read":

@@ -31,9 +31,14 @@ class FakeJellyfin:
 
     def __init__(self):
         self.writes: list[tuple] = []
+        self.tags: dict[str, list[str]] = {}
 
     def set_managed_tags(self, item_id, item, prefix, tags, fallback_rating="", legacy_prefixes=()):
         self.writes.append(("tags", item_id, tuple(item.get("Tags") or []), prefix, tuple(tags), fallback_rating))
+        self.tags[item_id] = list(tags)
+
+    def get_current_tags(self, item_ids):
+        return {i: self.tags[i] for i in item_ids if i in self.tags}
 
     def refresh_item(self, item_id):
         self.writes.append(("refresh", item_id))

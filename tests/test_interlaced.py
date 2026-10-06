@@ -150,6 +150,9 @@ class _Jellyfin:
     def set_managed_tags(self, item_id, item, prefix, tags, fallback_rating="", legacy_prefixes=()):
         self.tag_writes[item_id] = list(tags)
 
+    def get_current_tags(self, item_ids):
+        return {i: self.tag_writes[i] for i in item_ids if i in self.tag_writes}
+
     def refresh_item(self, item_id):
         pass
 

@@ -42,6 +42,7 @@ arr_halts_total                                 counter
 arr_sync_halted                                 gauge
 arr_last_halt_timestamp_seconds                 gauge
 tag_drift_total                                 counter
+tag_writeback_mismatch_total                    counter  result
 ==============================================  =======  ==========================
 
 ``outcome`` is ``success`` / ``failed`` / ``cancelled``. ``error_type`` is one of
@@ -53,6 +54,9 @@ The label is ``arr_instance``, not ``instance``, which Prometheus owns.
 ``tag_drift_total`` is cumulative for the process (roadmap U9): items whose
 Jellyfin ``xt-`` tags differed from what xenotag last wrote, counted when a scan
 or webhook reached them, before the write that replaced them.
+``tag_writeback_mismatch_total`` counts Jellyfin tag writes whose read-back did
+not show the managed tags written (roadmap B17), by ``result``: ``fixed`` (the
+one retry stuck) or ``unresolved`` (still wrong; the row records what was read).
 """
 
 from __future__ import annotations
@@ -92,6 +96,9 @@ ERROR_TYPES = ("no_path", "no_file", "probe_failed", "process_error")
 WRITTEN = "written"
 WRITE_ERROR = "error"
 READBACK_MISMATCH = "readback_mismatch"
+
+MISMATCH_FIXED = "fixed"
+MISMATCH_UNRESOLVED = "unresolved"
 
 # The `*_created` twin of every counter is noise for a scrape-and-alert setup.
 disable_created_metrics()
@@ -147,6 +154,12 @@ tag_drift_total = Counter(
     "Items whose Jellyfin managed tags differed from what xenotag last wrote, seen before a write.",
     registry=REGISTRY,
 )
+tag_writeback_mismatch_total = Counter(
+    "xenotag_tag_writeback_mismatch",
+    "Jellyfin tag writes whose read-back differed, by whether the one retry fixed it.",
+    ["result"],
+    registry=REGISTRY,
+)
 
 
 # Every known label set exists from the first scrape, at 0: a series that only
@@ -156,6 +169,8 @@ for _type in ("full", "incremental"):
         scans_total.labels(scan_type=_type, outcome=_outcome)
 for _error in (*ERROR_TYPES, "other"):
     scan_errors.labels(error_type=_error)
+for _result in (MISMATCH_FIXED, MISMATCH_UNRESOLVED):
+    tag_writeback_mismatch_total.labels(result=_result)
 
 
 def _scan_running() -> float:
@@ -218,6 +233,10 @@ def arr_write(arr_instance: str, result: str) -> None:
 
 def tag_drift() -> None:
     tag_drift_total.inc()
+
+
+def tag_writeback_mismatch(result: str) -> None:
+    tag_writeback_mismatch_total.labels(result=result).inc()
 
 
 def arr_halt(now: float | None = None) -> None:
