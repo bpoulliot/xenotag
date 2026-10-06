@@ -50,7 +50,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **SHIPPED 2026-10-06** ([#121](https://github.com/bpoulliot/xenotag/pull/121); merged, not released) — **changes scan behaviour at the next release** | — |
 | B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | **SHIPPED 2026-10-06** ([#114](https://github.com/bpoulliot/xenotag/pull/114); merged, not released) | — |
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | **CLOSED (decided 2026-10-05)** — accept the overlap; the pinning test stays | — |
-| B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | **READY (decided 2026-10-05)** | — |
+| B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | **SHIPPED 2026-10-06** ([#123](https://github.com/bpoulliot/xenotag/pull/123); merged, not released) — `Name[xxx]` reads the code; *Tenchi in Tokyo* only partly fixed (25 bare-name episodes stay `UND`) | — |
 | B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | **READY (decided 2026-10-05)** | — |
 | B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113); merged, not released) | — |
 | B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | READY | — |
@@ -146,7 +146,38 @@ keep today's glow pixels; at 100% posters stay as they are (byte-identical at 10
 confirmed by a render). Relabelled **READY**; must merge before the next release — see the
 build-order note above.
 
-**B20 — FILED 2026-09-27, found while fixing B7. Not fixed here. NEEDS DECISION.**
+**B20 — SHIPPED 2026-10-06 ([#123](https://github.com/bpoulliot/xenotag/pull/123), merged, not released).**
+`_lang3_to_lang2()` reads a tag shaped exactly `<name>[<2-3 ASCII letters>]` (one anchored regex,
+`[^\[\]]+\[([a-z]{2,3})\]`, matched after lowercasing and stripping) as its bracketed code, which
+then goes through the same rule as any code: `English[eng]` → `EN`, `Japanese[jpn]` → `JA`,
+`Cantonese[yue]` → `YUE` (a well-formed code outside the table keeps its letters, as `yue` does),
+`Foo[aac]` / `None[zxx]` → `UND` with the WARNING, `Unknown[und]` → `UND` quietly. Anything else
+keeps B7's rule and is `UND` with the WARNING: bare `English`/`Japanese` (decided not (c)), `[eng]`
+alone (no name), `Foo[eng][jpn]` (a name may not contain brackets), `English[]`, `English[e]`,
+`English[engl]`, `English[eng]x`, and `"eng"`. External subtitle file names are unaffected (they are
+gated on the plain 2-3-letter shape first). Tests in `tests/test_language_codes.py`.
+
+**Census, 2026-10-06** — `scripts/measure_language_renames.py` (self-test passed; its self-check:
+the pre-B7 rule reproduces 9,383 of 9,438 index rows), read-only on copies of production's
+`jellyfin.db` and `state.db` taken with `-wal`/`-shm`. Against the pre-B7 labels: 47 changed index
+rows on `origin/main` before this fix, 45 after. The index has one row per `.ogm` series that it
+sees, so the per-episode figure comes from the same `jellyfin.db` copy, every episode carrying one of
+the shapes, run through `_lang3_to_lang2()` and the script's `language_tags()`:
+
+| Series | Episodes | Stream tags | Before B20 | After B20 |
+|---|---|---|---|---|
+| *Hyper Police* | 25 | `English[eng]`, `Japanese[jpn]`, sub `English[eng]` | `UND` | `EN JA dual-audio sub-EN` |
+| *Power Dolls* | 2 | `Japanese[jpn]`, `English[eng]`, sub `English[eng]` | `UND` | `EN JA dual-audio sub-EN` |
+| *Tenchi in Tokyo* | 1 | bracketed, as above | `UND` | `EN JA dual-audio sub-EN` |
+| *Tenchi in Tokyo* | 25 | `English`, `Japanese`, sub `English` | `UND` | **`UND`** (unchanged) |
+
+So two series are fixed whole and ***Tenchi in Tokyo* is only partly fixed**: 25 of its 26 episodes
+still lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag, each logging a WARNING per track
+naming the file — those are the metadata to fix (option (a) for that series: a remux), not this
+rule. The one other malformed tag in the library, `"eng"` (*The Uncomfortable Truth*, one audio
+stream), stays `UND` as B7 decided.
+
+**B20 — FILED 2026-09-27, found while fixing B7. Fixed 2026-10-06 (above).**
 
 B7's operator decision sends a language tag that is not 2–3 ASCII letters to `UND` with a
 WARNING naming the file; its example was `"e`. A census of production's `jellyfin.db` (copied
