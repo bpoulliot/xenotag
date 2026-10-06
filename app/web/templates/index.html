@@ -46,6 +46,9 @@
   .page.active{display:block}
   .grid{display:grid;grid-template-columns:1fr 1fr;gap:16px}
   @media(max-width:800px){.grid{grid-template-columns:1fr}}
+  /* P4a: a grid item's min-width:auto made the column as wide as the widest table, so the
+     page overflowed at phone width and the tables' overflow-x:auto boxes never scrolled. */
+  .grid>*{min-width:0}
   .full{grid-column:1/-1}
 
   /* ── Cards ── */
