@@ -17,15 +17,20 @@ independent reads of each render:
   ``placed=`` hook (the hook B10's ``tests/test_rating_position.py`` uses);
 * **text** -- what each pill actually says, recorded by wrapping
   ``overlay._pill_tile`` for the duration of the call (read side only: the
-  wrapper returns the genuine tile). This is how hidden metadata is counted --
-  a label cut to ``PGS EN JA…``, or a pill replaced by the ``…`` pill;
+  wrapper returns the genuine tile). This is how hidden metadata is counted,
+  and how the ``+N`` pill that counts it (P7, decision (d), 2026-10-05) is
+  read: every badge not drawn must be in a ``+N`` of its group's colour;
 * **pixels** -- the bounding box of every pixel painted in exactly a group's
   fill colour. It must agree with the reported rectangles, or the hook is not
   describing the render and every number from it is void.
 
 Per render it counts: pills crossing the poster margin, pills off the canvas,
-tag pills overlapping the rating, tag rows overlapping each other, and hidden
-metadata (labels dropped, labels truncated, language/format tokens hidden).
+tag pills overlapping the rating, tag rows overlapping each other; hidden
+metadata (labels dropped, labels truncated, badges hidden -- a badge being a
+label's codec/format or one of its language codes); and three ways hiding can
+be wrong: a hidden badge no ``+N`` counts (or a ``+N`` that over-counts), a
+``…`` anywhere (the pre-P7 marker that said nothing of how much), and badges
+drawn out of their label order (which would defeat ``prefer_languages``).
 
     python3 scripts/measure_pill_containment.py --self-test   # offline, in CI
     python3 scripts/measure_pill_containment.py               # the full grid
@@ -37,9 +42,10 @@ metadata (labels dropped, labels truncated, language/format tokens hidden).
 The full grid is 4 tag sets x 5 aspects x 4 widths x 3 sizes x 16 corner
 pairs, with ``normalize_portrait`` both off and on for the aspects it pads:
 6,144 renders, ~9 min on chromaserv (2026-09-26). It exits 1 if any render
-crosses the margin or overlaps -- today it does, at 2.39:1 with padding off --
-and reports hidden metadata without failing on it, because whether hiding is
-acceptable is P7's decision. ``--db`` renders every row of a COPIED state.db
+crosses the margin, overlaps, or hides a badge without counting it. Before P7
+shipped it did, at 2.39:1 with padding off (192 renders), and every hiding
+render was uncounted. Hiding itself is reported, not failed: a 2-row budget per
+group is the decided bound. ``--db`` renders every row of a COPIED state.db
 (opened read-only; ~10 min for 10,583 rows) and counts the items that hide
 something; nothing from the database is printed but counts.
 """
@@ -49,6 +55,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import re
 import sys
 import time
 from collections import defaultdict
@@ -73,6 +80,7 @@ WIDTHS = (300, 600, 1000, 2000)
 # aspect past where the heaviest set stops fitting (see --breakpoints).
 ASPECTS = (("2:3", 2, 3), ("27:40", 27, 40), ("16:9", 16, 9), ("1:1", 1, 1), ("2.39:1", 239, 100))
 ELLIPSIS = "…"
+COUNT_PILL = re.compile(r"\+(\d+)")
 
 # Invented language codes (ISO 639-1, upper case as the scanner stores them).
 LANGS = (
@@ -212,19 +220,67 @@ def exact_fill_bbox(image: Image.Image, hex_color: str):
     return mask.getbbox()
 
 
-def _hidden(labels: list[str], drawn: list[str]) -> dict:
-    """Compare a group's labels with the pill texts drawn for it, in order."""
-    real = [d for d in drawn if d != ELLIPSIS]
-    truncated = tokens_hidden = 0
-    for label, text in zip(labels, real, strict=False):
-        if text == label:
+def atoms(label: str) -> list[str]:
+    """A label's badges: its head (codec/format, one or two words) and then one
+    per language code (2-3 upper-case letters, as the scanner writes them).
+
+    Written here from that definition, not imported from the overlay, so a
+    renderer that splits ``TrueHD Atmos`` is caught rather than agreed with."""
+    words = label.split()
+    i = 1
+    while i < len(words) and not (
+        words[i].isascii() and words[i].isalpha() and words[i].isupper() and len(words[i]) in (2, 3)
+    ):
+        i += 1
+    return [" ".join(words[:i]), *words[i:]] if words else []
+
+
+def hidden_counts(labels: list[str], drawn: list[str]) -> dict:
+    """Compare a group's labels with the pill texts drawn in its colour, in order.
+
+    ``+N`` pills are read as counts. Every other pill must be a run of the
+    group's own badges, in order -- matched against the labels' badges, never
+    re-parsed from the pill: a continuation pill such as ``AR 10 UK`` (a label
+    holding a legacy numeric language) does not say where its badges split.
+    A pre-P7 cut label (``PGS EN JA…``) is read without its ``…``, and the
+    ``…`` itself is counted."""
+    ellipsis = sum(ELLIPSIS in d for d in drawn)
+    counted = sum(int(m.group(1)) for d in drawn if (m := COUNT_PILL.fullmatch(d)))
+    pills = [d.rstrip(ELLIPSIS).strip() for d in drawn if d != ELLIPSIS and not COUNT_PILL.fullmatch(d)]
+    wanted = [(i, a) for i, label in enumerate(labels) for a in atoms(label)]
+    seq = [a for _, a in wanted]
+    matched: list[int] = []
+    pos = 0
+    out_of_order = 0
+    for text in pills:
+        # The earliest run seq[j:j+k] at or after pos that spells this pill.
+        hit = next(
+            (
+                (j, k)
+                for j in range(pos, len(seq))
+                for k in range(1, len(seq) - j + 1)
+                if " ".join(seq[j : j + k]) == text
+            ),
+            None,
+        )
+        if hit is None:
+            out_of_order += 1
             continue
-        truncated += 1
-        shown = text[:-1].split() if text.endswith(ELLIPSIS) else text.split()[:1]
-        tokens_hidden += len(label.split()) - len(shown)
-    dropped = labels[len(real) :]
-    tokens_hidden += sum(len(label.split()) for label in dropped)
-    return {"dropped": len(dropped), "truncated": truncated, "tokens_hidden": tokens_hidden}
+        j, k = hit
+        matched.extend(wanted[m][0] for m in range(j, j + k))
+        pos = j + k
+    per_label = [matched.count(i) for i in range(len(labels))]
+    total = [len(atoms(label)) for label in labels]
+    hidden = len(wanted) - len(matched)
+    return {
+        "dropped": sum(1 for n in per_label if n == 0),
+        "truncated": sum(1 for n, t in zip(per_label, total, strict=True) if 0 < n < t),
+        "tokens_hidden": hidden,
+        "counted": counted,
+        "miscounted": abs(hidden - counted),
+        "ellipsis": ellipsis,
+        "order": out_of_order,
+    }
 
 
 def check(r: Render) -> dict:
@@ -243,16 +299,19 @@ def check(r: Render) -> dict:
         ),
     }
 
-    # Hidden metadata, per group (each group has its own fill colour).
-    hidden = {"dropped": 0, "truncated": 0, "tokens_hidden": 0, "tokens": 0}
+    # Hidden metadata, per group (each group has its own fill colour; a group
+    # with no row of its own is counted in its colour on another group's row).
+    hidden = dict.fromkeys(
+        ("dropped", "truncated", "tokens_hidden", "counted", "miscounted", "ellipsis", "order", "tokens"), 0
+    )
     by_fill: dict[str, int] = {}
     for group in [g for g in [*r.groups, r.rating] if g and g.labels]:
         kind = "rating" if group is r.rating else "tags"
         drawn = [p.text for p in r.pills if p.kind == kind and p.fill == group.fill_color]
-        counts = _hidden(group.labels, drawn)
+        counts = hidden_counts(group.labels, drawn)
         for k, v in counts.items():
             hidden[k] += v
-        hidden["tokens"] += sum(len(label.split()) for label in group.labels)
+        hidden["tokens"] += sum(len(atoms(label)) for label in group.labels)
         if counts["tokens_hidden"]:
             by_fill[group.fill_color] = counts["tokens_hidden"]
     out.update(hidden)
@@ -343,7 +402,16 @@ def run_grid() -> list[dict]:
     return records
 
 
-VIOLATIONS = ("margin", "off_canvas", "rating_overlap", "tag_overlap", "drawn_margin")
+VIOLATIONS = (
+    "margin",
+    "off_canvas",
+    "rating_overlap",
+    "tag_overlap",
+    "drawn_margin",
+    "miscounted",
+    "ellipsis",
+    "order",
+)
 
 
 def summarise(records: list[dict]) -> None:
@@ -427,9 +495,10 @@ def breakpoints(width: int = 1000) -> None:
 
 def budget(width: int = 1000, height: int = 1500) -> None:
     """For each tag set and size: rows the untruncated labels would need if a
-    group wrapped onto further rows, the rows a poster has, and the font a
-    single row per group would need instead. Arithmetic on _load_font()'s own
-    metrics and _compute_layout_params(), NOT a render -- no such layout exists."""
+    group wrapped onto further rows without limit, the rows a poster has, and
+    the font a single row per group would need instead. Arithmetic on
+    _load_font()'s own metrics and _compute_layout_params(), NOT a render: the
+    shipped layout (P7) caps a group at 2 rows, so the uncapped one is not drawn."""
     print(f"poster {width}x{height}, tags bottom-left / rating top-left (defaults)")
     print(
         f"{'tag set':7s} {'size':8s} {'rows now':>8s} {'rows if wrapped':>15s} {'rows fit':>8s} {'1-row font px':>13s}"
@@ -463,6 +532,8 @@ def budget(width: int = 1000, height: int = 1500) -> None:
 def census(db: Path, badge_size: str = "tv", width: int = 1000, height: int = 1500) -> None:
     """Every index row's real badge groups, rendered at default settings: how many
     items hide something today, and in which category. Opens the copy mode=ro."""
+    from sqlalchemy.orm import load_only
+
     from app.pipeline import _read_only_session, _tracks_from_row
     from app.state import MediaState
 
@@ -474,7 +545,10 @@ def census(db: Path, badge_size: str = "tv", width: int = 1000, height: int = 15
         cfg.rating_badge_color: "rating",
     }
     session = _read_only_session(db)
-    rows = session.query(MediaState).all()
+    # Only the columns read below: a copy of a released index lacks any column
+    # main has added since (U5's field_order broke a plain query, 2026-10-06).
+    cols = ("resolution", "video_codec", "hdr_type", "audio_tracks", "subtitle_tracks", "content_rating")
+    rows = session.query(MediaState).options(load_only(*(getattr(MediaState, c) for c in cols))).all()
     items = hiding = dropped = 0
     violations = 0
     per_cat: dict[str, int] = defaultdict(int)
@@ -569,23 +643,74 @@ def self_test() -> int:
     unreported = Render(short.size, short.margin, [], short.image, short.groups, None)
     expect(check(unreported)["hook_mismatch"] == 1, "a drawn pill the hook did not report is a mismatch")
 
-    # Direction 2: a planted oversized set must be reported. A pipeline scan
-    # draws at most three tag rows, so plant twelve on a short 16:9 canvas with
-    # the rating on the opposite edge: rows climb off the top and over it.
+    # Direction 2: a planted oversized stack must be reported. The renderer now
+    # clamps its stack (P7), so the plant is painted here, pill by pill, with
+    # the renderer's own _place_pill(): twelve rows climbing from the bottom of
+    # a short 16:9 canvas, off its top and over a rating on the opposite edge.
     # One fill per row: check() attributes pills to groups by fill colour.
-    tall = [BadgeGroup([f"R{i}"], f"#{16 + i:02x}2b3c") for i in range(12)]
     cfg = ImageConfig(badge_size="tv_plus", badge_position="bottom-left", rating_position="top-left")
-    over = check(render((1000, 562), tall, BadgeGroup(["Rated R"], base_cfg.rating_badge_color), cfg))
-    expect(over["margin"] > 0 and over["off_canvas"] > 0, f"a 12-row stack crosses the margin and the edge {over}")
-    expect(over["rating_overlap"] > 0, "a 12-row stack is reported covering the opposite-edge rating")
+    p = overlay._compute_layout_params(1000, cfg)
+    row_h = overlay._measure_group_height(p["font_size"], p["pad_v"])
+    font = overlay._load_font(p["font_size"])
+    gm = overlay._GLOW_MARGIN
+    layer = Image.new("RGBA", (1000, 562), (0, 0, 0, 0))
+    planted: list[Pill] = []
+    rating = BadgeGroup(["Rated R"], base_cfg.rating_badge_color)
+    tall = [BadgeGroup([f"R{i}"], f"#{16 + i:02x}2b3c") for i in range(12)]
+    rows = [("rating", rating, p["margin"])]
+    rows += [("tags", g, 562 - p["margin"] - row_h - i * (row_h + p["row_gap"])) for i, g in enumerate(reversed(tall))]
+    for kind, g, y in rows:
+        bb = font.getbbox(g.labels[0])
+        w = bb[2] - bb[0] + 2 * p["pad_h"]
+        tile_args = (g.fill_color, g.text_color, p["alpha"], p["font_size"], p["pad_h"], p["pad_v"])
+        overlay._place_pill(layer, (p["margin"] - gm, y - gm), g.labels[0], *tile_args)
+        planted.append(Pill(kind, g.fill_color, g.labels[0], (p["margin"], y, w, row_h)))
+    over = check(Render((1000, 562), p["margin"], planted, layer, tall, rating))
+    expect(
+        over["margin"] > 0 and over["off_canvas"] > 0, f"a planted 12-row stack crosses the margin and the edge {over}"
+    )
+    expect(over["rating_overlap"] > 0, "a planted 12-row stack is reported covering the opposite-edge rating")
     expect(over["drawn_margin"] > 0, "the pixel read also sees pills painted into the margin")
     expect(over["hook_mismatch"] == 0, "the hook stays truthful for clipped rows")
+
+    # The same twelve groups through the real renderer: twelve rows cannot all
+    # fit 562 px, so a renderer either overflows or hides, and the probe must
+    # report one or the other (pre-P7 it overflowed; since, it hides and counts).
+    real = check(render((1000, 562), tall, rating, cfg))
+    expect(
+        real["tokens_hidden"] > 0 or any(real[k] for k in VIOLATIONS),
+        f"twelve rows on a 562 px canvas are reported as overflowing or hiding {real}",
+    )
+
+    # Counting: atoms, then +N read against hidden badges -- in both directions.
+    expect(atoms("TrueHD Atmos EN JA") == ["TrueHD Atmos", "EN", "JA"], "a two-word codec is one badge")
+    expect(atoms("PGS EN") == ["PGS", "EN"] and atoms("JA DE") == ["JA", "DE"], "format and continuation heads")
+    expect(atoms("Rated Not Rated") == ["Rated Not Rated"], "a rating is one badge")
+    label = ["PGS EN JA DE", "SRT FR"]
+    good = hidden_counts(label, ["PGS EN", "+4"])
+    expect(good["tokens_hidden"] == 4 and good["miscounted"] == 0, f"hidden badges counted by +N pass {good}")
+    expect(good["dropped"] == 1 and good["truncated"] == 1, "a label cut and a label dropped are told apart")
+    expect(hidden_counts(label, ["PGS EN"])["miscounted"] == 4, "hidden badges with no +N are miscounted")
+    expect(hidden_counts(label, ["PGS EN", "+5"])["miscounted"] == 1, "a +N that over-counts is miscounted")
+    expect(hidden_counts(label, ["PGS EN", "JA DE", "SRT FR"])["miscounted"] == 0, "a label continued on a row passes")
+    old = hidden_counts(label, ["PGS EN JA…", "…"])
+    expect(old["ellipsis"] == 2 and old["miscounted"] == 3, f"the pre-P7 cut label and … pill are caught {old}")
+    expect(hidden_counts(label, ["PGS DE EN", "+2"])["order"] == 1, "badges drawn out of their order are caught")
+    expect(hidden_counts(["TrueHD Atmos EN"], ["TrueHD", "+2"])["order"] == 1, "a split two-word codec is caught")
+    legacy = ["SRT VI AR 10 UK EN"]  # a stale row's numeric "language", split mid-label
+    expect(
+        hidden_counts(legacy, ["SRT VI", "AR 10 UK", "+1"])["miscounted"] == 0,
+        "a continuation pill starting with a code before a numeric token is matched as badges",
+    )
 
     # Hidden metadata must be seen: 35 languages in one label on a 300 px poster,
     # and a single token too wide for the row.
     groups, rating = badge_groups(TAG_SETS["p99.9"], ImageConfig(badge_size="tv_plus"))
-    h = check(render((300, 450), groups, rating, ImageConfig(badge_size="tv_plus")))
-    expect(h["truncated"] >= 1 and h["tokens_hidden"] >= 30, f"a 35-language label is reported truncated {h}")
+    r = render((300, 450), groups, rating, ImageConfig(badge_size="tv_plus"))
+    h = check(r)
+    expect(h["tokens_hidden"] >= 1, f"a 35-language label on a 300 px poster is reported hiding badges {h}")
+    plus = sum(int(m.group(1)) for q in r.pills if (m := COUNT_PILL.fullmatch(q.text)))
+    expect(h["counted"] == plus, "every +N the renderer drew is read")
     wide = check(render((300, 450), [BadgeGroup(["X" * 40], fill)], None, base_cfg))
     expect(
         wide["tokens_hidden"] == 1 and wide["margin"] == 0,

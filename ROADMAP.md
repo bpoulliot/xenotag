@@ -1594,7 +1594,8 @@ stacking fails 10, removing the narrowing fails 5, hardwiring the rating again f
 Not covered: a tag stack tall enough to reach a rating on the *opposite* edge. That needs a very
 short poster, and bounding pills to the poster generally is [P7]'s containment question.
 *(Measured 2026-09-26 under P7: it happens only on a canvas wider than 2.25:1 at `tv_plus`
-with `normalize_portrait` off.)*
+with `normalize_portrait` off. Closed by [P7] containment, 2026-10-06: the tag stack is clamped
+to the canvas and stops short of the rating's row.)*
 
 **B1 — FIXED 2026-09-22.** Measured, fixed and re-measured in one session. The measurement
 below was reproduced from scratch first and **agreed with the original to the decimal**, so the
@@ -3127,7 +3128,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **READY — unblocked 2026-10-06:** [B21] shipped (#124) (decided 2026-09-26; work held in PR #95, which needs `main` merged; its self-test passes with B21 in) | — |
-| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **READY (decided 2026-10-05)** — (d), 2-row budget · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
+| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **SHIPPED 2026-10-06** ([#126](https://github.com/bpoulliot/xenotag/pull/126); merged, not released) — (d), 2-row budget, counted `+N`, stack clamped · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
@@ -3324,6 +3325,93 @@ untouched. **Order only** — a 40-seed property test checks every pill keeps ex
    code no longer in the index stays listed, marked as such, rather than silently dropped. The
    preview honours the setting. Verified in a throwaway container on invented data at 1366 and
    390 px: add → raise → preview URL → save → reload round-trips, no JS errors, no 4xx/5xx.
+
+**P7 containment — SHIPPED 2026-10-06 ([#126](https://github.com/bpoulliot/xenotag/pull/126), merged, not released).** Decision (d), as decided.
+`render_badge_groups()` no longer draws one row per group with a `…`:
+
+ - **Wrap, up to 2 rows per group.** The unit is the badge (`overlay._atoms()`): a label's
+   codec or format, never split (`TrueHD Atmos` and `DD+ Atmos` are one badge), or one of its
+   language codes. A label that does not fit the space left on a row moves to the next row
+   if it fits there whole. Otherwise it is split between badges, and its remaining languages
+   continue as a pill on the next row. It is never split after its head alone once the row
+   has other pills. Rows read top to bottom at every corner; B10's narrowed band row is the
+   edge row.
+ - **Counted `+N`.** What does not fit in the group's rows is counted in a `+N` pill of the
+   group's colour, closing its last row. Badges trimmed off that row's tail to make room are
+   added to N, so N is exactly the number of badges not drawn. The `…` pill and the in-label
+   `…` cut are gone. Order is kept throughout, so `prefer_languages` decides what survives.
+ - **Vertical clamp — the rule for what goes first.** The tag stack gets the rows between the
+   margins. The rating's row is subtracted, except when the rating shares a band with a
+   narrowed tag row (same edge, opposite side), so a tag never covers the rating. Each group
+   gets one row, then wrap rows as space allows. Priority is group order — video, audio,
+   subtitles — and the lowest-priority group gives first: **subtitles lose their wrap row
+   first, then audio, then video.** On a canvas with fewer rows than groups, the
+   lowest-priority group then loses its whole row and is counted as `+N` in its own colour
+   on the last drawn group's row. If that row fills up, the count moves to the group before
+   it. The one case left untraced is a canvas with no tag row at all: with a rating, wider
+   than 4.41:1 at `tv_plus`, 5.08:1 at `tv` or 6.06:1 at `desktop` (width-independent, since
+   row height scales with width). The widest shape in the grid is 2.39:1.
+
+**Measured** (`scripts/measure_pill_containment.py`, 6,144 renders, the 2026-09-26 grid). The
+probe now reads `+N` pills, counts hidden badges by the definition above (written independently
+of the renderer's), and fails on three new things: a hidden badge no `+N` counts (or a `+N` that
+over-counts), a `…`, or badges drawn out of label order. Its self-test fails both ways. The
+overflow plant is now painted pill by pill, since the renderer can no longer overflow. Six
+detector mutants each fail the self-test, and it passes against both renderers.
+
+| | origin/main `2c57c39` | this change |
+|---|---|---|
+| margin / off-canvas / rating overlap | **192** (all 2.39:1, padding off, `tv_plus`; same as 2026-09-26) | **0** |
+| any violation, the new probe | 4,656 (192 + 4,608 renders hiding without a count) | **0** |
+
+Worst hidden badges over the 16 corner pairs, 2:3 at 1000 px, before → after (of 7 / 18 / 44 / 85):
+p50 0 → 0 at every size; p99 9 → 0 / 11 → 4 / 12 → 7 (desktop / tv / tv_plus); p99.9
+32 → 23 / 34 → 27 / 36 → 31; max 70 → 54 / 75 → 62 / 77 → 69. At its best corner pair p99 now
+hides nothing at desktop or tv. The pairs that still hide are B10's narrowed band row, plus
+`tv_plus`, where `--budget` already said p99's subtitles need 3 rows. p50 hides in 48 renders,
+all 2.39:1 with padding off at `tv_plus`. Those are exactly the renders that ran off the canvas
+before; they now drop the subtitle row and count it.
+
+**Default posters do not move.** In a 132-render spread (the 4 README configs at 280×420 and
+1000×1500 plus their preview JPEGs, and 120 random tag sets × sizes × corners × 300/600/1000 px
+on 2:3), **all 65 renders where the old code hid nothing are byte-identical** (sha256 of the RGBA
+bytes, max difference 0). All 63 that moved are ones where the old code hid something. In CI,
+`tests/test_pill_containment.py` repeats the comparison over 80 random cases against a verbatim
+copy of the pre-P7 renderer, and also checks that a hiding case does move. The scratch harness
+`/tmp/xt-p7-dump.py` was not committed; the test is its re-runnable form.
+
+ - **`assets/readme/` moved, legitimately.** `overlay-tv`, `overlay-tv-plus` and
+   `overlay-stacked` were regenerated: the README's own example (`TrueHD Atmos EN` +
+   `DTS-HD JA`) hid `DTS-HD JA` behind a `…`, and at `tv_plus` dropped it with no `…` at all
+   (the old "exactly one badge fills the row" branch). It is now a second audio row.
+   `overlay-desktop` did not move. B21's stored 100% references for those three configs
+   (`tests/test_pill_composite.py`) were re-taken on the same grounds; the desktop rows are
+   still `5476f24`'s.
+ - **Census** (`--db`, a read-only copy of prod `state.db` + `-wal`/`-shm` taken 2026-10-06,
+   10,643 rows, 1000×1500, default corners), old → new, same probe:
+
+   | `badge_size` | items hiding anything | of which uncounted | violations | median / max hidden per item |
+   |---|---|---|---|---|
+   | `tv` | 128 (1.20%) → **101 (0.95%)** | 128 → **0** | 128 → **0** | 21 / 49 → 16 / 44 |
+   | `desktop` (prod's) | 111 (1.04%) → **98 (0.92%)** | 111 → **0** | 111 → **0** | 20 / 47 → 12 / 39 |
+
+   Labels dropped whole: 24 → 4 at `tv`, 10 → 4 at `desktop`. (2026-09-26's 136 / 116 were
+   a 10,583-row index; the library has moved since.) Every item that still hides something is
+   subtitles (one also audio), and all of it is counted. The census found one more thing. The
+   first new-code run reported **1** desktop violation: a stale row whose subtitle label still
+   holds legacy numeric "languages" (`10`, `11`, `12`, from file names). The probe re-parsed
+   the continuation pill `AR 10 UK …` as the one head `AR 10`. The render was right (`+13` =
+   the 13 badges not drawn), but the renderer's `+N` trim re-parsed pill text the same way and
+   could have miscounted had a trim cut such a pill down to `AR 10`. Both now work from the
+   badges themselves: pills carry theirs, and the probe matches each pill as a run of the
+   label's badges. A test covers the shape with invented codes. The re-run reads 0.
+ - `--db` failed on that copy with `no such column: media_state.field_order` (U5's column,
+   merged, not released). It now loads only the columns it reads.
+
+**Consequence for the operator.** It is poster-visible only for the items that wrapped or
+clipped, and it takes effect at the **next full scan**: there is no overlay hash, and an
+incremental scan skips unchanged files. No tag, schema or config change. `.orig` handling is
+untouched; `apply_overlay()` still renders from the backup.
 
 **P7 containment — MEASURED 2026-09-26, relabelled NEEDS DECISION.** Probe
 `scripts/measure_pill_containment.py` (`--self-test` in CI). It renders through the real

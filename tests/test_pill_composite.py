@@ -40,23 +40,26 @@ from scripts.measure_pill_composite import _readme_media as readme_media
 # poster at the shipped 100%, rendered by origin/main 5476f24 -- the code
 # before B21 -- with Pillow 12.3.0 and DejaVu Sans Bold. A stored reference,
 # so "100% did not move" does not rest only on the probe's copy of the old paste.
+# The tv, tv_plus and stacked rows were re-taken at P7 containment (2026-10-06):
+# their single audio row used to hide `DTS-HD JA`, which the 2-row wrap now
+# draws. The desktop rows, which hid nothing, did not move and are 5476f24's.
 REFERENCE_100 = {
     ("overlay-desktop.jpg", "white"): "70ebbc0aca6e44a4a97c1623888965565bb559be8b39bcd79032534858ee2999",
     ("overlay-desktop.jpg", "black"): "188f5a99a302d6b10dd1d96853dcc3fe4fad2b0e512fdd48f7c67c360670f590",
     ("overlay-desktop.jpg", "grey128"): "f0f349fd6e880203fa5fd4366e52eb4d16d51b271f3250d784f3e38c86a19f8e",
     ("overlay-desktop.jpg", "gradient"): "12dc2b649e9a7321698dda5d0be0cb514bd2fed5cf4cb26ac930c88ed01fb661",
-    ("overlay-tv.jpg", "white"): "14dc19ffeea826926174fdaa098cff1a8a5646d0e3dd5f5158a818c06e81d40d",
-    ("overlay-tv.jpg", "black"): "10efd463d114a62acb40f3692b3891663a8ccc49ce3ffdc4126ea3d277c99999",
-    ("overlay-tv.jpg", "grey128"): "32f03b09c0d025c7398a9358d409fae5378f5ed920f7a7856c1fc6d9dca703a6",
-    ("overlay-tv.jpg", "gradient"): "5030ec18ed812569c0f68a1e2d7016270b8efdb7c669654e96cb135db77626cc",
-    ("overlay-tv-plus.jpg", "white"): "4f3e1f1c82c0992acdb9e6a229d886c90dceca04ad0c54d2a3011ae1bd849e94",
-    ("overlay-tv-plus.jpg", "black"): "bef5bc116ecc7c03c2029d09814d2be1a7dce2193fc27865b6fefc9063d94974",
-    ("overlay-tv-plus.jpg", "grey128"): "540bdd675828ca8ec00120d9bbdc9144cfc655bd31c7424f6f33e20b887582f5",
-    ("overlay-tv-plus.jpg", "gradient"): "3fc5157c6a70ad07fdd02390d47130f3b0b501bffe7af58ffbf1ef7b128819ea",
-    ("overlay-stacked.jpg", "white"): "92fa2e9b6667b4790dceb260dfc502a1f42832254a084a20cd4b72bedf70823a",
-    ("overlay-stacked.jpg", "black"): "7db04c7719ab3f81ebcc04613e68f6effc0ae977b79fbf9c049ecbfecad898ce",
-    ("overlay-stacked.jpg", "grey128"): "d985ed91d2abb68de2c4ee6a618041a0bb70862b6528d700cf43eedb3d160f46",
-    ("overlay-stacked.jpg", "gradient"): "c512c141a8d9ebdd4c1c5d7a72314dc5e166b3d61722169930e3fea84a2672a2",
+    ("overlay-tv.jpg", "white"): "d72e1951fffd56dddaf0209a0c9e3596bc967422fd2213322c4b1c692818aa1a",
+    ("overlay-tv.jpg", "black"): "bffe6dd609961f071c226e422bbb8053646db19b4066a9b721d54511238055f2",
+    ("overlay-tv.jpg", "grey128"): "362c7dbc2977795bd616188b9bd23e044ebe32b3e70d4ac92867968a96a107a4",
+    ("overlay-tv.jpg", "gradient"): "9b6c2c76d53b4e9de281fb4cb8e77718b280337e9ba01aeba78a149f223b1549",
+    ("overlay-tv-plus.jpg", "white"): "bb7dd730fb47f491895a552fe4e718a28a010da1fc4f04295fb3c184e3879093",
+    ("overlay-tv-plus.jpg", "black"): "0d6f8af1181ca58bcd43564be31242b720fe6d49b7bb34c82b754de705426bc0",
+    ("overlay-tv-plus.jpg", "grey128"): "e4661aa3a44432737477216ad1bd85accc8ee45f67532bd8d468e6607ff2bf1f",
+    ("overlay-tv-plus.jpg", "gradient"): "fc5272a999c4c8a20ba79cd883025cd0178e9df3e6892b8620e0891c01a2135c",
+    ("overlay-stacked.jpg", "white"): "c6c42fdea6a0404dedfaa8bfebde0bc74125885af76b1268881a3cdf155adf3d",
+    ("overlay-stacked.jpg", "black"): "00184d0e858217e5d6b34e7ce3e6d7aff9362fef9e403bb537527f07e45ae29c",
+    ("overlay-stacked.jpg", "grey128"): "cefc9cca45b9e50d6d362cf873be2ab9fa76609ea0f78090aaeb1a6ea1cc3a65",
+    ("overlay-stacked.jpg", "gradient"): "5a7379f85f05272de902022b79e13a74915897dddcc9e640ec7c7eadf4c1ef4c",
 }
 
 
