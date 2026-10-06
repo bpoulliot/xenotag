@@ -169,8 +169,7 @@ def bootstrap(cfg_auth, save_fn, password_file: Path | None = None) -> None:
 
     if cfg_auth.password_hash and password_file is not None and password_file.exists():
         log.warning(
-            "The first-run admin password is still in %s; it is removed when the password "
-            "is changed in Settings.",
+            "The first-run admin password is still in %s; it is removed when the password " "is changed in Settings.",
             password_file,
         )
 

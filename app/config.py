@@ -616,7 +616,7 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     return _config
 
 
-INITIAL_PASSWORD_FILE = "initial-password"
+INITIAL_PASSWORD_FILE = "initial-password"  # noqa: S105 -- a filename, not a password
 
 
 def initial_password_path() -> Path | None:
