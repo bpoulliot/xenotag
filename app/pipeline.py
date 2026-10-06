@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from . import metrics
 from .arr_sync import MODE_DRY_RUN, MODE_LIVE, ArrTagSync, store_report
-from .clients.jellyfin import JellyfinClient
+from .clients.jellyfin import TAG_READ_BATCH, JellyfinClient
 from .clients.radarr import RadarrClient
 from .clients.readonly import ReadOnlyTransport
 from .clients.sonarr import SonarrClient
@@ -197,7 +197,8 @@ def _warn_tag_drift(session: object, jf: JellyfinClient, item: dict, prefix: str
 
     Observes only; the write that follows replaces them as before. The tags are
     ``jf.get_tags(item)`` -- the copy ``set_managed_tags()`` works from -- so no
-    extra request is made, and whatever feeds that write feeds this check.
+    extra request is made, and whatever feeds that write feeds this check. In a
+    scan that copy is the ``Ids=`` read ``_with_current_tags()`` made (B18).
     """
     item_id = item.get("Id", "")
     try:
@@ -218,6 +219,44 @@ def _warn_tag_drift(session: object, jf: JellyfinClient, item: dict, prefix: str
         missing,
     )
     metrics.tag_drift()
+
+
+class _TagFallbacks:
+    """Items whose current tags could not be read by ``Ids=`` this scan (B18); logs once."""
+
+    def __init__(self) -> None:
+        self.count = 0
+
+    def note(self, item_ids: list[str], reason: str) -> None:
+        if not item_ids:
+            return
+        if self.count == 0:
+            log.warning(
+                "Current tags unavailable for %s (%s); using the listing's copy, which can be stale "
+                "(roadmap B18). Further fallbacks this scan are only counted.",
+                item_ids[0],
+                reason,
+            )
+        self.count += len(item_ids)
+
+
+def _with_current_tags(jf: JellyfinClient, items: list[dict], fallbacks: _TagFallbacks) -> list[dict]:
+    """Return copies of ``items`` whose ``Tags`` are Jellyfin's current ones (roadmap B18).
+
+    The scan's items come from the recursive listing, which can serve stale
+    ``Tags``; ``set_managed_tags()`` keeps the non-managed ones and U9's drift
+    check compares the managed ones, so both must see the ``Ids=`` read. An id
+    the read does not return -- or a read that fails -- keeps the listing's
+    copy and is noted in ``fallbacks``; it never fails the item.
+    """
+    ids = [item.get("Id", "") for item in items]
+    try:
+        current = jf.get_current_tags(ids)
+    except Exception as exc:
+        fallbacks.note(ids, f"read failed: {exc}")
+        return items
+    fallbacks.note([i for i in ids if i not in current], "not returned by /Items?Ids=")
+    return [{**item, "Tags": current[item.get("Id", "")]} if item.get("Id", "") in current else item for item in items]
 
 
 def _process_one_item(
@@ -549,6 +588,7 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
     # progress total stays at len(items_count) and shows real item counts throughout.
     log.info("Phase 1b complete: %d items queued for probe", len(to_probe))
     max_workers = min(cfg.scan.max_workers, max(1, len(to_probe)))
+    tag_fallbacks = _TagFallbacks()
     if to_probe:
         total_probe = len(to_probe)
         log.info("Phase 2+3: probing and tagging %d items with %d workers…", total_probe, max_workers)
@@ -556,6 +596,35 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
         path_to_item: dict[str, tuple[dict, str, float]] = {
             fp: (item, item_root, mtime) for item, fp, item_root, mtime in to_probe
         }
+        # Probed items are tagged in batches, each preceded by one /Items?Ids= read
+        # of their current tags (B18): the listing they came from can be stale.
+        probed_ok: list[tuple[dict, str, str, float, MediaInfo]] = []
+
+        def process_batch() -> None:
+            nonlocal tagged, images_modified
+            batch = probed_ok[:]
+            probed_ok.clear()
+            if not batch:
+                return
+            current = _with_current_tags(jf, [b[0] for b in batch], tag_fallbacks)
+            for (_, fp, item_root, mtime, info), item in zip(batch, current, strict=True):
+                item_id = item.get("Id", "")
+                name = item.get("Name", item_id)
+                progress.current_item = name
+                progress.emit(f"  scanning: {name}")
+                try:
+                    image_modified = _process_one_item(jf, arr, session, cfg, item, fp, item_root, mtime, info)
+                    tagged += 1
+                    images_modified += image_modified
+                    progress.emit(
+                        f"  done: {name} | {info.resolution} | {info.video_codec or '-'} | {info.hdr_type or '-'}"
+                        f" | audio: {len(info.audio_tracks)} | subs: {len(info.subtitle_tracks)}"
+                    )
+                except Exception as exc:
+                    log.error("Unhandled error processing %s: %s", name, exc, exc_info=True)
+                    _record_scan_error(session, item_id, name, fp, f"process_error: {exc}")
+                progress.done += 0.5
+
         with ThreadPoolExecutor(max_workers=max_workers) as pool:
             future_to_path = {pool.submit(probe_file, fp): fp for fp in path_to_item}
             probed = 0
@@ -583,20 +652,14 @@ def _run_scan(cfg: AppConfig, incremental: bool) -> None:
                     progress.done += 0.5
                     continue
 
-                progress.current_item = name
-                progress.emit(f"  scanning: {name}")
-                try:
-                    image_modified = _process_one_item(jf, arr, session, cfg, item, fp, item_root, mtime, info)
-                    tagged += 1
-                    images_modified += image_modified
-                    progress.emit(
-                        f"  done: {name} | {info.resolution} | {info.video_codec or '-'} | {info.hdr_type or '-'}"
-                        f" | audio: {len(info.audio_tracks)} | subs: {len(info.subtitle_tracks)}"
-                    )
-                except Exception as exc:
-                    log.error("Unhandled error processing %s: %s", name, exc, exc_info=True)
-                    _record_scan_error(session, item_id, name, fp, f"process_error: {exc}")
-                progress.done += 0.5
+                probed_ok.append((item, fp, item_root, mtime, info))
+                if len(probed_ok) >= TAG_READ_BATCH:
+                    process_batch()
+            # A cancelled scan stops here; its unprocessed batch is not written.
+            if not progress.cancelled:
+                process_batch()
+    if tag_fallbacks.count:
+        log.warning("Current tags: %d item(s) used the listing's copy this scan (roadmap B18)", tag_fallbacks.count)
     set_meta(session, _TAG_CONFIG_KEY, current_hash)
     finish_scan_run(session, run, scanned=items_count, tagged=tagged, images=images_modified)
     session.close()
