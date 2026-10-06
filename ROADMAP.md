@@ -3716,7 +3716,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a READY (dashboard grid overflow) · P4b **READY for the header only (decided 2026-10-05)**, media browser deferred to the post-feature UI pass — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120); merged, not released) · P4b **READY for the header only (decided 2026-10-05)**, media browser deferred to the post-feature UI pass — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
 | P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
@@ -3872,6 +3872,22 @@ labels say what would make each one startable.
    and the three tables now scroll inside their cards (media 450 px in a 278 / 308 px box, scan
    history 429, errors 361); 768+ unchanged. It fixes items 2 and the clipping, **not** item 1.
    Acceptance: the same DOM audit, clean on dashboard at 360 and 390, unchanged at 768–1366.
+
+   **P4a — SHIPPED 2026-10-06 ([#120](https://github.com/bpoulliot/xenotag/pull/120); merged, not
+   released).** `.grid>*{min-width:0}`, chosen over `minmax(0,1fr)` because one rule covers both
+   track lists (two columns, and one at ≤ 800 px). Re-measured with a rebuilt instrument (Playwright
+   1.58.0 / Chromium 1208, `--internal` network, synthetic `state.db`; scripts and screenshots in
+   `~/docker/xenotag/p4a-audit-20261006/`, outside the repo — its self-test needs Playwright, which
+   CI does not install). The self-test passed both ways, and P9 is still flagged at 390. Dashboard
+   at 360 / 390: before, 534 px wide, 5 cards offending, **Clear all** and **Language** clipped;
+   after, **360 / 390 with the header hidden**, 0 offenders, 0 clipped, and all three tables scroll
+   inside their cards (429 / 382–401 / 476 px in 278 / 308 px boxes). 768 / 1024 / 1366: full-page
+   screenshots are **pixel-identical** to `main`. **Correction to the acceptance above:** with the
+   header shown, the dashboard is 397 px at 360 and 390, the same as Preview and Settings. That is
+   P9's Sign out, which P4a does not fix, so "`scrollWidth` 508 → 360 / 390" can only hold with
+   the header excluded. Seen in the 390 screenshot, not measured: the Service health tiles
+   (`.health-grid`, `repeat(3,1fr)`) truncate names (`Son…`) and "Unreachable" runs a few px past
+   the third tile. That belongs to the deferred phone-width UI pass, not to P4a.
 
    **P4b — NEEDS DECISION: the header, and the media browser at phone width.** Both change
    what the page looks like, so per the UI rule they are the operator's.
