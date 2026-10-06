@@ -55,6 +55,7 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 - Per-destination tag routing — send video tags only to Jellyfin, audio tags only to Sonarr, etc.
 - Preserves existing user-defined tags; only manages its own prefixed set
 - `xt-*` tags are owned by Xenotag: a hand edit to one is replaced the next time Xenotag writes that item. Before the write it logs a `Tag drift` WARNING naming the item and the `xt-` tags that differ from what it last wrote (counted in `xenotag_tag_drift_total`)
+- A Jellyfin tag write is read back before it is recorded: a write Jellyfin undid is made once more, and if it is still wrong Xenotag logs a `Tag write did not stick` WARNING (counted in `xenotag_tag_writeback_mismatch_total`) and records what Jellyfin has. A write that fails is not recorded, so the next scan retries it
 - Notices items Jellyfin no longer has: reports the stale index rows and the managed tags left on their Sonarr/Radarr series/movie, and removes them once `deleted_items.mode` is `remove` (ships report-only)
 
 ### Poster Badge Overlay
