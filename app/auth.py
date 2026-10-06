@@ -8,6 +8,8 @@ import os
 import secrets
 import time
 
+import bcrypt as _bcrypt
+
 log = logging.getLogger(__name__)
 
 _TOKEN_EXPIRY_SECS = 30 * 86400  # 30 days
@@ -20,40 +22,32 @@ def _session_key(secret: str, password_hash: str) -> str:
 
 
 # ---------------------------------------------------------------------------
-# Password hashing — bcrypt preferred, sha256 fallback
+# Password hashing — bcrypt only
 # ---------------------------------------------------------------------------
-try:
-    import bcrypt as _bcrypt
+# bcrypt is a hard dependency: a missing bcrypt fails at import rather than
+# downgrading to a weaker hash (B15).
 
-    # bcrypt only ever uses the first 72 bytes of a password. bcrypt 4.x
-    # truncated longer input silently; 5.x raises ValueError instead, which
-    # verify_password() below would swallow as "wrong password" -- locking out
-    # anyone whose >72-byte password was hashed under 4.x, with nothing logged.
-    # Truncating the bytes here reproduces 4.x exactly, so every existing hash
-    # stays valid under either version.
-    _BCRYPT_MAX_BYTES = 72
+# bcrypt only ever uses the first 72 bytes of a password. bcrypt 4.x
+# truncated longer input silently; 5.x raises ValueError instead, which
+# verify_password() below would swallow as "wrong password" -- locking out
+# anyone whose >72-byte password was hashed under 4.x, with nothing logged.
+# Truncating the bytes here reproduces 4.x exactly, so every existing hash
+# stays valid under either version.
+_BCRYPT_MAX_BYTES = 72
 
-    def _bcrypt_input(pw: str) -> bytes:
-        return pw.encode()[:_BCRYPT_MAX_BYTES]
 
-    def hash_password(pw: str) -> str:
-        return _bcrypt.hashpw(_bcrypt_input(pw), _bcrypt.gensalt(rounds=12)).decode()
+def _bcrypt_input(pw: str) -> bytes:
+    return pw.encode()[:_BCRYPT_MAX_BYTES]
 
-    def verify_password(pw: str, hashed: str) -> bool:
-        try:
-            return _bcrypt.checkpw(_bcrypt_input(pw), hashed.encode())
-        except Exception:
-            return False
 
-except ImportError:
-    log.warning("bcrypt not available — using sha256 (install bcrypt for stronger hashing)")
+def hash_password(pw: str) -> str:
+    return _bcrypt.hashpw(_bcrypt_input(pw), _bcrypt.gensalt(rounds=12)).decode()
 
-    def hash_password(pw: str) -> str:  # type: ignore[misc]
-        return "sha256:" + hashlib.sha256(pw.encode()).hexdigest()
 
-    def verify_password(pw: str, hashed: str) -> bool:  # type: ignore[misc]
-        if hashed.startswith("sha256:"):
-            return secrets.compare_digest(hashlib.sha256(pw.encode()).hexdigest(), hashed[7:])
+def verify_password(pw: str, hashed: str) -> bool:
+    try:
+        return _bcrypt.checkpw(_bcrypt_input(pw), hashed.encode())
+    except Exception:
         return False
 
 
@@ -120,6 +114,15 @@ def bootstrap(cfg_auth, save_fn) -> None:
     if not cfg_auth.secret_key:
         cfg_auth.secret_key = secrets.token_hex(32)
         changed = True
+
+    if cfg_auth.password_hash.startswith("sha256:"):
+        # Written by the removed sha256 fallback (B15); bcrypt cannot verify it,
+        # so nobody can log in until the hash is reset.
+        log.error(
+            "auth.password_hash is an unsalted sha256 hash from an install without bcrypt; "
+            "it can no longer be verified. To recover, blank auth.password_hash in "
+            "config.yml and restart: the first-run setup creates a new admin password."
+        )
 
     if not cfg_auth.password_hash:
         username = os.environ.get("XENOTAG_USERNAME", "") or cfg_auth.username or "admin"
