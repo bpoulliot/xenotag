@@ -23,6 +23,7 @@ from ..clients.radarr import RadarrClient
 from ..clients.sonarr import SonarrClient
 from ..config import (
     BADGE_PALETTE_VERSION,
+    AppConfig,
     ImageConfig,
     config_as_dict_safe,
     config_as_yaml,
@@ -33,8 +34,9 @@ from ..config import (
     save_config_from_dict,
 )
 from ..contrast import badge_contrast
-from ..overlay import BadgeGroup, clear_pill_cache, generate_preview_bytes
+from ..overlay import clear_pill_cache, generate_preview_bytes
 from ..pipeline import (
+    _make_badge_groups,
     arr_dry_run_state,
     handle_webhook,
     progress,
@@ -43,6 +45,7 @@ from ..pipeline import (
     run_incremental_scan,
 )
 from ..preview_samples import ensure_sample_posters
+from ..scanner import AudioTrack, MediaInfo, SubTrack
 from ..scheduler import next_run_time, reschedule
 from ..state import (
     MediaState,
@@ -724,27 +727,10 @@ async def preview_image(
         prefer_languages=prefer_languages,
     )
 
-    # Build badge groups from preview params
-    groups: list[BadgeGroup] = []
-
-    if cfg_img.show_video_badges:
-        video_labels = [x for x in [resolution, video_codec, hdr_type] if x]
-        if video_labels:
-            groups.append(BadgeGroup(video_labels, cfg_img.video_badge_color, cfg_img.badge_text_color))
-
-    if cfg_img.show_audio_badges:
-        audio_labels = _preview_order([a.strip() for a in audio.split(",") if a.strip()], cfg_img.prefer_languages)
-        if audio_labels:
-            groups.append(BadgeGroup(audio_labels, cfg_img.audio_badge_color, cfg_img.badge_text_color))
-
-    if cfg_img.show_sub_badges:
-        sub_labels = _preview_order([s.strip() for s in subtitles.split(",") if s.strip()], cfg_img.prefer_languages)
-        if sub_labels:
-            groups.append(BadgeGroup(sub_labels, cfg_img.sub_badge_color, cfg_img.badge_text_color))
-
-    rating_group = None
-    if cfg_img.show_rating_badge and rating:
-        rating_group = BadgeGroup([rating], cfg_img.rating_badge_color, cfg_img.badge_text_color)
+    # The groups a scan would build for this sample (roadmap B14): the same
+    # _make_badge_groups() call, never a second copy of the grouping.
+    info = _preview_media_info(resolution, video_codec, hdr_type, audio, subtitles)
+    groups, rating_group = _make_badge_groups(info, rating or None, AppConfig(image=cfg_img))
 
     base_image_bytes: bytes | None = None
     if item_id:
@@ -789,17 +775,35 @@ async def preview_image(
 _CORNERS = ("top-left", "top-right", "bottom-left", "bottom-right")
 
 
-def _preview_order(labels: list[str], prefer: list[str]) -> list[str]:
-    """Preview pills in ``image.prefer_languages`` order (roadmap P7).
+def _preview_media_info(resolution: str, video_codec: str, hdr_type: str, audio: str, subtitles: str) -> MediaInfo:
+    """The ``MediaInfo`` a Preview sample profile describes (roadmap B14).
 
-    The preview's sample labels arrive as finished strings ("EN DTS-HD"), so a
-    pill ranks by the best-preferred code among its words; the scan path orders
-    the structured tracks instead (``overlay.order_pills_by_language``).
+    The page sends one track per comma-separated "LANG CODEC" token
+    ("EN DTS-HD,JA AAC", "EN PGS"); a token of one word is a codec with no
+    language. Grouping, ordering and the rating prefix are left to
+    ``pipeline._make_badge_groups()``, so the preview shows what a scan paints.
     """
-    if not prefer:
-        return labels
-    rank = {code: i for i, code in enumerate(prefer)}
-    return sorted(labels, key=lambda label: min((rank[w] for w in label.split() if w in rank), default=len(prefer)))
+
+    def tracks(spec: str) -> list[tuple[str, str]]:
+        out = []
+        for token in spec.split(","):
+            words = token.split()
+            if len(words) == 1:
+                out.append(("UND", words[0]))
+            elif words:
+                out.append((words[0].upper(), " ".join(words[1:])))
+        return out
+
+    audio_tracks = [AudioTrack(lang, codec) for lang, codec in tracks(audio)]
+    return MediaInfo(
+        resolution=resolution,
+        languages=list(dict.fromkeys(t.lang for t in audio_tracks if t.lang != "UND")),
+        raw_audio_langs=[],
+        video_codec=video_codec or None,
+        hdr_type=hdr_type or None,
+        audio_tracks=audio_tracks,
+        subtitle_tracks=[SubTrack(lang, fmt, True) for lang, fmt in tracks(subtitles)],
+    )
 
 
 def _image_config_from_params(

@@ -44,7 +44,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **READY (decided 2026-10-05)** | — |
-| B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | READY | — |
+| B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116); merged, not released) | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115); merged, not released) | — |
 | B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | **READY (decided 2026-10-05)** | — |
 | B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **READY (decided 2026-10-05)**; B18 merged (#114), so it is unblocked | — |
@@ -53,6 +53,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | **READY (decided 2026-10-05)** | — |
 | B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | **READY (decided 2026-10-05)** | — |
 | B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113); merged, not released) | — |
+| B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | READY | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -311,7 +312,30 @@ an ERROR naming the recovery when it sees one — blank `auth.password_hash` in 
 restart, which re-runs the first-run path. Test: a `sha256:` hash does not verify. #6/#7 should
 then close as *fixed* on `main`'s next analysis.
 
-**B14 — FILED 2026-09-26, found while screenshotting the Preview page for P5. Not fixed here.**
+**B14 — SHIPPED 2026-10-06 ([#116](https://github.com/bpoulliot/xenotag/pull/116), merged, not released).**
+`routes.preview_image()` parses its request into a `MediaInfo` (`_preview_media_info()`: one track
+per comma-separated `LANG CODEC` token; a one-word token is a codec with language `UND`) and calls
+`pipeline._make_badge_groups()`, as `scripts/generate_readme_images.py` does. `_preview_order()`, the
+second copy of the ordering, is removed. The request shape is unchanged, so `index.html` is
+untouched: that is the smallest change and moves nothing on the page. `tests/test_preview_groups.py`
+reads `PREVIEW_PROFILES` out of `index.html` and checks that each profile's preview bytes equal
+`generate_preview_bytes()` over the groups a scan builds from a hand-written `MediaInfo`, with and
+without `prefer_languages`. A spy test fails if the route builds groups itself again. Against the
+old route, 11 of its 12 tests fail. Suite 750 → 762. `generate_readme_images.py --check` is
+unchanged (the overlay examples never went through this route). **`assets/readme/ui-preview.png`**
+(the manual Playwright screenshot) still shows the old labels, so it needs re-taking with
+`--screenshots` the next time the README screenshots are refreshed. Found while fixing: **B23** (the
+preview ignores `tags.destinations`), filed below.
+
+**B23 — FILED 2026-10-06, found while fixing B14. Not fixed here.** A scan paints a category only if
+`"poster"` is in its `tags.destinations` list (`_make_badge_groups()`). The preview passes
+`AppConfig(image=…)`, so it always uses the default destinations, which include `poster` everywhere.
+An operator who takes `poster` off, say, subtitles still sees subtitle pills in the preview. That
+predates B14, which kept it as it was. **Fix:** pass the saved `get_config().tags` with the
+previewed `ImageConfig`. Latent: production's `config.yml` has `poster` in all four lists (read by
+key, 2026-10-06).
+
+*Filed 2026-09-26, found while screenshotting the Preview page for P5:*
 
 `PREVIEW_PROFILES` in `index.html` hands `/preview/image` label strings (`audio="EN DTS-HD,JA AAC"`,
 `rating="PG-13"`) and `routes.preview_image()` splits them on commas into `BadgeGroup`s as-is. A scan
