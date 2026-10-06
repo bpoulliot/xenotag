@@ -11,6 +11,11 @@ ITEM_FIELDS = (
     "MediaStreams,Tags,Path,Overview,ParentId,OfficialRating,ProviderIds,Genres,Studios,Taglines,LockData,LockedFields"
 )
 
+# Ids per ``get_current_tags()`` request. 100 32-hex ids are ~3.6 kB of query
+# string (measured in tests/test_current_tags.py), under half of the 8 kB
+# request line Kestrel and nginx accept by default; 9,400 items = 94 GETs.
+TAG_READ_BATCH = 100
+
 
 class JellyfinClient:
     def __init__(self, url: str, api_key: str, transport: httpx.BaseTransport | None = None) -> None:
@@ -139,6 +144,25 @@ class JellyfinClient:
 
     def get_tags(self, item: dict) -> list[str]:
         return item.get("Tags") or []
+
+    def get_current_tags(self, item_ids: list[str]) -> dict[str, list[str]]:
+        """Return ``{item id: tags}`` read by ``/Items?Ids=``, in batches of ``TAG_READ_BATCH``.
+
+        Roadmap B18: the recursive listing (``get_items()``) can serve stale
+        ``Tags`` while ``Ids=`` is current, so anything that writes or reads
+        back tags reads them here. An id Jellyfin does not return is absent
+        from the result -- the caller decides what that means. A failed batch
+        raises, like every other read.
+        """
+        ids = list(dict.fromkeys(i for i in item_ids if i))
+        tags: dict[str, list[str]] = {}
+        for start in range(0, len(ids), TAG_READ_BATCH):
+            chunk = ids[start : start + TAG_READ_BATCH]
+            data = self._get("/Items", Ids=",".join(chunk), Fields="Tags", EnableImages="false")
+            for item in data.get("Items") or []:
+                if item.get("Id") in chunk:
+                    tags[item["Id"]] = item.get("Tags") or []
+        return tags
 
     def get_item_by_id(self, item_id: str) -> dict:
         """Fetch full item metadata via list endpoint (direct /Items/{id} requires extra auth in 10.9+)."""
