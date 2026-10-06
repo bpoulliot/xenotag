@@ -519,6 +519,8 @@ def budget(width: int = 1000, height: int = 1500) -> None:
 def census(db: Path, badge_size: str = "tv", width: int = 1000, height: int = 1500) -> None:
     """Every index row's real badge groups, rendered at default settings: how many
     items hide something today, and in which category. Opens the copy mode=ro."""
+    from sqlalchemy.orm import load_only
+
     from app.pipeline import _read_only_session, _tracks_from_row
     from app.state import MediaState
 
@@ -530,7 +532,10 @@ def census(db: Path, badge_size: str = "tv", width: int = 1000, height: int = 15
         cfg.rating_badge_color: "rating",
     }
     session = _read_only_session(db)
-    rows = session.query(MediaState).all()
+    # Only the columns read below: a copy of a released index lacks any column
+    # main has added since (U5's field_order broke a plain query, 2026-10-06).
+    cols = ("resolution", "video_codec", "hdr_type", "audio_tracks", "subtitle_tracks", "content_rating")
+    rows = session.query(MediaState).options(load_only(*(getattr(MediaState, c) for c in cols))).all()
     items = hiding = dropped = 0
     violations = 0
     per_cat: dict[str, int] = defaultdict(int)

@@ -54,7 +54,7 @@ _BADGE_SIZES = ("desktop", "tv", "tv_plus")
 
 
 def pill_args(width: int, cfg: ImageConfig, text: str, fill: str, text_color: str) -> PillArgs:
-    """The seven arguments `_render_group()` would pass for a poster this wide."""
+    """The seven arguments `_place_pill()` passes to `_pill_tile()` for a poster this wide."""
     p = overlay._compute_layout_params(width, cfg)
     return (text, fill, text_color, p["alpha"], p["font_size"], p["pad_h"], p["pad_v"])
 
