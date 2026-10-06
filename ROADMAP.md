@@ -3677,6 +3677,8 @@ defined, and none are defined but unused.
 
 **Not fixed here, and not caused by it:** at 390px the header's nav runs off the right edge. The
 pre-P8 header was wider, so this predates P9. It belongs to [P4] (mobile breakpoints).
+**Fixed by P4b ([#128](https://github.com/bpoulliot/xenotag/pull/128), 2026-10-06):** the DOM audit
+no longer flags it at 360 or 390 — P9's last open defect is closed.
 
 *(original filing follows)*
 
@@ -3974,7 +3976,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120); merged, not released) · P4b **READY for the header only (decided 2026-10-05)**, media browser deferred to the post-feature UI pass — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120); merged, not released) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128); merged, not released), media browser deferred to the post-feature UI pass — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
 | P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
@@ -4167,6 +4169,22 @@ labels say what would make each one startable.
    **OPERATOR DECISION 2026-10-05:** header **(b)** — wrap plus `.nav{margin-left:8px}` below
    600 px. Media browser **(a)** — leave it; decide (b)–(d) in the post-feature UI pass. Header
    half relabelled **READY**; the media-browser half stays open, deferred, not NEEDS DECISION.
+
+   **P4b (header) — SHIPPED 2026-10-06 ([#128](https://github.com/bpoulliot/xenotag/pull/128);
+   merged, not released).** `header{flex-wrap:wrap}` plus `@media(max-width:600px){.nav{margin-left:8px}}`.
+   The media rule must come **after** the base `.nav` rule: same specificity, so source order wins;
+   placed in the existing 600 px block above it, it lost to `margin-left:32px` and gave 3 rows at
+   390 — the audit caught it. Re-measured with P4a's instrument plus a header-row probe (scripts,
+   results and before/after screenshots at 360 / 390 / 768 in `~/docker/xenotag/p4b-audit-20261006/`,
+   outside the repo; `--internal` network, synthetic `state.db`). Self-test passed both ways; on
+   `main` (`a8b15ec`) the P9 defect is flagged at 390, with this change it is not. **390: 2 rows,
+   93 px**, Sign out alone on row 2; **360: 3 rows, 131 px** (accepted); every page at 360 / 390 is
+   exactly viewport-wide with 0 offenders, 0 clipped, 0 covered controls (was 397 px). 768 / 1024 /
+   1366: full-page screenshots of all three pages **pixel-identical** to `main`. Side effect, seen
+   not intended: on `main` at ≤ 600 px the flex row shrank `.brand` to 0 px wide (the mark still
+   painted, overflowing it); with wrap it keeps its 28 px. **P9's header defect is closed by this.**
+   Still open, as before: the media browser at phone width (deferred) and the `.health-grid` tile
+   truncation noted under P4a.
 
    Not determined: real library data (longest titles, most tags) — the synthetic rows were made
    long on purpose but are not a sample; Preview with a reachable Jellyfin (its sample posters

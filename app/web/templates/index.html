@@ -19,7 +19,7 @@
   a{color:var(--accent);text-decoration:none}
 
   /* ── Header ── */
-  header{display:flex;align-items:center;gap:10px;padding:12px 24px;border-bottom:1px solid var(--border);background:var(--surface)}
+  header{display:flex;flex-wrap:wrap;align-items:center;gap:10px;padding:12px 24px;border-bottom:1px solid var(--border);background:var(--surface)}
   header{padding:14px 24px}
   .brand{display:flex;align-items:baseline;gap:10px;min-width:0}
   /* The wordmark embeds the mark as its O, so the header shows exactly ONE of
@@ -34,6 +34,10 @@
   @media(max-width:900px){.brand small{display:none}}
   @media(max-width:600px){.brand-logo{height:28px}}
   .nav{display:flex;gap:2px;margin-left:32px}
+  /* P4b: at phone width the header cannot fit one row; it wraps, and the nav
+     drops most of its gap so it stays beside the mark (Sign out takes row 2).
+     After .nav on purpose: same specificity, so source order decides. */
+  @media(max-width:600px){.nav{margin-left:8px}}
   .nav-btn{padding:8px 18px;border-radius:6px;font-size:14px;font-weight:500;cursor:pointer;background:none;border:none;color:var(--muted)}
   .nav-btn.active,.nav-btn:hover{color:var(--text);background:var(--surface2)}
   .nav-btn.active{color:var(--accent)}
