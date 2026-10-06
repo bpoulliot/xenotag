@@ -7,6 +7,7 @@ import logging
 import os
 import secrets
 import time
+from pathlib import Path
 
 import bcrypt as _bcrypt
 
@@ -104,10 +105,52 @@ def delete_session(token: str) -> None:
 # ---------------------------------------------------------------------------
 
 
-def bootstrap(cfg_auth, save_fn) -> None:
+# B16: a generated first-run password goes to a 0600 file beside config.yml
+# (config.initial_password_path()), never to the log -- the log is readable by
+# anyone with `docker logs`.
+
+
+def _write_initial_password(path: Path, password: str) -> None:
+    """Create `path` 0600 holding `password`; FileExistsError if it is there.
+
+    O_EXCL creates the file with its final mode in one step -- there is no
+    window in which it exists with the umask's mode -- and refuses to follow
+    or replace anything already at the path.
+    """
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0), 0o600)
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(password + "\n")
+    except BaseException:
+        path.unlink(missing_ok=True)
+        raise
+
+
+def _read_initial_password(path: Path) -> str:
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+    with os.fdopen(fd) as f:
+        return f.read().strip()
+
+
+def remove_initial_password(path: Path | None) -> None:
+    """Delete the first-run password file, if any (called on a password change)."""
+    if path is None:
+        return
+    try:
+        path.unlink()
+    except FileNotFoundError:
+        return
+    log.info("Password changed; removed %s", path)
+
+
+def bootstrap(cfg_auth, save_fn, password_file: Path | None = None) -> None:
     """
     Ensure a signing secret and admin account exist.
     Priority: existing values in config > XENOTAG_USERNAME/PASSWORD env vars > auto-generated.
+
+    An auto-generated password is written to `password_file` (0600) and only
+    the file's path is logged. If that file already exists it is never
+    overwritten: a first run whose hash was not saved adopts the password in it.
     """
     changed = False
 
@@ -124,17 +167,27 @@ def bootstrap(cfg_auth, save_fn) -> None:
             "config.yml and restart: the first-run setup creates a new admin password."
         )
 
+    if cfg_auth.password_hash and password_file is not None and password_file.exists():
+        log.warning(
+            "The first-run admin password is still in %s; it is removed when the password " "is changed in Settings.",
+            password_file,
+        )
+
     if not cfg_auth.password_hash:
         username = os.environ.get("XENOTAG_USERNAME", "") or cfg_auth.username or "admin"
         password = os.environ.get("XENOTAG_PASSWORD", "")
 
         if not password:
-            password = secrets.token_urlsafe(12)
+            password = _first_run_password(password_file)
+            if not password:
+                if changed:
+                    save_fn(cfg_auth)
+                return
             log.warning("=" * 60)
-            log.warning("XENOTAG FIRST RUN — auto-generated credentials:")
-            log.warning("  Username : %s", username)
-            log.warning("  Password : %s", password)
-            log.warning("  Change these in Settings or set XENOTAG_USERNAME / XENOTAG_PASSWORD env vars")
+            log.warning("XENOTAG FIRST RUN — username: %s", username)
+            log.warning("  The generated admin password is in %s (readable only by its owner).", password_file)
+            log.warning("  That file is removed on the first password change in Settings.")
+            log.warning("  Or set XENOTAG_USERNAME / XENOTAG_PASSWORD env vars before the first start.")
             log.warning("=" * 60)
 
         cfg_auth.username = username
@@ -143,3 +196,37 @@ def bootstrap(cfg_auth, save_fn) -> None:
 
     if changed:
         save_fn(cfg_auth)
+
+
+def _first_run_password(path: Path | None) -> str:
+    """Generate a password into `path`, or adopt the one already there.
+
+    Returns "" (and logs why) when no password can be stored without logging
+    it; the admin hash then stays empty and nobody can log in until it is fixed.
+    """
+    if path is None:
+        log.error("No config directory to hold a generated admin password; set XENOTAG_PASSWORD and restart.")
+        return ""
+    password = secrets.token_urlsafe(12)
+    try:
+        _write_initial_password(path, password)
+        return password
+    except FileExistsError:
+        pass
+    except OSError as exc:
+        log.error(
+            "Could not create %s (%s); set XENOTAG_PASSWORD and restart.", path, exc.strerror or type(exc).__name__
+        )
+        return ""
+    # Already there: a first run whose hash never reached config.yml, or a hash
+    # blanked by hand. Never overwrite it -- use what it holds.
+    try:
+        existing = _read_initial_password(path)
+    except OSError as exc:
+        existing = ""
+        log.error("Could not read %s (%s).", path, exc.strerror or type(exc).__name__)
+    if not existing:
+        log.error("%s exists but holds no password; delete it and restart to generate one.", path)
+        return ""
+    log.warning("%s already exists; not overwritten — the admin password is the one it holds.", path)
+    return existing

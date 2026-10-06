@@ -126,7 +126,7 @@ cp config.example.yml ./config/config.yml
 
 - Set `jellyfin.url` and `jellyfin.api_key` (Dashboard → Advanced → API Keys)
 - Add Sonarr/Radarr instances under `sonarr.instances` / `radarr.instances` (optional)
-- Leave `auth.password_hash` empty — credentials are auto-generated on first boot and printed to the container log
+- Leave `auth.password_hash` empty — on first boot an admin password is generated and written to `config/initial-password` (mode 0600); the log names the file but never prints the password
 
 **4. Configure `docker-compose.yml`:**
 
@@ -151,11 +151,16 @@ services:
 docker compose up -d
 ```
 
-Open `http://localhost:7755`. On first boot, auto-generated credentials are printed to the container log:
+Open `http://localhost:7755` and log in as `admin`. On first boot the generated password is written to
+`initial-password` in the config directory, readable only by its owner; the container log names the file
+but never prints the password:
 
 ```bash
-docker logs xenotag | grep -A4 "FIRST RUN"
+docker exec xenotag cat /config/initial-password
 ```
+
+The file is deleted when you change the password in Settings. To choose the credentials yourself, set
+`XENOTAG_USERNAME` / `XENOTAG_PASSWORD` before the first start — then no file is written.
 
 ---
 
@@ -292,7 +297,7 @@ The five colour keys accept anything Pillow reads as a plain RGB colour — `#rr
 | Key | Type | Default | Description |
 |---|---|---|---|
 | `auth.username` | string | `"admin"` | Login username |
-| `auth.password_hash` | string | `""` | bcrypt hash; leave empty for auto-generation on first boot |
+| `auth.password_hash` | string | `""` | bcrypt hash; leave empty for auto-generation on first boot (password written to `/config/initial-password`) |
 | `auth.secret_key` | string | `""` | HMAC signing secret for sessions; auto-generated if empty. Can be supplied by the environment instead, see [Externally managed secrets](#externally-managed-secrets) |
 
 ### Other

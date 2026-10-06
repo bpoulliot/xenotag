@@ -616,6 +616,14 @@ def load_config(path: str | Path | None = None) -> AppConfig:
     return _config
 
 
+INITIAL_PASSWORD_FILE = "initial-password"  # noqa: S105 -- a filename, not a password
+
+
+def initial_password_path() -> Path | None:
+    """Where the first-run bootstrap writes a generated admin password (B16)."""
+    return _config_path.parent / INITIAL_PASSWORD_FILE if _config_path else None
+
+
 def get_config() -> AppConfig:
     if _config is None:
         return load_config()

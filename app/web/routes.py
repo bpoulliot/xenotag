@@ -28,6 +28,7 @@ from ..config import (
     config_as_dict_safe,
     config_as_yaml,
     get_config,
+    initial_password_path,
     overridden_fields,
     save_auth,
     save_config,
@@ -471,6 +472,7 @@ async def change_password(request: Request, body: ChangePasswordRequest):
         raise HTTPException(status_code=400, detail="Password must be at least 12 characters")
     cfg.auth.password_hash = _auth.hash_password(body.new_password)
     save_auth(cfg.auth)
+    _auth.remove_initial_password(initial_password_path())
     return {"status": "ok"}
 
 

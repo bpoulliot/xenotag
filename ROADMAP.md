@@ -46,7 +46,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **SHIPPED 2026-10-06** ([#122](https://github.com/bpoulliot/xenotag/pull/122); merged, not released) — **the next release's first scan is a full re-tag with live \*arr writes** (~747 renames + posters) | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116); merged, not released) | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115); merged, not released) | — |
-| B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | **READY (decided 2026-10-05)** | — |
+| B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | **SHIPPED 2026-10-06** ([#125](https://github.com/bpoulliot/xenotag/pull/125); merged, not released) | — |
 | B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **SHIPPED 2026-10-06** ([#121](https://github.com/bpoulliot/xenotag/pull/121); merged, not released) — **changes scan behaviour at the next release** | — |
 | B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | **SHIPPED 2026-10-06** ([#114](https://github.com/bpoulliot/xenotag/pull/114); merged, not released) | — |
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | **CLOSED (decided 2026-10-05)** — accept the overlap; the pinning test stays | — |
@@ -397,6 +397,17 @@ does. Needs no schema change.
 **OPERATOR DECISION 2026-10-05:** (b) — write the generated first-run password to a 0600 file
 under `/config` (`initial-password`), log only the path, delete the file on the first password
 change. Relabelled **READY**.
+
+**SHIPPED 2026-10-06 ([#125](https://github.com/bpoulliot/xenotag/pull/125), merged, not released).**
+`bootstrap()` writes a generated password to `initial-password` beside `config.yml`, created by
+`os.open(O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW, 0o600)`, and logs only the path. An existing file is
+never overwritten or re-logged: with a hash stored, one WARNING says it is still there; with no hash,
+its password is adopted (a first run whose save never landed). Empty/unreadable file or unwritable
+`/config` → no hash, an ERROR naming the recovery. `POST /api/auth/change-password` deletes the file;
+`XENOTAG_PASSWORD` creates none. README, `config.example.yml` and the login hint point at the file.
+`tests/test_first_run_password.py` (12) greps the captured log for the password; mutation-checked.
+**Prod unaffected:** it holds a `$2b$` hash, so the generation branch never runs (live `/config`
+not touched). CodeQL #8 should close as *fixed* on `main`'s next analysis — not dismissed by hand.
 
 **B15 — SHIPPED 2026-10-06 ([#115](https://github.com/bpoulliot/xenotag/pull/115), merged, not released).**
 `app/auth.py` imports bcrypt unconditionally — no `except ImportError` branch remains, so an
@@ -3066,7 +3077,7 @@ agree with itself. #6–#8 were reproduced with scratch probes (not committed: t
 
 **The remaining work (READY):** after this lands on `main`, dismiss #1, #3, #4, #5 and #9 on
 GitHub, each as **"false positive"** with the comment below verbatim (each under GitHub's 280
-characters). #6/#7 close as *fixed* when B15 merges; #8 waits on B16's decision. Dismissing is an
+characters). #6/#7 close as *fixed* now B15 has merged (#115); #8 likewise with B16 (#125). Dismissing is an
 outward action — the operator's, or a session whose item says so in so many words.
 
 - **#1:** `Value is create_session()'s base64url HMAC token, set only when the username equals the configured one; no ; , " or CR/LF can reach the header. CodeQL propagates taint through base64. Pinned by tests/test_codeql_triage.py (I13).`

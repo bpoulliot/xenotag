@@ -80,7 +80,7 @@ image:
 
 auth:
   username: admin
-  password_hash: ""  # auto-generated on first run; seed via XENOTAG_USERNAME/XENOTAG_PASSWORD env vars
+  password_hash: ""  # auto-generated on first run (password in /config/initial-password); or seed via XENOTAG_USERNAME/XENOTAG_PASSWORD
   # secret_key: ""   # auto-generated on first run; or set XENOTAG_SECRET_KEY / XENOTAG_SECRET_KEY_FILE
 
 log_level: INFO
