@@ -772,10 +772,18 @@ def run_arr_dry_run_background(cfg: AppConfig) -> None:
 
 
 def _run_scan_recorded(cfg: AppConfig, incremental: bool) -> None:
-    """``_run_scan``, with an exception that escapes it recorded as a failed scan (I5)."""
+    """``_run_scan``, with an exception that escapes it recorded as a failed scan (I5).
+
+    The exception also releases the scan lock (B22): only ``_run_scan()``'s own
+    exits call ``progress.finish()``, so without this every later scan would skip
+    as "already in progress" until a restart. If ``_run_scan()`` already finished
+    before raising, its own ``finish()`` stands.
+    """
     try:
         _run_scan(cfg, incremental)
-    except Exception:
+    except Exception as exc:
+        if progress.running:
+            progress.finish(error=str(exc))
         metrics.scan_finished("incremental" if incremental else "full", metrics.FAILED)
         raise
 
