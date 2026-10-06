@@ -45,7 +45,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **READY (decided 2026-10-05)** | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | READY | — |
-| B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | READY | — |
+| B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115); merged, not released) | — |
 | B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | **READY (decided 2026-10-05)** | — |
 | B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **READY (decided 2026-10-05)**; B18 merged (#114), so it is unblocked | — |
 | B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | **SHIPPED 2026-10-06** ([#114](https://github.com/bpoulliot/xenotag/pull/114); merged, not released) | — |
@@ -285,7 +285,15 @@ does. Needs no schema change.
 under `/config` (`initial-password`), log only the path, delete the file on the first password
 change. Relabelled **READY**.
 
-**B15 — FILED 2026-09-27 by I13 (CodeQL #6, #7). READY.**
+**B15 — SHIPPED 2026-10-06 ([#115](https://github.com/bpoulliot/xenotag/pull/115), merged, not released).**
+`app/auth.py` imports bcrypt unconditionally — no `except ImportError` branch remains, so an
+install without bcrypt fails at import. A stored `sha256:` hash no longer verifies, and
+`bootstrap()` logs an ERROR naming the recovery (blank `auth.password_hash`, restart); it does not
+reset the hash. `tests/test_auth_no_sha256.py` pins all of it; its ERROR and import tests fail on
+the old code. `requirements.txt` still pins `bcrypt==5.0.0`; the Dockerfile installs it.
+CodeQL #6/#7 should close as *fixed* on `main`'s next analysis — not dismissed by hand.
+
+*Filed 2026-09-27 by I13 (CodeQL #6, #7):*
 
 `app/auth.py` wraps `import bcrypt` in `try/except ImportError` and, on failure, hashes the admin
 password as `"sha256:" + hashlib.sha256(pw).hexdigest()` — unsalted and fast, so a copy of
