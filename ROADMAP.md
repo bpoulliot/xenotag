@@ -2347,7 +2347,7 @@ webhook resolves the wrong item.)*
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
 | I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | **SHIPPED 2026-09-27** — merged, not released; prod wiring is the operator's | — |
 | I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
-| I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | READY (measured 2026-09-26) | — |
+| I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | **SHIPPED 2026-10-06** (#118, merged, not released) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
 | I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure. **Triaged 2026-09-27:** five are false positives (probes committed); #6/#7 → B15, #8 → B16. What remains is dismissing the five on GitHub with the reasons recorded below | 3 | 1 | READY (measured 2026-09-27) | — |
 | I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **DECIDED 2026-10-05** — waits on the production upgrade | — |
@@ -2823,6 +2823,24 @@ audited. Leave `pytest` where it is (no version change in this item). Acceptance
 warnings summary has no `StarletteDeprecationWarning`; optionally add
 `-W error::starlette.exceptions.StarletteDeprecationWarning` to the pytest step — **not**
 `error::DeprecationWarning`, which cannot see it.
+
+**I11 — SHIPPED 2026-10-06 ([#118](https://github.com/bpoulliot/xenotag/pull/118), merged, not
+released).** Added root `requirements-dev.txt` pinning `httpx2==2.13.1` (test-only; the
+`Dockerfile` installs only `requirements.txt`, so the runtime image is unchanged — `git diff`
+touched no `app/` file). `ci.yml`'s `tests` job now installs
+`-r requirements.txt -r requirements-dev.txt pytest`; `lint-and-security`'s `pip-audit` step now
+audits both files. The guard landed in `pyproject.toml`'s `[tool.pytest.ini_options]`
+`filterwarnings`, naming `starlette.exceptions.StarletteDeprecationWarning` directly (not
+`DeprecationWarning`, which the measurement found blind to it). Re-measured in a scratch venv
+built like CI (Python 3.12.3): baseline grew to **777 passed, 1 warning** (the earlier 251 is
+stale); `httpx2==2.13.1` is still PyPI's latest, same provenance (BSD-3-Clause, Pydantic
+Services Inc. / Kludex, 0 `pip-audit` findings) as the 2026-09-26 measurement. Both-directions
+guard check: with `httpx2` temporarily uninstalled, the `filterwarnings` entry fails collection
+on 5 test modules (`starlette.exceptions.StarletteDeprecationWarning`); reinstalling it restores
+777 passed, 0 warnings. `ruff check app/` / `black --check app/` clean. PR #118 green on all 5
+checks (CodeQL, dependency-review, docker-build, lint-and-security, tests) on head SHA
+`acfccc6`; merged via `PUT .../pulls/118/merge` (`sha=acfccc6`), `main` confirmed moved to
+`ff651ba`.
 
 **I12 — filed 2026-09-26, seen in I10's test output; FIXED 2026-09-26 (below the sweep note).** `app/state.py:137` sets
 `row.last_scanned = datetime.utcnow()`, deprecated since Python 3.12. NEEDS MEASUREMENT before the
