@@ -47,8 +47,8 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | READY | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | READY | — |
 | B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | **READY (decided 2026-10-05)** | — |
-| B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **READY (decided 2026-10-05); BLOCKED on B18** | — |
-| B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | READY | — |
+| B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **READY (decided 2026-10-05)**; B18 merged (#114), so it is unblocked | — |
+| B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | **SHIPPED 2026-10-06** ([#114](https://github.com/bpoulliot/xenotag/pull/114); merged, not released) | — |
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | **CLOSED (decided 2026-10-05)** — accept the overlap; the pinning test stays | — |
 | B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | **READY (decided 2026-10-05)** | — |
 | B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | **READY (decided 2026-10-05)** | — |
@@ -192,7 +192,22 @@ the three. The pinning test
 (`test_the_2_letter_codes_that_are_also_other_tags_are_known`) stays, as the guard against a
 fourth collision.
 
-**B18 — FILED 2026-09-27, found while reading back B9's re-tag. Not fixed here. READY.**
+**B18 — SHIPPED 2026-10-06 ([#114](https://github.com/bpoulliot/xenotag/pull/114), merged, not released).**
+`JellyfinClient.get_current_tags(ids)` reads `GET /Items?Ids=<csv>&Fields=Tags` in batches of
+`TAG_READ_BATCH = 100`. The request line is ~3.6 kB (3,552 B measured on production), under the
+8 kB default that Kestrel and nginx accept. `_run_scan()` now tags probed items in batches of 100,
+and each batch starts with one such read. Each item in the batch gets a copy whose `Tags` are the
+current ones, and both `set_managed_tags()` and U9's drift warning read that copy. The write is
+otherwise unchanged. An id the read does not return, or a read that fails, keeps the listing's copy:
+this is logged once per scan, the total is logged at the end, and it never fails the item. On a
+cancelled scan the last, unprocessed batch is not written. Cost: one read-only GET per 100 items,
+about 95 on a full scan of the current 9,450 items, and nothing extra per item. Webhooks already read
+by `Ids=`. B17 reuses the method for its read-back. Production probe on 2026-10-06 (GET-only, through
+`ReadOnlyTransport`): 9,450 listed, 9,450 returned by 95 batch reads, 0 missing. **The listing agreed
+with `Ids=` on all 9,450**, so the stale state of 2026-09-27 had cleared by then; why it cleared is
+still unknown. Tests: `tests/test_current_tags.py`.
+
+*Filed 2026-09-27, found while reading back B9's re-tag:*
 
 `_run_scan()` takes every item from `jf.get_items()` — the recursive `/Items` listing — and
 `set_managed_tags()` builds the new tag list from that copy's non-managed tags. On production
@@ -2240,14 +2255,14 @@ and resets on restart. The write goes ahead unchanged, and any error in the chec
 DEBUG and ignored. Non-`xt-` tags (including legacy `mf-` and the \*arrs' non-prefixed labels)
 are never drift. No row, or a row whose `tags_applied` is NULL, counts as a first write.
 - **No extra request.** The tags come from `jf.get_tags(item)`, the same copy
-  `set_managed_tags()` builds its write from. The scan's item comes from the recursive listing
+  `set_managed_tags()` builds its write from (in a scan, since B18, the batched `Ids=` read). The scan's item comes from the recursive listing
   and the Jellyfin webhook's from `/Items?Ids=`, and both request `Tags` in `Fields`. The
   \*arr webhooks use `find_item_by_provider_id()`, which requests `ITEM_FIELDS` and so gets
   `Tags` too.
-- **Caveat: B18.** On production the recursive listing can serve stale `Tags`. Until B18 is
-  fixed, a scan-path warning may describe the listing rather than Jellyfin, for example after a
-  re-tag the listing has not caught up with. B18's fix (read by `Ids=` before the write) corrects
-  both, because they share one input.
+- **Caveat: B18 — FIXED 2026-10-06 (#114).** On production the recursive listing can serve stale
+  `Tags`. Before B18's fix, a scan-path warning could therefore describe the listing rather than
+  Jellyfin. The scan now reads each batch's tags by `Ids=` right before the write, and the
+  warning and the write share that read.
 - **Vocabulary changes do not flood the log.** The comparison is Jellyfin against the *row*,
   never against the tags about to be written. An item nobody touched still carries exactly the
   row's old spelling, so the full re-tag that a `tag_config_hash` change forces warns only where
