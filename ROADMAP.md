@@ -38,32 +38,102 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B5 | **Nothing has ever been written to Sonarr or Radarr.** `_find_arr_id()` reads `ProviderIds["Sonarr"]`/`["Radarr"]`, a key Jellyfin does not set on any of the 9,414 items — so the \*arr tag write and the \*arr certification fallback are both dead code in production. | 4 | 3 | **LIVE 2026-09-26** (v1.7.0) — all five instances written and read back | — |
 | B6 | **A colour that is not six-digit hex renders BLACK, silently.** `ImageConfig` accepts any string and `_parse_color()` returns `(0, 0, 0)` for anything but `#rrggbb` — so a hand-edited `badge_text_color: "#fff"` paints black labels on dark badges. | 3 | 1 | **FIXED 2026-09-27; LIVE (v1.9.0)** | — |
 | B7 | **An unmapped audio language becomes its first two characters.** `_lang3_to_lang2()` falls back to `lang3[:2].upper()`, so a malformed tag gives `xt-"E` and `zxx`/`khm`/`per` give `ZX`/`KH`/`PE` — tags that name no language, or the wrong one. | 2 | 1 | **FIXED 2026-09-27; LIVE (v1.9.0)** — production re-tagged 2026-09-27 11:41–12:52Z and read back | — |
-| B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | **SHIPPED 2026-10-06** ([#117](https://github.com/bpoulliot/xenotag/pull/117); merged, not released) | — |
+| B8 | **A Sonarr/Radarr webhook processes the wrong item; a Jellyfin one processes none.** `find_item_by_provider_id()` filters with `AnyProviderIdEquals`, which Jellyfin 10.11.10 ignores (it returns the whole library, first item first); `get_item_by_id()` requests no `Path`. **Measured 2026-09-27:** resolve by FOLDER, no provider-id fallback. **Value is nil today** — no \*arr has a webhook and Jellyfin has no webhook plugin (U11). | 3 | 2 | **SHIPPED 2026-10-06** ([#117](https://github.com/bpoulliot/xenotag/pull/117)) · **RELEASED v1.11.0** (2026-10-07) | — |
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27; LIVE (v1.8.0)** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged; production re-tagged 2026-09-27 09:00–10:15Z | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 3 | 2 | **NEEDS DECISION** (measured 2026-10-07, [docs/measurements/b12-tag-loss.md](docs/measurements/b12-tag-loss.md)) — premise wrong: a library-wide `replaceAllMetadata=true`-type refresh on 2026-09-04 wiped ~8,000 items before the 09-24 write, which then did not stick on the five (B17's class); since B5 the \*arr NFOs respell 82% of items in lowercase (no loss). (a) case-insensitive compare needs no decision; (b) a reconciliation pass does | — |
-| B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **SHIPPED 2026-10-06** ([#122](https://github.com/bpoulliot/xenotag/pull/122); merged, not released) — **the next release's first scan is a full re-tag with live \*arr writes** (~747 renames + posters) | — |
-| B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116); merged, not released) | — |
-| B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115); merged, not released) | — |
-| B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | **SHIPPED 2026-10-06** ([#125](https://github.com/bpoulliot/xenotag/pull/125); merged, not released) | — |
-| B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **SHIPPED 2026-10-06** ([#121](https://github.com/bpoulliot/xenotag/pull/121); merged, not released) — **changes scan behaviour at the next release** | — |
-| B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | **SHIPPED 2026-10-06** ([#114](https://github.com/bpoulliot/xenotag/pull/114); merged, not released) | — |
+| B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **SHIPPED 2026-10-06** ([#122](https://github.com/bpoulliot/xenotag/pull/122)) · **RELEASED v1.11.0** (2026-10-07) — its first scan was the full re-tag with live \*arr writes (see *Release v1.11.0* below) | — |
+| B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116)) · **RELEASED v1.11.0** (2026-10-07) | — |
+| B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115)) · **RELEASED v1.11.0** (2026-10-07) | — |
+| B16 | **The first-run admin password is written to the container log.** With no `XENOTAG_PASSWORD`, `bootstrap()` logs the generated password at WARNING (CodeQL #8), and it stays a working credential until changed — readable by anyone with `docker logs`, Dozzle or Portainer. | 2 | 1 | **SHIPPED 2026-10-06** ([#125](https://github.com/bpoulliot/xenotag/pull/125)) · **RELEASED v1.11.0** (2026-10-07) | — |
+| B17 | **A Jellyfin tag write that does not stick is recorded as applied.** In B9's re-tag Jellyfin undid 22 of 9,340 writes — it re-saved the item with its old tags 60–700 ms after the refresh xenotag requests right after writing — and `state.db` recorded all 22 as tagged; a write that raises (8 client timeouts) is recorded the same way. Incremental scans never retry either. | 3 | 2 | **SHIPPED 2026-10-06** ([#121](https://github.com/bpoulliot/xenotag/pull/121)) · **RELEASED v1.11.0** (2026-10-07) — read-back counts in *Release v1.11.0* below | — |
+| B18 | **xenotag reads current Jellyfin tags from a listing that can be stale.** Production's recursive `/Items` listing served pre-re-tag `Tags` for all 6,366 items the re-tag changed, while `jellyfin.db` and `/Items?Ids=` were current; `set_managed_tags()` keeps the non-managed tags from that listing, and every read-back through it is blind. | 3 | 1 | **SHIPPED 2026-10-06** ([#114](https://github.com/bpoulliot/xenotag/pull/114)) · **RELEASED v1.11.0** (2026-10-07) | — |
 | B19 | **Three ISO 639-1 codes spell another tag.** Since B7 a language tag is its ISO 639-1 code, and Sindhi is `SD` (= the resolution tag), Divehi `DV` (= Dolby Vision) and South Ndebele `NR` (= the rating). Latent: no stream in production's Jellyfin has any of the three. | 1 | 1 | **CLOSED (decided 2026-10-05)** — accept the overlap; the pinning test stays | — |
-| B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | **SHIPPED 2026-10-06** ([#123](https://github.com/bpoulliot/xenotag/pull/123); merged, not released) — `Name[xxx]` reads the code; *Tenchi in Tokyo* only partly fixed (25 bare-name episodes stay `UND`) | — |
-| B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | **SHIPPED 2026-10-06** ([#124](https://github.com/bpoulliot/xenotag/pull/124); merged, not released) — option (b); 100% posters byte-identical | — |
-| B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113); merged, not released) | — |
-| B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | **SHIPPED 2026-10-06** ([#129](https://github.com/bpoulliot/xenotag/pull/129); merged, not released) — `preview_image()` now builds its `AppConfig` with `tags=get_config().tags`; default (all `poster`) stays byte-identical | — |
-| B24 | **`/health` reports Jellyfin unreachable without ever contacting it — and the container healthcheck only ever reads that answer.** For a caller with no web session `health()` returns early with a *fabricated* verdict, `jellyfin={"ok": False, "status": "unreachable", "message": "Not authenticated"}` (`app/web/routes.py:175-183`), so a perfectly healthy Jellyfin is reported as down; the message describes the **caller's** missing cookie, not the dependency. `docker-compose.yml:30-34` sets the healthcheck to `curl -f http://localhost:7755/health`, which carries no cookie, so it always takes that branch — and because the branch still returns **HTTP 200 with `status: "ok"`**, `curl -f` can never fail on a dependency problem. The one endpoint whose job is to report dependency health is structurally unable to: unauthenticated it invents the answer, and authenticated it hardcodes `status="ok"` (`:195`) whatever `jf.health()` returned. **Measured 2026-10-06** while verifying the Jellyfin 10.11→12.2 upgrade (`~/docker` TODO I62): prod xenotag reported `jellyfin: unreachable / Not authenticated` while its configured API key was byte-identical to Jellyfin's, `jellyfin:8096` answered 200 from inside the container, and tags read back correctly by `Ids=` — it cost real diagnosis time and briefly looked like an upgrade regression. Fix: either exempt `/health` from the session gate (it leaks only up/down, and the port is bound to `127.0.0.1`) or give the probe its own unauthenticated liveness route and keep the authenticated one for the UI; in both cases report an **unknown** dependency as unknown rather than as `unreachable`, and let `status` follow the checks. | 3 | 1 | **SHIPPED 2026-10-07** ([#132](https://github.com/bpoulliot/xenotag/pull/132); merged, not released) — exempted from the session gate; unauthenticated callers get `status: "up"` only, authenticated callers keep full detail with `status` computed from the real checks | — |
+| B20 | **An OGM file's `English[eng]` language tag is tagged `UND`.** B7's decided rule sends anything that is not 2–3 ASCII letters to `UND` (with a WARNING); ffprobe reports three old `.ogm` anime series' tracks as `English[eng]`, `Japanese[jpn]`, `English`, `Japanese`, which the old first-two-letters rule got right by luck. Those 3 series lose `EN`/`JA`/`dual-audio`/`sub-EN` at the next re-tag. | 2 | 1 | **SHIPPED 2026-10-06** ([#123](https://github.com/bpoulliot/xenotag/pull/123)) · **RELEASED v1.11.0** (2026-10-07) — `Name[xxx]` reads the code; *Tenchi in Tokyo* only partly fixed (25 bare-name episodes stay `UND`) | — |
+| B21 | **Below 100% opacity the poster is not the badge the Settings chips measure.** `_render_group()` pastes each pill tile with itself as the mask, which squares its alpha and premultiplies its RGB: the poster gets the fill at a³ over (1 − a²) of the poster, while B1's instrument — and B2's chips — model a. At 80% the chip says the rating badge is 4.52:1 (AA) on a white poster; the poster renders 3.60:1. The glow is hit at every opacity, 100% included. | 4 | 2 | **SHIPPED 2026-10-06** ([#124](https://github.com/bpoulliot/xenotag/pull/124)) · **RELEASED v1.11.0** (2026-10-07) — option (b); 100% posters byte-identical | — |
+| B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113)) · **RELEASED v1.11.0** (2026-10-07) | — |
+| B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | **SHIPPED 2026-10-06** ([#129](https://github.com/bpoulliot/xenotag/pull/129)) · **RELEASED v1.11.0** (2026-10-07) — `preview_image()` now builds its `AppConfig` with `tags=get_config().tags`; default (all `poster`) stays byte-identical | — |
+| B24 | **`/health` reports Jellyfin unreachable without ever contacting it — and the container healthcheck only ever reads that answer.** For a caller with no web session `health()` returns early with a *fabricated* verdict, `jellyfin={"ok": False, "status": "unreachable", "message": "Not authenticated"}` (`app/web/routes.py:175-183`), so a perfectly healthy Jellyfin is reported as down; the message describes the **caller's** missing cookie, not the dependency. `docker-compose.yml:30-34` sets the healthcheck to `curl -f http://localhost:7755/health`, which carries no cookie, so it always takes that branch — and because the branch still returns **HTTP 200 with `status: "ok"`**, `curl -f` can never fail on a dependency problem. The one endpoint whose job is to report dependency health is structurally unable to: unauthenticated it invents the answer, and authenticated it hardcodes `status="ok"` (`:195`) whatever `jf.health()` returned. **Measured 2026-10-06** while verifying the Jellyfin 10.11→12.2 upgrade (`~/docker` TODO I62): prod xenotag reported `jellyfin: unreachable / Not authenticated` while its configured API key was byte-identical to Jellyfin's, `jellyfin:8096` answered 200 from inside the container, and tags read back correctly by `Ids=` — it cost real diagnosis time and briefly looked like an upgrade regression. Fix: either exempt `/health` from the session gate (it leaks only up/down, and the port is bound to `127.0.0.1`) or give the probe its own unauthenticated liveness route and keep the authenticated one for the UI; in both cases report an **unknown** dependency as unknown rather than as `unreachable`, and let `status` follow the checks. | 3 | 1 | **SHIPPED 2026-10-07** ([#132](https://github.com/bpoulliot/xenotag/pull/132)) · **RELEASED v1.11.0** (2026-10-07) — exempted from the session gate; unauthenticated callers get `status: "up"` only, authenticated callers keep full detail with `status` computed from the real checks | — |
+| B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **READY** (measured 2026-10-07) — blocks U2 removal | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
 its fix reads the item back by `Ids=` (B18, below). **B21, B13 and B20 (also relabelled READY
 below) must merge before the next release** (B20 merged #123, B21 merged #124, 2026-10-06): B13's rule change folds into `_tag_config_hash()`, so
 the first scan after it is a forced full re-tag with live `*arr` writes (as B9's and B7's were) —
-the release note must say so.
+the release note must say so. *Released together in v1.11.0 on 2026-10-07 — see below.*
 
-**B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113), merged, not released).**
+**Release v1.11.0 — LIVE 2026-10-07 (the overnight release session).** `bump=minor` from `main`
+`0da1c31` (CI green) → release commit `b3858bc`, tag `v1.11.0`, image
+`ghcr.io/bpoulliot/xenotag:1.11.0` (= `:latest`), deployed 03:19:50Z. It carried B8, B13, B14,
+B15, B16, B17, B18, B20, B21, B22, B23, B24, I9, I11, P4a, P4b, P7 containment, U5, U9's drift
+half and the CodeQL #10 change (#135). **Not in it:** P6 (#134, HOLD) and CodeQL #11's fix (B25,
+#136, needs a decision). **CodeQL alerts #10 and #11 are both still open on `main` at `b3858bc`**
+— #135 did not clear #10 in CodeQL's own analysis; neither alert was touched.
+- *Deploy.* `state.db` backed up after a clean stop as `state.db.bak-20261007-pre-release` (WAL
+  checkpointed); `:1.10.0` is still pulled for a back-out. Startup logged `state.db schema:
+  upgraded (revision 0002)`; healthy, no restarts. **B24:** `/health` without a session answers
+  `{"status":"up"}`, with one `ok` and every dependency `healthy`. **I1:** see I1's own note.
+- *The forced full re-tag — scan 158* (`full`, 03:27:39Z → 05:07:02Z): 8,766 listed, 8,304 tagged,
+  8,256 posters. **\*arr: 684 objects written, 0 write errors, 0 read-back failures, not halted**;
+  the only new label is `xt-interlaced` (on three instances). **B17:**
+  `xenotag_tag_writeback_mismatch_total` fixed **219**, unresolved **0** — Jellyfin undid 2.6 % of
+  the writes (B9's re-tag on 10.11.10: 22 of 9,340) and the one retry fixed every one. **B13:** 660
+  Jellyfin items changed class — exactly the 658 predicted movers the scan could reach, plus 2 that
+  had no class — and 659 \*arr objects; the other 89 of the 747 are films B26 hides. **U9:** 6,704
+  drift warnings, 6,700 of them case-only (B12) and 4 real, all known (B12's re-created *Jimmy
+  Carr* item, B17's two `xt-H.264` films, *Frontier War*) and repaired by the write. **U5:**
+  `xt-interlaced` on 22 rows. Scan errors: 451 `no_file` (448 of them BoxSets — B26), 11
+  `probe_failed` (all on `xtor`, under a host load of ~60). Tag-config hash `56db14293fe03fc6` →
+  `f57e91dbac6fbe70`.
+- *Library read-back* (GET-only snapshots of all five \*arrs and of every Jellyfin item by `Ids=`,
+  before and after; `b9verify.py`): 0 operator tags and 0 non-tag fields changed on any re-tagged
+  \*arr object, 0 labels deleted or renamed. On Jellyfin no keyword was lost, but **64 keywords
+  ending in a space or a no-break space came back trimmed**: Jellyfin 12.2 trims tags on save
+  (xenotag sends them back unchanged; B9's re-tag on 10.11.10 saw no such change). Two series
+  whose probe failed still carry a pre-B9 `xt-DD+`.
+- *U2's report-mode pass* in the same scan: 2,331 candidates, 1,197 confirmed deleted, **1,134
+  answered by id** (B26's hidden films) and **87 rows / 82 radarr/general objects marked STRIP**
+  — every one a live film the listing hides. Nothing was written (53 GETs).
+- Record: `~/docker/xenotag/release-1.11.0-20261007/README.md` (snapshots, verify output, scan log,
+  the tools).
+
+**B26 — FILED 2026-10-07 by the v1.11.0 release session (measured on production, GET only). READY.**
+B25 is claimed by the open PR #136 (CodeQL #11), so this takes B26.
+
+- *Measured* on production Jellyfin 12.2.0 with xenotag's API key, through `ReadOnlyTransport` (0
+  blocked): `/Items?Recursive=true&IncludeItemTypes=Movie,Series` has `TotalRecordCount` **8,766**
+  with no `CollapseBoxSetItems` and with `=true`, and **9,452** with `=false`. The default listing
+  holds 5,844 films, 2,474 series and **448 `BoxSet`s**; the `=false` listing holds 6,978 films and
+  2,474 series, no BoxSet, and all **1,134** films the default lacks. Every one of the 1,134 answers
+  a lookup by `Ids=` (24 GETs), so they exist. The 17 configured libraries, listed one by one as
+  the scan lists them, union to the same 8,766.
+- *Since when.* U2's report at 2026-10-06 09:01Z, on 10.11.10, listed 9,450 items and confirmed
+  1,197 index rows deleted. On 12.2.0 the same index has 2,331 rows missing from the listing:
+  the same 1,197 still confirmed deleted, plus these 1,134 films. Production moved to 12.2.0 on
+  2026-10-06 (`~/docker` TODO I62). **Not determined:** whether collapsing is 12.2's default for an
+  API-key caller or follows a server or user grouping setting. The fix is the same either way.
+- *Effect on the v1.11.0 re-tag.* That scan's input was the collapsed listing, so the 1,134 films
+  kept their pre-release tags and posters — 89 of B13's 747 movers among them (B13's 2026-10-06
+  records). The tag-config hash is now the new one, so **no incremental scan will reach them**:
+  they need one full scan after the fix ships. The 448 BoxSets were logged as `skip (no_file)`
+  scan errors (their `Path` is under Jellyfin's own `/config/data`, which xenotag does not mount);
+  nothing was written for them.
+- *Effect on U2.* `DeletedItemsPass.plan()` keeps a deleted row's \*arr object only if a LISTED
+  item lives in its folder. 87 of the 1,197 confirmed-deleted rows sit in a hidden film's folder,
+  so in `remove` mode their **82 radarr/general objects would lose their managed tags although the
+  film is live** (computed from the pre-release index, the by-id snapshot and a GET-only \*arr
+  snapshot; the v1.11.0 scan's own report-mode pass is quoted in *Release v1.11.0* above). In
+  `report` mode nothing is written. **U2 removal must not be switched on before B26 is released.**
+  B8's webhook folder lookup (`list_item_paths()`) goes through the same listing; no webhook is
+  configured today.
+- *Fix.* Send `CollapseBoxSetItems=false` from `_fetch_items()` and from `complete_listing()` —
+  its pages AND its recount — with a test whose fake Jellyfin collapses unless asked not to.
+  Check that dev (12.1.0) and the 10.11.10 lab image honour it. After the release that carries it,
+  run one full scan (`POST /scan/full`) to reach the 1,134 films.
+
+**B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113)); released in v1.11.0 (2026-10-07).**
 `_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
 failure and re-raises, as before. It does that only while `progress.running` is still True, so a
 `_run_scan()` exit that already called `finish()` stands, and nothing is finished twice. A
@@ -87,7 +157,7 @@ failure is recorded, and the host's 26-hour no-successful-scan alert fires. **Fi
 re-raising, and test that a second scan then runs. Not done in I5 because it changes scan
 behaviour, not observability.
 
-**B21 — SHIPPED 2026-10-06 ([#124](https://github.com/bpoulliot/xenotag/pull/124), merged, not released).** Option (b), as decided.
+**B21 — SHIPPED 2026-10-06 ([#124](https://github.com/bpoulliot/xenotag/pull/124)); released in v1.11.0 (2026-10-07).** Option (b), as decided.
 `_composite_pill()` places each pill in two steps: the glow — now its own image, `_render_glow()`,
 cached by tile size — is pasted with itself as the mask exactly as before, so it still lands
 squared; the pill (fill + label, `_render_pill_tile()`) is then `alpha_composite`d onto the row
@@ -192,7 +262,7 @@ keep today's glow pixels; at 100% posters stay as they are (byte-identical at 10
 confirmed by a render — *confirmed 2026-10-06, see the SHIPPED block above*). Relabelled **READY**; must merge before the next release — see the
 build-order note above.
 
-**B20 — SHIPPED 2026-10-06 ([#123](https://github.com/bpoulliot/xenotag/pull/123), merged, not released).**
+**B20 — SHIPPED 2026-10-06 ([#123](https://github.com/bpoulliot/xenotag/pull/123)); released in v1.11.0 (2026-10-07).**
 `_lang3_to_lang2()` reads a tag shaped exactly `<name>[<2-3 ASCII letters>]` (one anchored regex,
 `[^\[\]]+\[([a-z]{2,3})\]`, matched after lowercasing and stripping) as its bracketed code, which
 then goes through the same rule as any code: `English[eng]` → `EN`, `Japanese[jpn]` → `JA`,
@@ -270,7 +340,7 @@ the three. The pinning test
 (`test_the_2_letter_codes_that_are_also_other_tags_are_known`) stays, as the guard against a
 fourth collision.
 
-**B18 — SHIPPED 2026-10-06 ([#114](https://github.com/bpoulliot/xenotag/pull/114), merged, not released).**
+**B18 — SHIPPED 2026-10-06 ([#114](https://github.com/bpoulliot/xenotag/pull/114)); released in v1.11.0 (2026-10-07).**
 `JellyfinClient.get_current_tags(ids)` reads `GET /Items?Ids=<csv>&Fields=Tags` in batches of
 `TAG_READ_BATCH = 100`. The request line is ~3.6 kB (3,552 B measured on production), under the
 8 kB default that Kestrel and nginx accept. `_run_scan()` now tags probed items in batches of 100,
@@ -312,7 +382,7 @@ used the same call. **Fix:** read each item's current tags with `GET /Items?Ids=
 produces false `Tag drift` warnings in a scan; the warning reads `jf.get_tags(item)`, the same copy
 `set_managed_tags()` uses, so this fix corrects both.
 
-**B17 — SHIPPED 2026-10-06 ([#121](https://github.com/bpoulliot/xenotag/pull/121), merged, not released).**
+**B17 — SHIPPED 2026-10-06 ([#121](https://github.com/bpoulliot/xenotag/pull/121)); released in v1.11.0 (2026-10-07).**
 As decided, (a) + (c). `_process_one_item()` no longer writes the `state.db` row when the tag POST
 returns. After the write, and the refresh if the overlay rewrote the poster, the item's tags are read
 back by `Ids=` (B18's `get_current_tags()`). The read waits until `TAG_READBACK_SETTLE_S = 2.0` s
@@ -341,7 +411,9 @@ the end. The refresh is requested exactly as before ((b) was not chosen).
   and the WARNING are how to tell after a release.
 - **Release note:** this changes production scan behaviour at the next release. The first scan
   after it may log `Tag write did not stick` or `Tag read-back:` lines that earlier releases never
-  printed, because the case was not looked for, not because it is new.
+  printed, because the case was not looked for, not because it is new. *v1.11.0's first scan
+  (2026-10-07, host load ~60) logged 219 undone writes, every one fixed by the retry, 0 unresolved
+  and 0 unrecorded. An undo landing after the read-back would still be missed.*
 - Tests: `tests/test_tag_readback.py` covers a write that sticks; identical write calls on the happy
   path, with the read-back after the refresh; undone once, then fixed by the retry; undone twice
   (records what was read); only undone items retried; a write that raises; a read-back that raises
@@ -399,7 +471,7 @@ does. Needs no schema change.
 under `/config` (`initial-password`), log only the path, delete the file on the first password
 change. Relabelled **READY**.
 
-**SHIPPED 2026-10-06 ([#125](https://github.com/bpoulliot/xenotag/pull/125), merged, not released).**
+**SHIPPED 2026-10-06 ([#125](https://github.com/bpoulliot/xenotag/pull/125)); released in v1.11.0 (2026-10-07).**
 `bootstrap()` writes a generated password to `initial-password` beside `config.yml`, created by
 `os.open(O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW, 0o600)`, and logs only the path. An existing file is
 never overwritten or re-logged: with a hash stored, one WARNING says it is still there; with no hash,
@@ -410,7 +482,7 @@ its password is adopted (a first run whose save never landed). Empty/unreadable 
 **Prod unaffected:** it holds a `$2b$` hash, so the generation branch never runs (live `/config`
 not touched). CodeQL #8 should close as *fixed* on `main`'s next analysis — not dismissed by hand.
 
-**B15 — SHIPPED 2026-10-06 ([#115](https://github.com/bpoulliot/xenotag/pull/115), merged, not released).**
+**B15 — SHIPPED 2026-10-06 ([#115](https://github.com/bpoulliot/xenotag/pull/115)); released in v1.11.0 (2026-10-07).**
 `app/auth.py` imports bcrypt unconditionally — no `except ImportError` branch remains, so an
 install without bcrypt fails at import. A stored `sha256:` hash no longer verifies, and
 `bootstrap()` logs an ERROR naming the recovery (blank `auth.password_hash`, restart); it does not
@@ -436,7 +508,7 @@ an ERROR naming the recovery when it sees one — blank `auth.password_hash` in 
 restart, which re-runs the first-run path. Test: a `sha256:` hash does not verify. #6/#7 should
 then close as *fixed* on `main`'s next analysis.
 
-**B14 — SHIPPED 2026-10-06 ([#116](https://github.com/bpoulliot/xenotag/pull/116), merged, not released).**
+**B14 — SHIPPED 2026-10-06 ([#116](https://github.com/bpoulliot/xenotag/pull/116)); released in v1.11.0 (2026-10-07).**
 `routes.preview_image()` parses its request into a `MediaInfo` (`_preview_media_info()`: one track
 per comma-separated `LANG CODEC` token; a one-word token is a codec with language `UND`) and calls
 `pipeline._make_badge_groups()`, as `scripts/generate_readme_images.py` does. `_preview_order()`, the
@@ -451,7 +523,7 @@ unchanged (the overlay examples never went through this route). **`assets/readme
 `--screenshots` the next time the README screenshots are refreshed. Found while fixing: **B23** (the
 preview ignores `tags.destinations`), filed below.
 
-**B23 — FILED 2026-10-06, found while fixing B14. SHIPPED 2026-10-06 ([#129](https://github.com/bpoulliot/xenotag/pull/129), merged, not released).** A scan paints a category only if
+**B23 — FILED 2026-10-06, found while fixing B14. SHIPPED 2026-10-06 ([#129](https://github.com/bpoulliot/xenotag/pull/129)); released in v1.11.0 (2026-10-07).** A scan paints a category only if
 `"poster"` is in its `tags.destinations` list (`_make_badge_groups()`). The preview passed
 `AppConfig(image=…)`, so it always used the default destinations, which include `poster` everywhere.
 An operator who took `poster` off, say, subtitles still saw subtitle pills in the preview. That
@@ -618,7 +690,7 @@ resolution-rule version into `_tag_config_hash()`, so the upgrade forces one ful
 Relabelled **READY**; must merge before the next release, with B20 and B21 — see the build-order
 note above. The forced re-tag writes live `*arr` tags, same as B9's and B7's did.
 
-**B13 — SHIPPED 2026-10-06 ([#122](https://github.com/bpoulliot/xenotag/pull/122), merged, not released).**
+**B13 — SHIPPED 2026-10-06 ([#122](https://github.com/bpoulliot/xenotag/pull/122)); released in v1.11.0 (2026-10-07).**
 `scanner._detect_resolution()` now uses `RESOLUTION_CLASSES` ((3840, 2160, 4K), (1920, 1080, 1080p),
 (1280, 720, 720p), (854, no height, 480p)) with `RESOLUTION_TOLERANCE_PCT = 5`. A stream is in a class
 when its width or height reaches the class's value less 5% (integer test, `size·100 ≥ class·95`), and
@@ -629,7 +701,9 @@ default-config hash goes from `ed8a1890a06dc045` to `7a0b22544d89aff4`.
 **⚠ Release note — the next release's first scan is a FULL RE-TAG WITH LIVE `*arr` WRITES**, like
 v1.9.0's. It re-probes every file and moves about 747 items' resolution tags: one rename on Jellyfin
 plus one on each owning `*arr` (about 741, counted from B5's go-live plans), and one poster re-render
-each. Production is live on all five `*arr`s with an empty recycle bin. Nothing has run it.
+each. Production is live on all five `*arr`s with an empty recycle bin. *It ran on 2026-10-07 as
+v1.11.0's scan 158: the 658 movers the scan could reach all moved to the predicted class, and 659
+\*arr objects were renamed; the other 89 movers are films B26 hides — see Release v1.11.0.*
 After the re-tag, read back by `Ids=` (B18), not the recursive listing.
 
 *Proof.* The probe now keeps the pre-B13 rule frozen as `before_b13()` (what the library's tags were
@@ -715,7 +789,7 @@ provider keywords, or an outside writer (the `nav1s`/`av1` tags point at the AV1
 `/mnt/media/xtor/encodes/nav1s.sh`) — measured by watching one item's `Tags` across a refresh
 and across an encode, before choosing between a reconciliation pass and fixing the writer.
 
-*2026-09-27 — U9's drift warning (merged, not released) detects this class of loss:* the next
+*2026-09-27 — U9's drift warning (released in v1.11.0) detects this class of loss:* the next
 scan or webhook that reaches such an item logs `Tag drift: … lacks [xt-…]` and counts
 `xenotag_tag_drift_total` before re-writing it; it does not fix B12, and an item whose file never
 changes is still not reached by an incremental scan.
@@ -1054,7 +1128,7 @@ refresh (B12's note).
 script). **Back out** (not needed): redeploy `:1.7.0` — its hash differs, so its first scan
 re-tags to the old spelling, which Radarr refuses again.
 
-**B8 — SHIPPED 2026-10-06 ([#117](https://github.com/bpoulliot/xenotag/pull/117), merged, not released).**
+**B8 — SHIPPED 2026-10-06 ([#117](https://github.com/bpoulliot/xenotag/pull/117)); released in v1.11.0 (2026-10-07).**
 Built to the Spec (READY) below. `_resolve_webhook_jf_item()` matches Sonarr's `series.path` /
 Radarr's `movie.folderPath` against `JellyfinClient.list_item_paths()` (a `Fields=Path` listing of
 `Series` or `Movie` only) with B5's `_norm_path()` and `item_folders()`, imported from
@@ -2078,12 +2152,12 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
-| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **LIVE report-only (v1.9.0, 2026-09-27)** — removal OFF until the operator switches it · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
-| U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution fixed by [B8] (2026-10-06, not released) | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
+| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **LIVE report-only (v1.9.0, 2026-09-27)** — removal OFF until the operator switches it · removal **BLOCKED on B26** (2026-10-07: on Jellyfin 12.2 it would strip 82 live films' objects) · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
+| U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution fixed by [B8] (2026-10-06, released in v1.11.0) | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
 | U8 | **Tag taxonomy pass** — audit the `xt-*` set actually emitted and collapse what is redundant or never queried. | 4 | 3 | **CLOSED 2026-09-23** — measured, then the operator ruled out cutting tags; what remains is [P7] | — |
-| U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | Override half **CLOSED** · drift-detection half **SHIPPED 2026-09-27** (merged, not released) | — |
+| U9 | ~~Tag queries~~ **RESCOPED: a manual correction to an `xt-*` tag is silently clobbered on the next scan** | 4 | 3 | Override half **CLOSED** · drift-detection half **SHIPPED 2026-09-27** · **RELEASED v1.11.0** (2026-10-07) | — |
 | U11 | **Nothing sends xenotag a webhook.** 0 notifications on all five production \*arrs and no Jellyfin webhook plugin, so U3's event path (and B8's fix) never runs; wiring one adds an event-driven writer to live \*arrs | 2 | 2 | **CLOSED (decided 2026-10-05)** — unwired | — |
 
 **U11 — FILED 2026-09-27, found while measuring B8. Not built here.**
@@ -2493,7 +2567,7 @@ xenotag, and drift detection logs a WARNING when an item's current `xt-` tags di
 `tags_applied` before a write. So U9's **override half is CLOSED** and its **drift-detection half is
 READY**, specced by option (3) above; no build has been queued for it.
 
-**U9 drift-detection half — SHIPPED 2026-09-27 (merged, not released).** `_process_one_item()`
+**U9 drift-detection half — SHIPPED 2026-09-27; released in v1.11.0 (2026-10-07).** `_process_one_item()`
 calls `_warn_tag_drift()` just before `set_managed_tags()`, on both the scan and the webhook path.
 It compares the item's current `xt-` tags with the row's `tags_applied`, both restricted to
 `tags.managed_prefix`. When they differ it logs one WARNING line naming the item (name and id),
@@ -2550,9 +2624,9 @@ webhook resolves the wrong item.)*
 | I5 | Prometheus metrics endpoint | 3 | 2 | **SHIPPED 2026-09-27; LIVE (v1.10.0)** — scraped, three alert rules on the host | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
 | I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | **CLOSED 2026-09-26** — superseded by I5 | — |
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
-| I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | **SHIPPED 2026-09-27** — merged, not released; prod wiring is the operator's | — |
+| I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | **SHIPPED 2026-09-27** · **RELEASED v1.11.0** (2026-10-07); prod wiring is the operator's | — |
 | I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
-| I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | **SHIPPED 2026-10-06** (#118, merged, not released) | — |
+| I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | **SHIPPED 2026-10-06** (#118) · **RELEASED v1.11.0** (2026-10-07) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
 | I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure. **Triaged 2026-09-27:** five are false positives (probes committed); #6/#7 → B15, #8 → B16. What remains is dismissing the five on GitHub with the reasons recorded below | 3 | 1 | READY (measured 2026-09-27) | — |
 | I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **DECIDED 2026-10-05** — waits on the production upgrade | — |
@@ -2654,7 +2728,7 @@ NEEDS DECISION.
    **OPERATOR DECISION 2026-09-26:** (a) — reject `POST`/`PUT`/`DELETE` whose `Origin` (else `Referer`) is
    not the request's own origin, `/webhook/*` exempt, verified behind SWAG. **READY.**
 
-   **I1 — SHIPPED 2026-09-27 (merged, not released).** `app/web/csrf.py`, a pure ASGI middleware
+   **I1 — SHIPPED 2026-09-27; released in v1.10.0.** `app/web/csrf.py`, a pure ASGI middleware
    added in `app/main.py` inside `_SecurityHeaders` (so its 403s carry the same headers). It checks
    `POST`/`PUT`/`PATCH`/`DELETE`, and `/webhook/*` is exempt. `Origin` is compared, or `Referer` when
    there is no `Origin`, as a (scheme, host, port) triple against the request's own origin. A
@@ -2716,6 +2790,12 @@ NEEDS DECISION.
      was written); `https://evil.example.org` → **403**; `http://xenotag.bitmapserv.org` → **403**.
      The app's computed origin was `https://xenotag.bitmapserv.org:443`. The two
      `Rejected cross-origin` lines at 08:10:44 MDT are those two negative controls, not a save.
+   - **v1.11.0 smoke, 2026-10-07 (the release session).** A real save, short of the browser: from
+     inside `swag`, with SWAG's `proxy.conf` header set, Origin `https://xenotag.bitmapserv.org`
+     and a session the app minted for itself, `PUT /config` with the file's own text → **200
+     saved**, `config.yml` byte-identical, **no `Rejected cross-origin` line**. Control: Origin
+     `https://evil.example.org` → 403 (the one `Rejected cross-origin` line, 21:27:26 MDT). The
+     browser save through Authentik is **still owed** by the operator.
  - **I2 — NEEDS DECISION → CLOSED 2026-09-26 (below); the premise does not hold for this deployment.** "Prevents a full
    rescan after container upgrades" assumes the upgrade loses `state.db`. It does not: production
    bind-mounts `~/docker/xenotag/config` at `/config`, `state.db` lives there, and restic backs up
@@ -2829,7 +2909,7 @@ code path — and leaving a plainly-shaped secret out would have been a half-job
 stayed out on purpose: it is a verifier rather than a secret, and the first-run bootstrap has to be
 able to write it.
 
-**I9 — SHIPPED 2026-09-27 (merged, not released).** Option (d), as decided: `ArrInstance` has an
+**I9 — SHIPPED 2026-09-27; released in v1.11.0 (2026-10-07).** Option (d), as decided: `ArrInstance` has an
 optional `api_key_file`. When it is set, the file supplies the instance's key on every load and every
 save, wins over an `api_key` beside it, and that `api_key` is never written back — not by the Settings
 page, the raw YAML editor, `save_auth()` or the first-run bootstrap. The path saves normally. An
@@ -3169,7 +3249,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **READY — unblocked 2026-10-06:** [B21] shipped (#124) (decided 2026-09-26; work held in PR #95, which needs `main` merged; its self-test passes with B21 in) | — |
-| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **SHIPPED 2026-10-06** ([#126](https://github.com/bpoulliot/xenotag/pull/126); merged, not released) — (d), 2-row budget, counted `+N`, stack clamped · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
+| P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **SHIPPED 2026-10-06** ([#126](https://github.com/bpoulliot/xenotag/pull/126)) · **RELEASED v1.11.0** (2026-10-07) — (d), 2-row budget, counted `+N`, stack clamped · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
@@ -3340,7 +3420,7 @@ index, not a free-text box. It changes pill order only — never which pills exi
 **OPERATOR DECISION 2026-09-26:** (a) — one `prefer_languages` pick-list (codes present in the index) for audio and
 subtitle rows; it orders pills only, never which pills exist. The ordering half is **READY**.
 
-**P7 ordering — SHIPPED 2026-09-27 (merged, not released).** `image.prefer_languages`, one list
+**P7 ordering — SHIPPED 2026-09-27; released in v1.10.0.** `image.prefer_languages`, one list
 (default empty) for the audio and subtitle rows. Applied where the pills are built,
 `pipeline._make_badge_groups()`, via `overlay.order_pills_by_language()`: within each pill the
 listed languages lead in list order, then the pills are ranked by the best-listed language they
@@ -3367,7 +3447,7 @@ untouched. **Order only** — a 40-seed property test checks every pill keeps ex
    preview honours the setting. Verified in a throwaway container on invented data at 1366 and
    390 px: add → raise → preview URL → save → reload round-trips, no JS errors, no 4xx/5xx.
 
-**P7 containment — SHIPPED 2026-10-06 ([#126](https://github.com/bpoulliot/xenotag/pull/126), merged, not released).** Decision (d), as decided.
+**P7 containment — SHIPPED 2026-10-06 ([#126](https://github.com/bpoulliot/xenotag/pull/126)); released in v1.11.0 (2026-10-07).** Decision (d), as decided.
 `render_badge_groups()` no longer draws one row per group with a `…`:
 
  - **Wrap, up to 2 rows per group.** The unit is the badge (`overlay._atoms()`): a label's
@@ -3447,7 +3527,7 @@ copy of the pre-P7 renderer, and also checks that a hiding case does move. The s
    badges themselves: pills carry theirs, and the probe matches each pill as a run of the
    label's badges. A test covers the shape with invented codes. The re-run reads 0.
  - `--db` failed on that copy with `no such column: media_state.field_order` (U5's column,
-   merged, not released). It now loads only the columns it reads.
+   released in v1.11.0). It now loads only the columns it reads.
 
 **Consequence for the operator.** It is poster-visible only for the items that wrapped or
 clipped, and it takes effect at the **next full scan**: there is no overlay hash, and an
@@ -4009,14 +4089,14 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| U5 | Extended ffprobe tags: video profile, bitrate tier, interlacing, frame rate | 4 | 3 | **SHIPPED 2026-09-27** — interlacing only (`xt-interlaced`), as decided; merged, not released — the next release forces a full re-tag | [#24](https://github.com/bpoulliot/xenotag/issues/24) |
+| U5 | Extended ffprobe tags: video profile, bitrate tier, interlacing, frame rate | 4 | 3 | **SHIPPED 2026-09-27** — interlacing only (`xt-interlaced`), as decided · **RELEASED v1.11.0** (2026-10-07) — its first scan was the full re-tag | [#24](https://github.com/bpoulliot/xenotag/issues/24) |
 | U6 | Extended metadata tags from Jellyfin/\*arr: genres, original language, runtime bands, series status, ratings, custom formats | 4 | 5 | **CLOSED 2026-09-26** | [#25](https://github.com/bpoulliot/xenotag/issues/25) |
 
 ### P — Polish
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120); merged, not released) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128); merged, not released), media browser deferred to the post-feature UI pass — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser deferred to the post-feature UI pass — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
 | P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
@@ -4045,7 +4125,7 @@ labels say what would make each one startable.
    ~~**BLOCKED on B9.**~~ **READY** since B9 was FIXED 2026-09-27; `xt-interlaced` is already legal
    under B9's spelling rule (`tagger.tag_label()`), which any new family must go through.
 
-   **U5 — SHIPPED 2026-09-27 (merged, not released). Interlacing only; the other three families
+   **U5 — SHIPPED 2026-09-27; released in v1.11.0 (2026-10-07). Interlacing only; the other three families
    were not built.**
    - **Rule.** `scanner._detect_field_order()` reads ffprobe's `field_order` from the first video
      stream (the one the codec comes from). `tt`/`bb`/`tb`/`bt` add `xt-interlaced`; `progressive`
@@ -4211,7 +4291,7 @@ labels say what would make each one startable.
    half relabelled **READY**; the media-browser half stays open, deferred, not NEEDS DECISION.
 
    **P4b (header) — SHIPPED 2026-10-06 ([#128](https://github.com/bpoulliot/xenotag/pull/128);
-   merged, not released).** `header{flex-wrap:wrap}` plus `@media(max-width:600px){.nav{margin-left:8px}}`.
+   released in v1.11.0, 2026-10-07).** `header{flex-wrap:wrap}` plus `@media(max-width:600px){.nav{margin-left:8px}}`.
    The media rule must come **after** the base `.nav` rule: same specificity, so source order wins;
    placed in the existing 600 px block above it, it lost to `margin-left:32px` and gave 3 rows at
    390 — the audit caught it. Re-measured with P4a's instrument plus a header-row probe (scripts,
