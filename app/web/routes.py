@@ -174,13 +174,13 @@ async def dashboard(request: Request):
 
 @router.get("/health", response_model=HealthResponse)
 async def health(request: Request):
+    # Exempt from the session gate (roadmap B24): the container healthcheck
+    # (`docker-compose.yml`) curls this with no cookie, so an unauthenticated
+    # caller gets only a liveness answer -- never a dependency verdict it did
+    # not measure. The dashboard UI, which always carries a session, still
+    # gets full detail below, computed from the real checks.
     if not _current_user(request):
-        return HealthResponse(
-            status="ok",
-            jellyfin={"ok": False, "status": "unreachable", "message": "Not authenticated"},
-            sonarr=[],
-            radarr=[],
-        )
+        return HealthResponse(status="up")
     cfg = get_config()
     with JellyfinClient(cfg.jellyfin.url, cfg.jellyfin.api_key) as jf:
         jf_health = jf.health()
@@ -192,7 +192,14 @@ async def health(request: Request):
     for inst in cfg.radarr.instances:
         with RadarrClient(inst.url, inst.api_key, inst.name) as rc:
             radarr_status.append({"name": inst.name, **rc.health()})
-    return HealthResponse(status="ok", jellyfin=jf_health, sonarr=sonarr_status, radarr=radarr_status)
+    all_ok = (
+        jf_health.get("ok", False)
+        and all(s.get("ok", False) for s in sonarr_status)
+        and all(r.get("ok", False) for r in radarr_status)
+    )
+    return HealthResponse(
+        status="ok" if all_ok else "degraded", jellyfin=jf_health, sonarr=sonarr_status, radarr=radarr_status
+    )
 
 
 # ---------------------------------------------------------------------------
