@@ -87,9 +87,12 @@ class Jf:
         end = time.time() + limit
         while time.time() < end:
             try:
-                if self.c.get(f"{self.base}/System/Info/Public").status_code == 200:
+                r = self.c.get(f"{self.base}/System/Info/Public")
+                # an early answer during startup carries no Version yet
+                if r.status_code == 200 and "Version" in r.json():
+                    time.sleep(5)
                     return
-            except httpx.HTTPError:
+            except (httpx.HTTPError, ValueError):
                 pass
             time.sleep(2)
         raise SystemExit("Jellyfin never came up")
@@ -224,6 +227,20 @@ def run(args) -> dict:
             raise SystemExit("SELF-TEST FAILED: tags changed with nothing done")
         record("s1", "xenotag set_managed_tags (keywords first, then xt-)", s1)
 
+        if args.scenario == "case-flip":
+            # production's sequence: xenotag writes, later the *arr rewrites its NFO with
+            # its lowercase labels, and only the real-time monitor tells Jellyfin
+            time.sleep(20)
+            m = rewrite_nfo("c1", ["luxe"] + ARR_LOWER)
+            st, ok = wait_for(jf, iid, lambda s: m in s["tags"], args.monitor_wait)
+            record("c1", "NFO rewritten WITH lowercase xt- (post-B5 *arr), real-time monitor only", st, ok)
+            record("c2", "xenotag set_managed_tags again (the next re-tag)", write_xenotag())
+            time.sleep(20)
+            m = rewrite_nfo("c3", ["luxe"] + ARR_LOWER)
+            st, ok = wait_for(jf, iid, lambda s: m in s["tags"], args.monitor_wait)
+            record("c3", "NFO rewritten again, same lowercase labels, real-time monitor only", st, ok)
+            return {"image": args.image, "version": version, "scenario": args.scenario, "steps": steps}
+
         record("s2", "xenotag refresh_item() (Default mode), NFO unchanged", refresh_and_wait(None, True))
         record("s3", "timer: FullRefresh replaceAllMetadata=false, NFO unchanged",
                refresh_and_wait({"metadataRefreshMode": "FullRefresh", "imageRefreshMode": "Default",
@@ -258,7 +275,7 @@ def run(args) -> dict:
         jf.c.post(f"{jf.base}/Library/Refresh").raise_for_status()
         st, ok = wait_for(jf, iid, lambda s: m in s["tags"], args.monitor_wait)
         record("s11", "NFO rewritten without xt-, then a library scan (/Library/Refresh)", st, ok)
-        return {"image": args.image, "version": version, "steps": steps}
+        return {"image": args.image, "version": version, "scenario": args.scenario, "steps": steps}
     finally:
         subprocess.run(["docker", "rm", "-f", name], capture_output=True)
 
@@ -269,6 +286,9 @@ def main() -> int:
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--workdir", required=True)
     ap.add_argument("--out", required=True)
+    ap.add_argument("--scenario", choices=["paths", "case-flip"], default="paths",
+                    help="paths: every refresh path in turn; case-flip: xenotag writes, then the NFO gains "
+                         "the *arr's lowercase labels (production's sequence)")
     ap.add_argument("--monitor-wait", type=float, default=150.0,
                     help="seconds to wait for the real-time monitor to ingest an NFO rewrite")
     args = ap.parse_args()
