@@ -420,7 +420,8 @@ class DeletedItemsPass:
             try:
                 results[client.label].result()
             except Exception as exc:
-                st.error = f"{type(exc).__name__}: {exc}"
+                log.error("[%s] preload failed: %s", client.label, exc, exc_info=True)
+                st.error = type(exc).__name__
                 failed.append(client.label)
                 continue
             st.available = True
@@ -807,7 +808,7 @@ def run_report_background(cfg: AppConfig) -> None:
         run_deleted_items(cfg, mode=MODE_REPORT, source="manual report")
     except Exception as exc:
         log.error("Deleted-items report failed: %s", exc, exc_info=True)
-        state["error"] = str(exc)
+        state["error"] = f"{type(exc).__name__}: deleted-items pass failed; see the server log"
     finally:
         state["running"] = False
 
