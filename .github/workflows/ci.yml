@@ -119,9 +119,9 @@ jobs:
         run: python scripts/measure_pill_containment.py --self-test
 
       # P6: the self-test's end-to-end check compares render_badge_groups()
-      # against B1's instrument -- it FAILS while roadmap B21 stands (the
-      # poster path double-applies alpha below 100%). The bare run is the
-      # acceptance criterion for the threshold and the backup palette.
+      # against B1's instrument, which the poster path matches since roadmap
+      # B21. The bare run is the acceptance criterion for the threshold and
+      # the backup palette.
       - name: Adaptive palette probe self-test
         run: python scripts/measure_adaptive_palette.py --self-test
 

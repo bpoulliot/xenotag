@@ -247,8 +247,8 @@ class ImageConfig(BaseModel):
     # degrees and the main palette's chroma, and stays at least CIEDE2000 5
     # (roadmap B4's bar) from every other category -- backup or main, since one
     # poster can show both -- under normal, protan, deutan and tritan vision.
-    # PROVISIONAL (HOLD, roadmap B21): measured with B1's instrument, which the
-    # poster path does not match below 100%; re-derive once B21 is resolved.
+    # PROVISIONAL: measured through B1's instrument, which the poster path
+    # matches since roadmap B21 (#124); awaiting the operator's sign-off.
     backup_video_badge_color: str = "#0c332d"
     backup_audio_badge_color: str = "#120c2a"
     backup_sub_badge_color: str = "#332d0c"
