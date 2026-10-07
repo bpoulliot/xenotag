@@ -52,6 +52,8 @@ class ConfigSaveRequest(BaseModel):
 
 class HealthResponse(BaseModel):
     status: str
-    jellyfin: dict  # {ok, status, message}
-    sonarr: list[dict]  # [{name, ok, status, message}, ...]
-    radarr: list[dict]
+    # None for an unauthenticated caller (the container healthcheck): it gets
+    # overall up/down only, never a dependency verdict it did not measure.
+    jellyfin: dict | None = None  # {ok, status, message}
+    sonarr: list[dict] | None = None  # [{name, ok, status, message}, ...]
+    radarr: list[dict] | None = None
