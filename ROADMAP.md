@@ -62,7 +62,42 @@ sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) build
 its fix reads the item back by `Ids=` (B18, below). **B21, B13 and B20 (also relabelled READY
 below) must merge before the next release** (B20 merged #123, B21 merged #124, 2026-10-06): B13's rule change folds into `_tag_config_hash()`, so
 the first scan after it is a forced full re-tag with live `*arr` writes (as B9's and B7's were) —
-the release note must say so.
+the release note must say so. *Released together in v1.11.0 on 2026-10-07 — see below.*
+
+**Release v1.11.0 — LIVE 2026-10-07 (the overnight release session).** `bump=minor` from `main`
+`0da1c31` (CI green) → release commit `b3858bc`, tag `v1.11.0`, image
+`ghcr.io/bpoulliot/xenotag:1.11.0` (= `:latest`), deployed 03:19:50Z. It carried B8, B13, B14,
+B15, B16, B17, B18, B20, B21, B22, B23, B24, I9, I11, P4a, P4b, P7 containment, U5, U9's drift
+half and the CodeQL #10 change (#135). **Not in it:** P6 (#134, HOLD) and CodeQL #11's fix (B25,
+#136, needs a decision). **CodeQL alerts #10 and #11 are both still open on `main` at `b3858bc`**
+— #135 did not clear #10 in CodeQL's own analysis; neither alert was touched.
+- *Deploy.* `state.db` backed up after a clean stop as `state.db.bak-20261007-pre-release` (WAL
+  checkpointed); `:1.10.0` is still pulled for a back-out. Startup logged `state.db schema:
+  upgraded (revision 0002)`; healthy, no restarts. **B24:** `/health` without a session answers
+  `{"status":"up"}`, with one `ok` and every dependency `healthy`. **I1:** see I1's own note.
+- *The forced full re-tag — scan 158* (`full`, 03:27:39Z → 05:07:02Z): 8,766 listed, 8,304 tagged,
+  8,256 posters. **\*arr: 684 objects written, 0 write errors, 0 read-back failures, not halted**;
+  the only new label is `xt-interlaced` (on three instances). **B17:**
+  `xenotag_tag_writeback_mismatch_total` fixed **219**, unresolved **0** — Jellyfin undid 2.6 % of
+  the writes (B9's re-tag on 10.11.10: 22 of 9,340) and the one retry fixed every one. **B13:** 660
+  Jellyfin items changed class — exactly the 658 predicted movers the scan could reach, plus 2 that
+  had no class — and 659 \*arr objects; the other 89 of the 747 are films B26 hides. **U9:** 6,704
+  drift warnings, 6,700 of them case-only (B12) and 4 real, all known (B12's re-created *Jimmy
+  Carr* item, B17's two `xt-H.264` films, *Frontier War*) and repaired by the write. **U5:**
+  `xt-interlaced` on 22 rows. Scan errors: 451 `no_file` (448 of them BoxSets — B26), 11
+  `probe_failed` (all on `xtor`, under a host load of ~60). Tag-config hash `56db14293fe03fc6` →
+  `f57e91dbac6fbe70`.
+- *Library read-back* (GET-only snapshots of all five \*arrs and of every Jellyfin item by `Ids=`,
+  before and after; `b9verify.py`): 0 operator tags and 0 non-tag fields changed on any re-tagged
+  \*arr object, 0 labels deleted or renamed. On Jellyfin no keyword was lost, but **64 keywords
+  ending in a space or a no-break space came back trimmed**: Jellyfin 12.2 trims tags on save
+  (xenotag sends them back unchanged; B9's re-tag on 10.11.10 saw no such change). Two series
+  whose probe failed still carry a pre-B9 `xt-DD+`.
+- *U2's report-mode pass* in the same scan: 2,331 candidates, 1,197 confirmed deleted, **1,134
+  answered by id** (B26's hidden films) and **87 rows / 82 radarr/general objects marked STRIP**
+  — every one a live film the listing hides. Nothing was written (53 GETs).
+- Record: `~/docker/xenotag/release-1.11.0-20261007/README.md` (snapshots, verify output, scan log,
+  the tools).
 
 **B26 — FILED 2026-10-07 by the v1.11.0 release session (measured on production, GET only). READY.**
 B25 is claimed by the open PR #136 (CodeQL #11), so this takes B26.
@@ -89,7 +124,7 @@ B25 is claimed by the open PR #136 (CodeQL #11), so this takes B26.
   item lives in its folder. 87 of the 1,197 confirmed-deleted rows sit in a hidden film's folder,
   so in `remove` mode their **82 radarr/general objects would lose their managed tags although the
   film is live** (computed from the pre-release index, the by-id snapshot and a GET-only \*arr
-  snapshot; the v1.11.0 scan's own report-mode pass is quoted in *Release v1.11.0* below). In
+  snapshot; the v1.11.0 scan's own report-mode pass is quoted in *Release v1.11.0* above). In
   `report` mode nothing is written. **U2 removal must not be switched on before B26 is released.**
   B8's webhook folder lookup (`list_item_paths()`) goes through the same listing; no webhook is
   configured today.
@@ -376,7 +411,9 @@ the end. The refresh is requested exactly as before ((b) was not chosen).
   and the WARNING are how to tell after a release.
 - **Release note:** this changes production scan behaviour at the next release. The first scan
   after it may log `Tag write did not stick` or `Tag read-back:` lines that earlier releases never
-  printed, because the case was not looked for, not because it is new.
+  printed, because the case was not looked for, not because it is new. *v1.11.0's first scan
+  (2026-10-07, host load ~60) logged 219 undone writes, every one fixed by the retry, 0 unresolved
+  and 0 unrecorded. An undo landing after the read-back would still be missed.*
 - Tests: `tests/test_tag_readback.py` covers a write that sticks; identical write calls on the happy
   path, with the read-back after the refresh; undone once, then fixed by the retry; undone twice
   (records what was read); only undone items retried; a write that raises; a read-back that raises
@@ -664,7 +701,9 @@ default-config hash goes from `ed8a1890a06dc045` to `7a0b22544d89aff4`.
 **⚠ Release note — the next release's first scan is a FULL RE-TAG WITH LIVE `*arr` WRITES**, like
 v1.9.0's. It re-probes every file and moves about 747 items' resolution tags: one rename on Jellyfin
 plus one on each owning `*arr` (about 741, counted from B5's go-live plans), and one poster re-render
-each. Production is live on all five `*arr`s with an empty recycle bin. Nothing has run it.
+each. Production is live on all five `*arr`s with an empty recycle bin. *It ran on 2026-10-07 as
+v1.11.0's scan 158: the 658 movers the scan could reach all moved to the predicted class, and 659
+\*arr objects were renamed; the other 89 movers are films B26 hides — see Release v1.11.0.*
 After the re-tag, read back by `Ids=` (B18), not the recursive listing.
 
 *Proof.* The probe now keeps the pre-B13 rule frozen as `before_b13()` (what the library's tags were
@@ -2751,6 +2790,12 @@ NEEDS DECISION.
      was written); `https://evil.example.org` → **403**; `http://xenotag.bitmapserv.org` → **403**.
      The app's computed origin was `https://xenotag.bitmapserv.org:443`. The two
      `Rejected cross-origin` lines at 08:10:44 MDT are those two negative controls, not a save.
+   - **v1.11.0 smoke, 2026-10-07 (the release session).** A real save, short of the browser: from
+     inside `swag`, with SWAG's `proxy.conf` header set, Origin `https://xenotag.bitmapserv.org`
+     and a session the app minted for itself, `PUT /config` with the file's own text → **200
+     saved**, `config.yml` byte-identical, **no `Rejected cross-origin` line**. Control: Origin
+     `https://evil.example.org` → 403 (the one `Rejected cross-origin` line, 21:27:26 MDT). The
+     browser save through Authentik is **still owed** by the operator.
  - **I2 — NEEDS DECISION → CLOSED 2026-09-26 (below); the premise does not hold for this deployment.** "Prevents a full
    rescan after container upgrades" assumes the upgrade loses `state.db`. It does not: production
    bind-mounts `~/docker/xenotag/config` at `/config`, `state.db` lives there, and restic backs up
