@@ -70,9 +70,28 @@ def make_fixture(workdir: Path) -> Path:
     video = film_dir / f"{FILM}.mkv"
     if not video.exists():
         subprocess.run(
-            ["ffmpeg", "-loglevel", "error", "-f", "lavfi", "-i", "testsrc=size=320x240:rate=24",
-             "-f", "lavfi", "-i", "sine=frequency=440", "-t", "3", "-c:v", "libx264", "-c:a", "aac",
-             "-metadata:s:a:0", "language=eng", str(video)],
+            [
+                "ffmpeg",
+                "-loglevel",
+                "error",
+                "-f",
+                "lavfi",
+                "-i",
+                "testsrc=size=320x240:rate=24",
+                "-f",
+                "lavfi",
+                "-i",
+                "sine=frequency=440",
+                "-t",
+                "3",
+                "-c:v",
+                "libx264",
+                "-c:a",
+                "aac",
+                "-metadata:s:a:0",
+                "language=eng",
+                str(video),
+            ],
             check=True,
         )
     return film_dir / f"{FILM}.nfo"
@@ -101,8 +120,10 @@ class Jf:
         """Startup wizard, admin login, an API key, a Movies library. Returns the key."""
         version = self.c.get(f"{self.base}/System/Info/Public").json()["Version"]
         p = self.c.post
-        p(f"{self.base}/Startup/Configuration",
-          json={"UICulture": "en-US", "MetadataCountryCode": "US", "PreferredMetadataLanguage": "en"})
+        p(
+            f"{self.base}/Startup/Configuration",
+            json={"UICulture": "en-US", "MetadataCountryCode": "US", "PreferredMetadataLanguage": "en"},
+        )
         self.c.get(f"{self.base}/Startup/User")
         p(f"{self.base}/Startup/User", json={"Name": "probe", "Password": "probe-pass"})
         p(f"{self.base}/Startup/RemoteAccess", json={"EnableRemoteAccess": True, "EnableAutomaticPortMapping": False})
@@ -126,8 +147,11 @@ class Jf:
                 "PathInfos": [{"Path": "/media/movies"}],
             }
         }
-        p(f"{self.base}/Library/VirtualFolders",
-          params={"name": "Movies", "collectionType": "movies", "refreshLibrary": "true"}, json=opts).raise_for_status()
+        p(
+            f"{self.base}/Library/VirtualFolders",
+            params={"name": "Movies", "collectionType": "movies", "refreshLibrary": "true"},
+            json=opts,
+        ).raise_for_status()
         print(f"Jellyfin {version} up; library created", flush=True)
         return key
 
@@ -162,9 +186,26 @@ def run(args) -> dict:
     nfo = make_fixture(workdir)
     nfo.write_text(nfo_text(["luxe", "probe-s0"]))
     name = f"xt-b12-jf-{args.port}"
-    cmd = ["docker", "run", "-d", "--rm", "--name", name, "--user", f"{os.getuid()}:{os.getgid()}",
-           "-p", f"127.0.0.1:{args.port}:8096", "-v", f"{workdir/'config'}:/config",
-           "-v", f"{workdir/'media'}:/media:ro", "--tmpfs", "/cache", "--memory", "2g"]
+    cmd = [
+        "docker",
+        "run",
+        "-d",
+        "--rm",
+        "--name",
+        name,
+        "--user",
+        f"{os.getuid()}:{os.getgid()}",
+        "-p",
+        f"127.0.0.1:{args.port}:8096",
+        "-v",
+        f"{workdir/'config'}:/config",
+        "-v",
+        f"{workdir/'media'}:/media:ro",
+        "--tmpfs",
+        "/cache",
+        "--memory",
+        "2g",
+    ]
     if os.environ.get("OVERNIGHT_ITEM"):
         cmd += ["--label", f"overnight.item={os.environ['OVERNIGHT_ITEM']}"]
     subprocess.run(cmd + [args.image], check=True, capture_output=True)
@@ -179,10 +220,14 @@ def run(args) -> dict:
 
         def record(step: str, what: str, state: dict, ingested: bool | None = None) -> None:
             tags = state["tags"]
-            row = {"step": step, "what": what, "tags": tags,
-                   "xenotag_spelling_kept": [t for t in XT_TAGS if t in tags],
-                   "xt_any_case": sorted({t for t in tags if t.lower().startswith("xt-")}),
-                   "keywords_kept": [k for k in KEYWORDS if k in tags]}
+            row = {
+                "step": step,
+                "what": what,
+                "tags": tags,
+                "xenotag_spelling_kept": [t for t in XT_TAGS if t in tags],
+                "xt_any_case": sorted({t for t in tags if t.lower().startswith("xt-")}),
+                "keywords_kept": [k for k in KEYWORDS if k in tags],
+            }
             if ingested is not None:
                 row["nfo_ingested"] = ingested
             steps.append(row)
@@ -242,9 +287,18 @@ def run(args) -> dict:
             return {"image": args.image, "version": version, "scenario": args.scenario, "steps": steps}
 
         record("s2", "xenotag refresh_item() (Default mode), NFO unchanged", refresh_and_wait(None, True))
-        record("s3", "timer: FullRefresh replaceAllMetadata=false, NFO unchanged",
-               refresh_and_wait({"metadataRefreshMode": "FullRefresh", "imageRefreshMode": "Default",
-                                 "replaceAllMetadata": "false", "replaceAllImages": "false"}))
+        record(
+            "s3",
+            "timer: FullRefresh replaceAllMetadata=false, NFO unchanged",
+            refresh_and_wait(
+                {
+                    "metadataRefreshMode": "FullRefresh",
+                    "imageRefreshMode": "Default",
+                    "replaceAllMetadata": "false",
+                    "replaceAllImages": "false",
+                }
+            ),
+        )
 
         m = rewrite_nfo("s4", ["luxe"])
         st, ok = wait_for(jf, iid, lambda s: m in s["tags"], args.monitor_wait)
@@ -252,8 +306,14 @@ def run(args) -> dict:
         write_xenotag()
 
         m = rewrite_nfo("s5", ["luxe"])
-        st = refresh_and_wait({"metadataRefreshMode": "FullRefresh", "imageRefreshMode": "Default",
-                               "replaceAllMetadata": "false", "replaceAllImages": "false"})
+        st = refresh_and_wait(
+            {
+                "metadataRefreshMode": "FullRefresh",
+                "imageRefreshMode": "Default",
+                "replaceAllMetadata": "false",
+                "replaceAllImages": "false",
+            }
+        )
         record("s5", "NFO rewritten without xt-, then timer FullRefresh replaceAllMetadata=false", st, m in st["tags"])
         write_xenotag()
 
@@ -263,13 +323,31 @@ def run(args) -> dict:
 
         record("s7", "xenotag set_managed_tags again (re-tag after s6)", write_xenotag())
         record("s8", "xenotag refresh_item() (Default mode), NFO unchanged since s6", refresh_and_wait(None, True))
-        record("s9", "timer: FullRefresh replaceAllMetadata=false, NFO unchanged since s6",
-               refresh_and_wait({"metadataRefreshMode": "FullRefresh", "imageRefreshMode": "Default",
-                                 "replaceAllMetadata": "false", "replaceAllImages": "false"}))
+        record(
+            "s9",
+            "timer: FullRefresh replaceAllMetadata=false, NFO unchanged since s6",
+            refresh_and_wait(
+                {
+                    "metadataRefreshMode": "FullRefresh",
+                    "imageRefreshMode": "Default",
+                    "replaceAllMetadata": "false",
+                    "replaceAllImages": "false",
+                }
+            ),
+        )
         write_xenotag()
-        record("s10", "FullRefresh replaceAllMetadata=true, NFO unchanged since s6",
-               refresh_and_wait({"metadataRefreshMode": "FullRefresh", "imageRefreshMode": "Default",
-                                 "replaceAllMetadata": "true", "replaceAllImages": "false"}))
+        record(
+            "s10",
+            "FullRefresh replaceAllMetadata=true, NFO unchanged since s6",
+            refresh_and_wait(
+                {
+                    "metadataRefreshMode": "FullRefresh",
+                    "imageRefreshMode": "Default",
+                    "replaceAllMetadata": "true",
+                    "replaceAllImages": "false",
+                }
+            ),
+        )
         write_xenotag()
         m = rewrite_nfo("s11", ["luxe"])
         jf.c.post(f"{jf.base}/Library/Refresh").raise_for_status()
@@ -286,11 +364,19 @@ def main() -> int:
     ap.add_argument("--port", type=int, required=True)
     ap.add_argument("--workdir", required=True)
     ap.add_argument("--out", required=True)
-    ap.add_argument("--scenario", choices=["paths", "case-flip"], default="paths",
-                    help="paths: every refresh path in turn; case-flip: xenotag writes, then the NFO gains "
-                         "the *arr's lowercase labels (production's sequence)")
-    ap.add_argument("--monitor-wait", type=float, default=150.0,
-                    help="seconds to wait for the real-time monitor to ingest an NFO rewrite")
+    ap.add_argument(
+        "--scenario",
+        choices=["paths", "case-flip"],
+        default="paths",
+        help="paths: every refresh path in turn; case-flip: xenotag writes, then the NFO gains "
+        "the *arr's lowercase labels (production's sequence)",
+    )
+    ap.add_argument(
+        "--monitor-wait",
+        type=float,
+        default=150.0,
+        help="seconds to wait for the real-time monitor to ingest an NFO rewrite",
+    )
     args = ap.parse_args()
     result = run(args)
     Path(args.out).write_text(json.dumps(result, indent=1))
