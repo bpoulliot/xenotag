@@ -3168,7 +3168,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **READY — unblocked 2026-10-06:** [B21] shipped (#124) (decided 2026-09-26; work held in PR #95, which needs `main` merged; its self-test passes with B21 in) | — |
+| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **NEEDS DECISION — rebased 2026-10-06, held in [#134](https://github.com/bpoulliot/xenotag/pull/134) (`HOLD:`):** threshold L 0.12 sign-off + the P7 per-drawn-row reading; Settings UI not built (#95 closed) | — |
 | P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **SHIPPED 2026-10-06** ([#126](https://github.com/bpoulliot/xenotag/pull/126); merged, not released) — (d), 2-row budget, counted `+N`, stack clamped · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
@@ -3236,6 +3236,19 @@ that fails if the cache key is not widened with the palette choice.
 **OPERATOR DECISION 2026-09-26:** (1a) main + backup palette chosen per badge row by the luminance of the region
 under it, and (2a) one checkbox, off by default, whose backup pickers carry B2's contrast chips;
 the backup palette must clear B4's dE 5.
+
+**P6 — REBASED 2026-10-06 onto `main`, held unmerged in [#134](https://github.com/bpoulliot/xenotag/pull/134)
+(`HOLD:`; #95 is closed).** B14's preview and B21's composite are kept. P7 (#126) replaced
+`_render_group()`, so the hook now lives in `_draw_rows()`: **each drawn row** samples its own strip
+of the bare poster, and each pill on it picks main or backup by its own fill — a wrap row decides
+independently, and a `+N` pill counting a dropped group follows that group's backup. That is a
+reading of decision (1a) under P7's layout, for the operator to confirm. Measured on the rebase:
+suite 938 → 946 (+8, `tests/test_adaptive_palette.py`, mutation-checked); probe `--self-test`
+PASS (and FAIL with the hook neutered); acceptance 3/3 PASS with every provisional number below
+unchanged; seeded `--search` re-derives the shipped backup palette exactly (dE 11.47). **Still
+open:** the operator's sign-off on L 0.12, the P7 reading, and the Settings UI (checkbox + four
+backup pickers with chips + preview wiring). Untestable through the stack: bare-poster vs.
+drawn-so-far sampling (a neighbour's glow moves a strip's L by < 0.001).
 
 **P6 — UNBLOCKED 2026-10-06: [B21] shipped (#124), option (b).** The poster now composites a
 translucent pill the way the instrument does (chip = poster to the level, 65–100%), so the numbers
