@@ -730,9 +730,11 @@ async def preview_image(
     )
 
     # The groups a scan would build for this sample (roadmap B14): the same
-    # _make_badge_groups() call, never a second copy of the grouping.
+    # _make_badge_groups() call, never a second copy of the grouping. The
+    # saved tags config comes along too (roadmap B23): a category whose
+    # destinations drop "poster" must not show pills a scan never paints.
     info = _preview_media_info(resolution, video_codec, hdr_type, audio, subtitles)
-    groups, rating_group = _make_badge_groups(info, rating or None, AppConfig(image=cfg_img))
+    groups, rating_group = _make_badge_groups(info, rating or None, AppConfig(image=cfg_img, tags=get_config().tags))
 
     base_image_bytes: bytes | None = None
     if item_id:
