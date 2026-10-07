@@ -55,6 +55,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113); merged, not released) | — |
 | B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | **SHIPPED 2026-10-06** ([#129](https://github.com/bpoulliot/xenotag/pull/129); merged, not released) — `preview_image()` now builds its `AppConfig` with `tags=get_config().tags`; default (all `poster`) stays byte-identical | — |
 | B24 | **`/health` reports Jellyfin unreachable without ever contacting it — and the container healthcheck only ever reads that answer.** For a caller with no web session `health()` returns early with a *fabricated* verdict, `jellyfin={"ok": False, "status": "unreachable", "message": "Not authenticated"}` (`app/web/routes.py:175-183`), so a perfectly healthy Jellyfin is reported as down; the message describes the **caller's** missing cookie, not the dependency. `docker-compose.yml:30-34` sets the healthcheck to `curl -f http://localhost:7755/health`, which carries no cookie, so it always takes that branch — and because the branch still returns **HTTP 200 with `status: "ok"`**, `curl -f` can never fail on a dependency problem. The one endpoint whose job is to report dependency health is structurally unable to: unauthenticated it invents the answer, and authenticated it hardcodes `status="ok"` (`:195`) whatever `jf.health()` returned. **Measured 2026-10-06** while verifying the Jellyfin 10.11→12.2 upgrade (`~/docker` TODO I62): prod xenotag reported `jellyfin: unreachable / Not authenticated` while its configured API key was byte-identical to Jellyfin's, `jellyfin:8096` answered 200 from inside the container, and tags read back correctly by `Ids=` — it cost real diagnosis time and briefly looked like an upgrade regression. Fix: either exempt `/health` from the session gate (it leaks only up/down, and the port is bound to `127.0.0.1`) or give the probe its own unauthenticated liveness route and keep the authenticated one for the UI; in both cases report an **unknown** dependency as unknown rather than as `unreachable`, and let `status` follow the checks. | 3 | 1 | **SHIPPED 2026-10-07** ([#132](https://github.com/bpoulliot/xenotag/pull/132); merged, not released) — exempted from the session gate; unauthenticated callers get `status: "up"` only, authenticated callers keep full detail with `status` computed from the real checks | — |
+| B25 | **An \*arr `api_key_file` can name any file the container can read** (CodeQL #11, `py/path-injection`, `app/config.py:538`). `_apply_arr_key_files()` reads whatever path the row names and sends the contents as that instance's `X-Api-Key`, to a URL the same row sets. Only an admin can set it (config.yml / raw YAML editor). | 2 | 1 | **NEEDS DECISION** (2026-10-06): which directories may hold a key file. Production mounts none, so the rule "allow what prod mounts" gives an empty list | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -62,6 +63,51 @@ its fix reads the item back by `Ids=` (B18, below). **B21, B13 and B20 (also rel
 below) must merge before the next release** (B20 merged #123, B21 merged #124, 2026-10-06): B13's rule change folds into `_tag_config_hash()`, so
 the first scan after it is a forced full re-tag with live `*arr` writes (as B9's and B7's were) —
 the release note must say so.
+
+**B25 — FILED 2026-10-06 by the CodeQL #11 item, which stopped before building. NEEDS DECISION.**
+The item said to allow only the directories that production's compose file mounts for key files,
+not to guess one, and to stop if the mounts were unclear. They are clear, but there are none:
+
+* **The prod container** (`docker inspect xenotag`, mounts only) mounts `/config` and seven
+  `/media/*` roots. It has no `/run/secrets` and no compose `secrets:`, and its environment holds
+  only `PUID`/`PGID`/`TZ`. **The prod `config.yml` contains no `api_key_file`** (grep for the key name,
+  no match), and the host's `materialize-secrets.sh` renders nothing for xenotag. I9 is merged but not
+  wired up in production (as recorded under I9), so a root allowlist breaks no live key today.
+* **This repo's `docker-compose.yml`** also mounts only `/config` and media. Its `_FILE` lines are
+  commented out and point at `/run/secrets/…`.
+* **The documentation names one place:** the README (two examples, and the `secrets:` block it
+  shows), `config.example.yml` and the I9 entry all use `/run/secrets/<name>`, which is Compose's
+  default secret target. Across the host stack (`docker compose config --format json` in
+  `~/docker`), 19 secret mounts in 9 services all land under `/run/secrets/`. The only other secret
+  directory is one bind mount at `/etc/prometheus/secrets`.
+
+Taken literally, "what prod mounts" means an **empty** allowlist. That refuses every
+`api_key_file` and switches off I9, which the operator chose on 2026-09-26. The only grounded
+alternative comes from the documentation, not from a mount, and choosing it is exactly the guess
+the item forbade. So the decision goes to the operator:
+
+* **(a) `/run/secrets` only.** Recommended. It is the documented convention and Compose's default,
+  and nothing in prod breaks. Cost: a Compose long-syntax secret with an absolute `target:`
+  elsewhere, or a bind-mounted key directory, is refused. The fix is to mount it under
+  `/run/secrets`.
+* **(b) `/run/secrets` plus roots added by an environment variable** (for example
+  `XENOTAG_KEY_FILE_ROOTS`). The web UI cannot set the environment, so the admin path stays closed.
+  Cost: one more setting and one more README section.
+* **Considered and not recommended:** allowing `/config`. A key file there sits beside
+  `config.yml`, in the directory the app writes and backs up, and keeping keys out of that
+  directory is why I9 exists.
+
+**Found while checking. The build needs this, and it changes nothing above:** the only code that
+reads the path is `_apply_arr_key_files()`. `_drop_file_backed_keys()` checks only that the field
+is set, and the Settings **Test** route (`app/web/routes.py`) compares the path as a string against
+the configured instances. Neither opens the file. I8's `<VAR>_FILE` reader (`_read_env_value()`)
+takes its path from the environment, not from config. CodeQL did not flag it, and putting it under
+the same root would change I8, so that is not part of this item. Once the operator decides, the
+build is: resolve the path (symlinks and `..`) before any read, refuse anything outside a root with
+a `ConfigError` that names the path, and keep unreadable or empty as fatal. Tests: a path outside
+the roots is refused and never read; a symlink inside a root that points outside is refused; a file
+inside a root loads as it does today. The 29 tests in `tests/test_arr_key_files.py` use `tmp_path`
+key files, so they need the root pointed at `tmp_path`.
 
 **B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113), merged, not released).**
 `_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
