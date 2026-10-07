@@ -55,6 +55,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113)) · **RELEASED v1.11.0** (2026-10-07) | — |
 | B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | **SHIPPED 2026-10-06** ([#129](https://github.com/bpoulliot/xenotag/pull/129)) · **RELEASED v1.11.0** (2026-10-07) — `preview_image()` now builds its `AppConfig` with `tags=get_config().tags`; default (all `poster`) stays byte-identical | — |
 | B24 | **`/health` reports Jellyfin unreachable without ever contacting it — and the container healthcheck only ever reads that answer.** For a caller with no web session `health()` returns early with a *fabricated* verdict, `jellyfin={"ok": False, "status": "unreachable", "message": "Not authenticated"}` (`app/web/routes.py:175-183`), so a perfectly healthy Jellyfin is reported as down; the message describes the **caller's** missing cookie, not the dependency. `docker-compose.yml:30-34` sets the healthcheck to `curl -f http://localhost:7755/health`, which carries no cookie, so it always takes that branch — and because the branch still returns **HTTP 200 with `status: "ok"`**, `curl -f` can never fail on a dependency problem. The one endpoint whose job is to report dependency health is structurally unable to: unauthenticated it invents the answer, and authenticated it hardcodes `status="ok"` (`:195`) whatever `jf.health()` returned. **Measured 2026-10-06** while verifying the Jellyfin 10.11→12.2 upgrade (`~/docker` TODO I62): prod xenotag reported `jellyfin: unreachable / Not authenticated` while its configured API key was byte-identical to Jellyfin's, `jellyfin:8096` answered 200 from inside the container, and tags read back correctly by `Ids=` — it cost real diagnosis time and briefly looked like an upgrade regression. Fix: either exempt `/health` from the session gate (it leaks only up/down, and the port is bound to `127.0.0.1`) or give the probe its own unauthenticated liveness route and keep the authenticated one for the UI; in both cases report an **unknown** dependency as unknown rather than as `unreachable`, and let `status` follow the checks. | 3 | 1 | **SHIPPED 2026-10-07** ([#132](https://github.com/bpoulliot/xenotag/pull/132)) · **RELEASED v1.11.0** (2026-10-07) — exempted from the session gate; unauthenticated callers get `status: "up"` only, authenticated callers keep full detail with `status` computed from the real checks | — |
+| B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **READY** (measured 2026-10-07) — blocks U2 removal | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -62,6 +63,40 @@ its fix reads the item back by `Ids=` (B18, below). **B21, B13 and B20 (also rel
 below) must merge before the next release** (B20 merged #123, B21 merged #124, 2026-10-06): B13's rule change folds into `_tag_config_hash()`, so
 the first scan after it is a forced full re-tag with live `*arr` writes (as B9's and B7's were) —
 the release note must say so.
+
+**B26 — FILED 2026-10-07 by the v1.11.0 release session (measured on production, GET only). READY.**
+B25 is claimed by the open PR #136 (CodeQL #11), so this takes B26.
+
+- *Measured* on production Jellyfin 12.2.0 with xenotag's API key, through `ReadOnlyTransport` (0
+  blocked): `/Items?Recursive=true&IncludeItemTypes=Movie,Series` has `TotalRecordCount` **8,766**
+  with no `CollapseBoxSetItems` and with `=true`, and **9,452** with `=false`. The default listing
+  holds 5,844 films, 2,474 series and **448 `BoxSet`s**; the `=false` listing holds 6,978 films and
+  2,474 series, no BoxSet, and all **1,134** films the default lacks. Every one of the 1,134 answers
+  a lookup by `Ids=` (24 GETs), so they exist. The 17 configured libraries, listed one by one as
+  the scan lists them, union to the same 8,766.
+- *Since when.* U2's report at 2026-10-06 09:01Z, on 10.11.10, listed 9,450 items and confirmed
+  1,197 index rows deleted. On 12.2.0 the same index has 2,331 rows missing from the listing:
+  the same 1,197 still confirmed deleted, plus these 1,134 films. Production moved to 12.2.0 on
+  2026-10-06 (`~/docker` TODO I62). **Not determined:** whether collapsing is 12.2's default for an
+  API-key caller or follows a server or user grouping setting. The fix is the same either way.
+- *Effect on the v1.11.0 re-tag.* That scan's input was the collapsed listing, so the 1,134 films
+  kept their pre-release tags and posters — 89 of B13's 747 movers among them (B13's 2026-10-06
+  records). The tag-config hash is now the new one, so **no incremental scan will reach them**:
+  they need one full scan after the fix ships. The 448 BoxSets were logged as `skip (no_file)`
+  scan errors (their `Path` is under Jellyfin's own `/config/data`, which xenotag does not mount);
+  nothing was written for them.
+- *Effect on U2.* `DeletedItemsPass.plan()` keeps a deleted row's \*arr object only if a LISTED
+  item lives in its folder. 87 of the 1,197 confirmed-deleted rows sit in a hidden film's folder,
+  so in `remove` mode their **82 radarr/general objects would lose their managed tags although the
+  film is live** (computed from the pre-release index, the by-id snapshot and a GET-only \*arr
+  snapshot; the v1.11.0 scan's own report-mode pass is quoted in *Release v1.11.0* below). In
+  `report` mode nothing is written. **U2 removal must not be switched on before B26 is released.**
+  B8's webhook folder lookup (`list_item_paths()`) goes through the same listing; no webhook is
+  configured today.
+- *Fix.* Send `CollapseBoxSetItems=false` from `_fetch_items()` and from `complete_listing()` —
+  its pages AND its recount — with a test whose fake Jellyfin collapses unless asked not to.
+  Check that dev (12.1.0) and the 10.11.10 lab image honour it. After the release that carries it,
+  run one full scan (`POST /scan/full`) to reach the 1,134 films.
 
 **B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113)); released in v1.11.0 (2026-10-07).**
 `_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
@@ -2078,7 +2113,7 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
-| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **LIVE report-only (v1.9.0, 2026-09-27)** — removal OFF until the operator switches it · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
+| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **LIVE report-only (v1.9.0, 2026-09-27)** — removal OFF until the operator switches it · removal **BLOCKED on B26** (2026-10-07: on Jellyfin 12.2 it would strip 82 live films' objects) · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution fixed by [B8] (2026-10-06, released in v1.11.0) | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
