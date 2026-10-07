@@ -2152,7 +2152,7 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
-| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **LIVE report-only (v1.9.0, 2026-09-27)** — removal OFF until the operator switches it · removal **BLOCKED on B26** (2026-10-07: on Jellyfin 12.2 it would strip 82 live films' objects) · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
+| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **LIVE report-only (v1.9.0, 2026-09-27)** — removal OFF until the operator switches it · removal **BLOCKED on B26** (2026-10-07: on Jellyfin 12.2 it would strip 82 live films' objects; the operator-authorised switch stopped at its gate the same day) · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution fixed by [B8] (2026-10-06, released in v1.11.0) | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
@@ -2325,6 +2325,15 @@ editor or `config.yml`. The next scan acts; no re-tag is forced. Back out: `mode
 **OPERATOR NOTE 2026-10-05:** the operator will flip `deleted_items: {mode: remove}` once the
 report above is re-run — the report of record is scan 148 (2026-09-27), now roughly 8 days old.
 Readiness unchanged; this just records the re-run that is owed first.
+
+**2026-10-06 the operator authorised the switch through an overnight item; on 2026-10-07 that item
+STOPPED at its own gate, and nothing changed.** It ran after the v1.11.0 release and read scan
+158's report (`generated_at` 05:07:23Z, `mode: report`, `status: ok`, not halted): 10,645 index
+rows, **1,197 confirmed deleted (11.24 %, under the 0.15 bound)**, but **87 rows marked STRIP —
+82 radarr/general objects, 330 tags** — which are B26's live films. The gate was "strip count
+non-zero → do not switch". Production `config.yml` is untouched (`mode: report`), no backup was
+taken and no scan was run. The authorisation stands: the switch is owed again once the release that
+carries B26 is live and a full scan's report shows 0 rows to strip.
 
 **Not covered:** an \*arr object carrying managed tags whose folder holds no live item and that no
 index row points at (a row removed by hand) is never found — 0 exist today (the cross-check above).
