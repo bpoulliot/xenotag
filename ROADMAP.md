@@ -42,7 +42,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27; LIVE (v1.8.0)** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged; production re-tagged 2026-09-27 09:00–10:15Z | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
-| B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 2 | 2 | NEEDS MEASUREMENT | — |
+| B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 3 | 2 | **NEEDS DECISION** (measured 2026-10-07, [docs/measurements/b12-tag-loss.md](docs/measurements/b12-tag-loss.md)) — premise wrong: a library-wide `replaceAllMetadata=true`-type refresh on 2026-09-04 wiped ~8,000 items before the 09-24 write, which then did not stick on the five (B17's class); since B5 the \*arr NFOs respell 82% of items in lowercase (no loss). (a) case-insensitive compare needs no decision; (b) a reconciliation pass does | — |
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **SHIPPED 2026-10-06** ([#122](https://github.com/bpoulliot/xenotag/pull/122); merged, not released) — **the next release's first scan is a full re-tag with live \*arr writes** (~747 renames + posters) | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116); merged, not released) | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115); merged, not released) | — |
@@ -657,6 +657,46 @@ pre-B13 rule still agrees with `state.db` on 9,438 of 9,438 items, and `shipped`
 on exactly the 747.
 
 **B12 — FILED 2026-09-26, found while taking B5 live. Not fixed here.**
+
+**MEASURED 2026-10-07 — relabelled NEEDS DECISION.** Full write-up, tables and re-run commands:
+[`docs/measurements/b12-tag-loss.md`](docs/measurements/b12-tag-loss.md); probes
+`scripts/measure_nfo_tag_drift.py` (production DB copies, `--self-test`) and
+`scripts/measure_nfo_tag_merge.py` (a throwaway Jellyfin 10.11.10 and 12.2, same result on both).
+
+- **The premise is wrong: the five lost their tags on 2026-09-04, before the 09-24 write.** In the
+  2026-09-08 `jellyfin.db` backup, every item last saved before 09-04 carries `xt-` tags (1,304 of
+  1,304), and 7,950 of the 8,038 saved 09-04 to 09-08 carry none. 5,454 were saved on 09-04 alone,
+  5,113 of them 04:00–08:00Z from every drive, four of the five films at 07:05–07:08Z. Those were
+  refreshes of existing items, not re-creations, and each kept only its NFO tags and provider
+  keywords. In the lab, only `replaceAllMetadata=true` does that (B12 doc, step s10). **Who sent it
+  could not be determined:** the server log starts 2026-10-04, the ActivityLog does not record
+  refreshes, and no host script sends `true`. The 09-23/24 full scans restored the rest. On the
+  five, the tags on 09-26 were exactly the 09-08 set, so those writes did not stick (B17's class;
+  unprovable without a snapshot from 09-24..26). The 09-27 re-tag restored them. Read by `Ids=` on
+  12.2.0 at 02:10Z 10-07, all five carry their `xt-` tags.
+- **The hourly refresh timer is ruled out.** `FullRefresh` with `replaceAllMetadata=false` keeps every
+  tag, xenotag's spelling included, on both versions, and Tdarr never transcoded the five after
+  August. So is xenotag's own `refresh_item()`.
+- **The \*arr NFO lead is real, but it respells; it does not remove.** After each \*arr refresh
+  rewrites an NFO, Jellyfin's real-time monitor merges it into the item: NFO tags first, one copy per
+  tag regardless of case. The \*arr's lowercase `xt-aac` replaces `xt-AAC`, and tags no \*arr
+  carries (`xt-sub-EN`, the rating) are kept. By 10-06 18:12Z this had happened to **7,732 of 9,445**
+  tracked items, and the rule predicts 7,732 of the 7,734 drifted exactly; the other 2 are B17
+  films. The same happens on 12.2 (60 more after the upgrade). Jellyfin's `Tags=` filter ignores
+  case (3,694 for `xt-H264` and for `xt-h264`), so this costs Jellyfin users nothing. **But U9's
+  `_tag_drift()` compares case-sensitively and will warn on ~7,800 items at the next full scan.**
+- **Item re-creation is a second, smaller loss path.** The 12.2 upgrade removed and re-added
+  *Jimmy Carr: Stand Up* (same Id, new `DateCreated`). The rebuilt item has only NFO and provider
+  tags, so it lost `xt-sub-EN` and `xt-Not-Rated`, and no incremental scan will go back to it.
+- **Fix, recommended (not built):** (a) compare Jellyfin tags case-insensitively in `_tag_drift()`
+  and B17's read-back; this needs no decision. (b) A reconciliation pass: read every tracked item by
+  `Ids=` (~95 GETs) and re-write any item missing a managed tag, regardless of case. Nothing else
+  repairs a 09-04-style wipe or a re-creation, because the mtime-driven scan never returns to an
+  unchanged file. **Decision needed on (b):** how often it runs, and whether it may write to items
+  whose file did not change. Not recommended: adopting the \*arrs' lowercase in Jellyfin (that would
+  undo B9's spelling) or disabling the \*arrs' NFO tags.
+
+*The filing, as written on 2026-09-26:*
 
 Measured during the go-live: for every item it planned (9,356), Jellyfin's current `xt-` tags
 against `state.db`'s `tags_applied`. **9,346 match exactly; 10 carry no `xt-` tag at all.** Five

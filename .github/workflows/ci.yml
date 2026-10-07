@@ -88,6 +88,11 @@ jobs:
       - name: Language rename probe self-test
         run: python scripts/measure_language_renames.py --self-test
 
+      # B12: plants an NFO-respelled item, a match, an unexplained tag and a wiped
+      # item in synthetic databases; each must be classified, and only the first predicted.
+      - name: NFO tag drift probe self-test
+        run: python scripts/measure_nfo_tag_drift.py --self-test
+
       # Two steps: --self-test proves the probe can still see a planted
       # collision, and the bare run is the B3 acceptance criterion itself --
       # it exits non-zero if any poster width is served another width's tile.
