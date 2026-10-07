@@ -39,9 +39,7 @@ def test_a_category_dropped_from_poster_destinations_shows_no_pills(no_auth, mon
     monkeypatch.setattr(routes, "get_config", lambda: cfg)
     seen = _captured_labels(monkeypatch)
 
-    asyncio.run(
-        routes.preview_image(None, resolution="1080p", audio="EN DTS-HD", subtitles="EN PGS")
-    )
+    asyncio.run(routes.preview_image(None, resolution="1080p", audio="EN DTS-HD", subtitles="EN PGS"))
 
     assert not any("PGS" in label for label in seen["labels"])
     assert any("DTS-HD" in label for label in seen["labels"])
@@ -54,9 +52,7 @@ def test_the_default_config_still_paints_every_category(no_auth, monkeypatch):
     monkeypatch.setattr(routes, "get_config", lambda: cfg)
     seen = _captured_labels(monkeypatch)
 
-    asyncio.run(
-        routes.preview_image(None, resolution="1080p", audio="EN DTS-HD", subtitles="EN PGS")
-    )
+    asyncio.run(routes.preview_image(None, resolution="1080p", audio="EN DTS-HD", subtitles="EN PGS"))
 
     assert any("PGS" in label for label in seen["labels"])
     assert any("DTS-HD" in label for label in seen["labels"])
