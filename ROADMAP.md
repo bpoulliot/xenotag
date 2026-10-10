@@ -43,7 +43,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12(a) | **U9's drift check and B17's read-back compare Jellyfin tags case-sensitively; Jellyfin does not.** Split from B12 on 2026-10-09. Since B5 the \*arr NFO merge respells 82% of items in lowercase (`xt-aac` for `xt-AAC` — no loss, Jellyfin's `Tags=` ignores case), so `_tag_drift()` warns on every one at each full scan: scan 158 logged 6,704 drift lines, 6,700 case-only. | 3 | 1 | **READY** (split 2026-10-09; no decision needed) — compare case-insensitively in `_tag_drift()` and B17's read-back | — |
-| B12(b) | **Jellyfin loses xenotag's tags and nothing notices** (the original B12). A replace-all metadata refresh (~8,000 items on 2026-09-04) or an item re-created by Jellyfin drops the `xt-` tags, and the mtime-driven scan never goes back to an unchanged file. | 3 | 2 | **NEEDS DECISION** (narrowed twice 2026-10-09): **decided** — a reconciliation pass on its own schedule `scan.reconcile_schedule`, default daily `0 5 * * *` (after the 03:00 scan), plus a **manual rescan** option; **open:** Jellyfin only or the \*arrs too (recommend Jellyfin only, not yet accepted), and the mass-write guard (per-run write threshold that halts + notifies / notify and continue / a time cap / none). Builds after B12(a). Measured 2026-10-07, [docs/measurements/b12-tag-loss.md](docs/measurements/b12-tag-loss.md) | — |
+| B12(b) | **Jellyfin loses xenotag's tags and nothing notices** (the original B12). A replace-all metadata refresh (~8,000 items on 2026-09-04) or an item re-created by Jellyfin drops the `xt-` tags, and the mtime-driven scan never goes back to an unchanged file. | 3 | 2 | **READY** (decided 2026-10-09, third round): a reconciliation pass on its own schedule `scan.reconcile_schedule`, default daily `0 5 * * *` (after the 03:00 scan), plus a **manual rescan** option; **Jellyfin only** (the \*arrs are not written by it); **mass-write guard** — a per-run write threshold (default 500, setting beside `scan.reconcile_schedule`): past it the pass writes **nothing**, notifies with the count and a sample, and waits for a manual rescan, which bypasses the threshold. Builds after B12(a). Measured 2026-10-07, [docs/measurements/b12-tag-loss.md](docs/measurements/b12-tag-loss.md) | — |
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **SHIPPED 2026-10-06** ([#122](https://github.com/bpoulliot/xenotag/pull/122)) · **RELEASED v1.11.0** (2026-10-07) — its first scan was the full re-tag with live \*arr writes (see *Release v1.11.0* below) | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116)) · **RELEASED v1.11.0** (2026-10-07) | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115)) · **RELEASED v1.11.0** (2026-10-07) | — |
@@ -904,6 +904,31 @@ on exactly the 747.
   accepted.
 
 B12(b) therefore stays **NEEDS DECISION** on questions 2 and 3 only; B12(a) is READY regardless.
+
+**OPERATOR DECISION 2026-10-09 (third round) — B12(b) → READY.** Both open questions answered.
+
+- **Decided (question 2, scope): Jellyfin only.** The reconciliation pass reads and re-writes
+  Jellyfin items only; it **does not write the \*arrs** (the recommendation, now accepted — every loss
+  B12 measured was Jellyfin-side, and the scan already writes the \*arrs).
+- **Decided (question 3, the mass-write guard): option (i), a per-run write THRESHOLD.** The pass
+  first works out which items need re-writing. If that count is **more than N** — a new setting next
+  to `scan.reconcile_schedule`, **default 500** — the pass **writes nothing at all** (not the first
+  N: none), sends a notification naming **the count and a sample** of the items, and waits for the
+  operator to start it by hand. **The manual rescan bypasses the threshold** — that is the path after
+  the operator has reviewed the alarm. At or under N, the scheduled pass repairs as specified above.
+- **Rationale, recorded as the operator gave it:** a mass event — the 2026-09-04 REPLACE refresh
+  wiped the tags of ~8,000 items — must **raise an alarm, not be silently repaired**: a quiet repair
+  leaves its upstream cause undiscovered (09-04's sender was never identified). A **time cap** bounds
+  how long the pass runs, not how much it changes, so it would spread the same mass write over
+  several nights. **No cap** hides the upstream cause outright. Notify-and-continue (ii) was not
+  chosen for the same reason: the repair would already be done when the operator reads the alert.
+- **Spec note (not a new decision):** per the I5/I6 decision of 2026-09-26 xenotag does not post
+  to ntfy itself; the notification takes I5's path — a `xenotag_*` metric for the halted pass plus an
+  Alertmanager rule in `~/docker/monitoring`, which reaches ntfy — and the count and sample also go in
+  a WARNING log line and the run's record, where the operator reviews them before the manual rescan.
+- **Unchanged:** cadence and manual trigger (second round), managed `xt-` tags only via
+  `set_managed_tags()` with B17's read-back, missing tags judged regardless of case. **Still builds
+  after B12(a)**, which must land first or with it.
 
 *The filing, as written on 2026-09-26:*
 
