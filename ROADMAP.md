@@ -61,6 +61,8 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B27 | **A Settings save blanks the session-signing key.** The Settings page sends `auth: {username}` only, and `PUT /api/settings` restores `password_hash` but not `secret_key`, so every structured save writes `auth.secret_key: ""` to `config.yml` and into the running config. Until the next restart, sessions are signed with `":" + password_hash[:16]` (a constant prefix and 9 bcrypt-salt characters) in place of the 256-bit key. Separately, `GET /api/settings` returns `auth.secret_key` to the browser. Found in production on 2026-10-10. | 3 | 1 | **READY** — see *B27* below | — |
 | B28 | **A Settings save resets `scan.max_workers` to 4.** `buildSettings()` builds `scan` from the four fields the page shows (`schedule`, `incremental`, `path_filters`, and since B12(b) the two `reconcile_*` ones) without spreading the loaded `settings.scan`, so a structured save drops any other `scan` key and `ScanConfig` fills its default. B27's class (an object replaced, not merged). Production has `max_workers: 4` (the default), so nothing is lost there today. | 1 | 1 | **READY** — see *B28* below | — |
 | B29 | **CodeQL #10: the deleted-items report puts an HTTP error's text, URL included, into the admin's browser.** `GET /api/deleted-items/report` returns the stored report, whose `reason` (an aborted pass) and `halted` (a failed strip) are `str(exc)`. CodeQL names three sources, `deleted_items.py` 364/366/539. #135 changed two *other* values, so the alert stayed open. No traceback and no API key ever reaches the response (probed), but a failed HTTP call's message is the full request URL, and **a `user:password@` in a configured Jellyfin or \*arr URL reaches the response verbatim** (and the ntfy, for a halt). Latent: production's 6 URLs carry no userinfo. | 2 | 1 | **READY** — fix spec in *B29* below (measured to close #10 under CodeQL 2.27.2). The dismissal alternative is written out there | — |
+| B30 | **The media browser never shows codec, HDR, audio tracks or rating, because `/media` drops them.** `MediaItem` (`app/web/schemas.py:23`) declares 8 fields, but `get_media_filtered()` returns 15, and Pydantic silently drops the other 7 (`video_codec`, `hdr_type`, `audio_tracks`, `subtitle_tracks`, `content_rating`, `field_order`, `file_mtime`). `loadMedia()` reads four of them. As a result the Video column shows only the resolution, Audio falls back to the language list (never a codec, and never P1's yellow `UND`), and Rating is always `—`. P2 was closed as shipped after reading `index.html`; the response was never checked. Production's index holds 9,453 codecs, 202 HDR types, 9,429 audio-track lists (3,085 with an `UND` track) and 8,090 ratings that the browser cannot show. | 3 | 1 | **READY** — see *B30* below | — |
+| B31 | **A quarter of the media browser's rows are named `Season 01`.** The Item column shows the file's parent folder (`loadMedia()`), and for an episode that is its season folder. **2,469 of production's 9,463 rows** read `Season NN` or `Specials`; the series name is only in the hover title, which a touch screen cannot show. | 2 | 1 | **NEEDS DECISION** — what an episode row should show; see *B31* below | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -174,7 +176,8 @@ tag-config hash stayed `f57e91dbac6fbe70`. Nothing was rolled back.
   under `/run/secrets`.
 - **P4 — the post-feature phone-width audit runs after P6 and B12(b) merge** (P4a/P4b harness; the media browser
   and the `.health-grid` tile truncation), and lays out the options with screenshots; the operator then picks the
-  layout. Queued, measurement only.
+  layout. Queued, measurement only. **Measured 2026-10-10** (queue item 65) — the media-browser layout pick is open under P4,
+  the health grid's under P12.
 - **I1 — the browser Settings save through Authentik is an operator action** (one save at
   `https://xenotag.bitmapserv.org`, then `docker logs xenotag | grep Rejected`); no session owes it.
 - **GitHub issues closed 2026-10-09**, each with a comment linking its row here: #10 (P2, shipped), #18 (I2), #20
@@ -473,6 +476,30 @@ This was a measurement-only item, so nothing in `app/` changed. Line numbers bel
   the #9 probe's `'File "'` check reads the raw JSON body, where the quote is escaped (`File \"`),
   so that one marker can never match (its `Traceback` and `.py` checks still work). The new #10
   probe checks decoded strings.
+
+**B30 — FILED 2026-10-10 by the P4 phone-width audit (queue item 65), found when every Rating
+cell read `—`. READY.**
+- *Evidence.* In an image built from `origin/main` `88d52da`, `MediaItem(**row).model_dump()` on a
+  `get_media_filtered()` row keeps 8 of its 15 keys. The audit served the same page whole by
+  intercepting `/media`: Rating cells showing a value went from 0 to 30 of 50 rows, and Video chips
+  from 50 to 103. The audit asserts both directions, so 0 on `main` is the defect and more than 0
+  shows the override took effect.
+- *Fix.* Add the four fields the page reads to `MediaItem`, or the full set: `video_codec: str |
+  None`, `hdr_type: str | None`, `audio_tracks: list[dict]`, `content_rating: str | None`. Add a
+  route test that `/media` returns them for a row that has them. No schema change and no tag-hash
+  change, so no re-tag.
+- *Layout consequence* (measured under P4): at phone width rows do not get taller, because the name
+  and the tags set their height; the table gets 30 px wider (min-content 487 → 517 px). At 768
+  the median row grows 74 → 83 px.
+
+**B31 — FILED 2026-10-10 by the P4 phone-width audit (queue item 65). NEEDS DECISION.** The name
+rule `file_path.split('/').slice(-2,-1)[0]` was written for movie folders. For an episode
+(`…/Series/Season 01/file.mkv`) it yields the season folder; measured on a copy of production's
+`state.db`, 2,469 of 9,463 rows (26%). Options: (a) for a parent folder matching `Season \d+` or
+`Specials`, show the series folder above it, plus the season (`Series · S01`); (b) the series
+folder only; (c) the file name; (d) leave it. **Recommendation: (a)** — one regex in
+`loadMedia()`, no data change, and the row says which series and season it is. It matters more
+in P4's card layout, where the name is the card's heading.
 
 **B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113)); released in v1.11.0 (2026-10-07).**
 `_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
@@ -2643,7 +2670,8 @@ write to the media file itself — the project's asymmetry, with the \*arrs' `re
     without a remux (needs `mkvtoolnix` in the image); MKV only, so it reaches 283 of 3,411.
  3. **A per-item override stored by xenotag** — the file is untouched and the *tags* say `EN`;
     needs a new table, so an Alembic revision (I3, SHIPPED 2026-09-26), and it is U9's option 2 in another form.
- 4. **Out of scope** — xenotag reports `UND` (it already does, in yellow, in the media browser)
+ 4. **Out of scope** — xenotag reports `UND` (it already does, in yellow, in the media browser — *not in practice:*
+    `/media` drops the tracks, [B30])
     and the operator fixes files with their own tools, then rescans.
 
 **Recommendation: 4 now, 3 later if wanted.** A tagger that rewrites 3,000 media files is a
@@ -2657,7 +2685,8 @@ rewriting media files is a different product). **CLOSED.**
 **P2 — NEEDS DECISION (sweep 2026-09-26) → CLOSED (shipped) by the operator 2026-09-26: two of its three asks already shipped.** The media
 browser's `Item` column shows the item's folder name (falling back to the file name, then the
 id), and its `Video` and `Audio` columns show resolution, codec and HDR, and each track's
-language and codec — checked in `index.html`. **What is left is issue #10's third ask, "remove
+language and codec — checked in `index.html`. (*Correction 2026-10-10:* the page code does, but
+`/media` drops those fields, so they never render — [B30].) **What is left is issue #10's third ask, "remove
 the rating column"**, filed when "rating" was read as a review score. U7 (2026-09-23) settled
 that rating here means the certification (`R`, `TV-MA`) — the same value the rating badge draws.
 **Question:** keep the `Rating` column? Options: (a) keep it and close P2 as shipped;
@@ -4018,6 +4047,32 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
 | P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | **CLOSED 2026-09-25 — keep the PNGs** | — |
+| P12 | **The Service health tiles cut every instance name at phone width.** `.health-grid` is `repeat(3,1fr)` at every width. At 360 px a tile is 86 px wide and **6 of 6** names are cut (`Je…`, `Son…`, `Rad…`), so three Sonarr instances look alike and the full name is only in a hover title, which a touch screen cannot show. At 390 px **5 of 6** are cut, and `Unreachable` runs 14 px (360) / 4 px (390) past its tile; at 768 and up, 0. Noted under P4a (2026-10-06); measured 2026-10-10 by the P4 audit with production's instance count and name lengths (3 Sonarr, 2 Radarr). | 2 | 1 | **NEEDS DECISION** (layout pick) — options and screenshots in *P12* below; recommendation: 2 columns with wrapping names below 600 px | — |
+
+**P12 — FILED 2026-10-10 by the P4 phone-width audit (queue item 65). NEEDS DECISION (layout
+pick).** Measured with P4's instrument and fixture (see *P4 — post-feature phone-width audit*):
+6 tiles named as production's are (Jellyfin, 3 Sonarr, 2 Radarr, names of production's lengths).
+A name counts as truncated when its `scrollWidth` is greater than its `clientWidth`, which is
+when the ellipsis shows. A message overflows when its text box runs past the tile. The options are
+CSS injected into the audit page only. Screenshots are
+`health-<message>-<option>-<width>.png` in `~/docker/overnight/projects/xenotag/runs/65-20261010-02/`.
+
+| Option | 360: columns · names cut · message overflow · grid height | 390 | 768 | 1366 |
+|---|---|---|---|---|
+| current `repeat(3,1fr)` | 3 · **6 / 6** · 6 tiles (14 px) · 154 px | 3 · **5 / 6** · 6 tiles (4 px) · 154 px | 3 · 0 · 0 | 3 · 0 · 0 |
+| `repeat(auto-fit,minmax(150px,1fr))` | 1 · 0 · 0 · 482 px | 1 · 0 · 0 · 482 px | **4 columns** (changes the tablet layout) | 3 (unchanged) |
+| 2 columns below 600 px | 2 · 3 / 6 · 0 · 236 px | 2 · 3 / 6 · 0 · 236 px | unchanged | unchanged |
+| 1 column below 600 px | 1 · 0 · 0 · 482 px | 1 · 0 · 0 · 482 px | unchanged | unchanged |
+| **2 columns + wrapping names below 600 px** | 2 · 0 · 0 · 295 px | 2 · 0 · 0 · 295 px | unchanged | unchanged |
+
+With the longest message the clients return (`Invalid API key`, served by intercepting `/health`),
+the current grid wraps the message rather than overflowing (grid 220 / 187 px, names still cut), and
+the four options' numbers match the table. **Recommendation: 2 columns with wrapping names below 600 px**
+(`.health-grid{grid-template-columns:repeat(2,1fr)}` and `.health-name{white-space:normal;
+overflow-wrap:anywhere}` under `max-width:600px`). No name is lost, and the grid is 295 px tall
+against 482 px for one column. Pick one column instead if a name must stay on one line. Auto-fit
+gains nothing: its 150 px minimum gives one column on a phone anyway, and it changes 768 to four
+columns.
 
 **P6 — SHIPPED 2026-10-10 ([#134](https://github.com/bpoulliot/xenotag/pull/134)), merged NOT released.**
 It changes a poster only for an operator who turns the checkbox on, and only below 100 % opacity; with it
@@ -4916,7 +4971,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser + `.health-grid` truncation: **audit after P6 + B12(b) merge, then the operator picks a layout** (decided 2026-10-09, round 5) — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser: **NEEDS DECISION (layout pick)** — audited after P6 + B12(b) on 2026-10-10, recommendation (c)+(d) cards below 600 px (see *P4 — post-feature phone-width audit* below); `.health-grid` truncation filed as **P12** — first measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
 | P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
@@ -5130,6 +5185,100 @@ labels say what would make each one startable.
    long on purpose but are not a sample; Preview with a reachable Jellyfin (its sample posters
    come from Jellyfin — here the synthetic backgrounds were used); touch-target sizes; heights
    other than 800 px; browsers other than Chromium. Screenshots were kept out of the repo.
+
+   **P4 — post-feature phone-width audit: MEASURED 2026-10-10 (queue item 65). The media browser
+   half is NEEDS DECISION (layout pick); the `.health-grid` truncation is filed as [P12].** Run
+   after P6 ([#134](https://github.com/bpoulliot/xenotag/pull/134)) and B12(b)
+   ([#147](https://github.com/bpoulliot/xenotag/pull/147)) merged, as decided in round 5. This was
+   measurement only, so nothing in `app/` changed.
+
+   *Instrument.* P4b's DOM audit, extended. Scripts are in `~/docker/xenotag/p4-audit-20261010/`
+   and results and screenshots in `~/docker/overnight/projects/xenotag/runs/65-20261010-02/`, both
+   outside the repo. Headless Chromium (Playwright 1.58.0) at 360 / 390 / 768 × 800, with 1366 as
+   a control. The app was a throwaway container built from `origin/main` `88d52da`, on a Docker
+   `--internal` network with a scratch `/config` and no host port.
+   **The fixture has a longer tail than P4a's.** The lengths and counts of a copy of production's
+   `state.db` (9,463 rows) drive a synthetic 60-row index. No title, path or tag text left the copy.
+   55 rows sit at production's quantiles of shown-name length, tags per row, audio tracks, video
+   parts and rating length. The five newest rows carry production's maxima: a **102-character**
+   shown name, **60 tags** on one row, 5 audio tracks, 3 video parts and a 9-character rating.
+   Production has 63 rows with more than 20 tags, mostly `xt-sub-XX`. A quarter of the rows show
+   `Season 01` as their name, as production's do ([B31]). Service health uses production's
+   instance count and name lengths (3 Sonarr, 2 Radarr; names of 7/2/5 and 7/2 characters), with
+   invented names.
+   **The self-test fails in both directions, and the audit refuses to report if any of its 16
+   checks fails.** It keeps P4a's page checks and adds these:
+   - a table with 40 / 100 / 40 px rows must read median 40 and max 100;
+   - of two ellipsised tile names, exactly the truncated one must be flagged, and only its 60 px
+     tile's message may overflow;
+   - a named control off-screen or covered must be flagged, and a missing one reported absent;
+   - injected CSS must change the measured rows;
+   - a hidden health grid must read as absent.
+
+   On the app, every page must be clean at 1366, and the media table must scroll inside its card at
+   360 (P4a's known state). There were 0 JS errors at every width. While the instrument was being
+   built, its self-test caught one of its own bugs: scrolling a control into view panned the page
+   sideways and hid an off-screen control. That was fixed before any number below was taken.
+
+   | Page | 360 | 390 | 768 |
+   |---|---|---|---|
+   | Login | clean | clean | clean |
+   | Dashboard | clean · media table **14,883 px** · health **6 / 6 names cut** | clean · media **14,883 px** · health **5 / 6 cut** | clean · media 4,233 px · health 0 cut |
+   | Preview (P6 toggle off, and on with the four backup pickers) | clean | clean | clean |
+   | Settings (B12(b)'s two fields) | clean | clean | clean |
+
+   "Clean" means `scrollWidth` equals the viewport, with 0 overflowing elements, 0 controls outside
+   the viewport or their clip box, and 0 controls covered at their centre. **The new controls are
+   all usable:** P6's adapt toggle (its 36×20 `label.toggle`), the four backup pickers (colour +
+   hex, shown only while the toggle is on), B12(b)'s ⟲ Tag rescan button and its schedule and
+   threshold fields. All are present, inside the viewport and their clip box, and uncovered at
+   every width: 84 checks, 0 failures. **P6 and B12(b) added no phone-width defect.** What is still
+   wrong at 360 / 390 is layout, in two places.
+
+   *1. The media browser (the deferred half).* The table's min-content width is 487 px (517 px
+   with [B30]'s fields), against a 278 / 308 px box, so below it **the layout is identical at 360
+   and 390**. The median row is 233 px and the tallest 2,124 px: on the 60-tag row the chips break
+   at every hyphen, one fragment per line. 50 rows make **14,883 px** of table, about 18½ screens
+   at 800 px, against 2,681 px at 1366. The Tags column sits past the box's right edge until the
+   box is scrolled sideways. The options below are CSS injected into the audit page only. Screenshots are
+   `media-<payload>-<option>-<width>-{tail,typical}.png`: *tail* is the card top with the five
+   maximum rows, *typical* starts at row 6.
+
+   | Option | 360: table px / scrolls sideways | 360: median / max row, 50 rows | 390 | 390 with [B30] fixed |
+   |---|---|---|---|---|
+   | (a) leave as is | 487 / yes | 233 / 2,124 · 14,883 | as 360 | 233 / 2,124 · 14,883 (517 px wide) |
+   | (b) `white-space:nowrap` chips | 503 / yes | 150 / 1,365 · 9,570 | as 360 | 150 / 1,365 · 9,570 (592 px wide) |
+   | (c) cards below 600 px | 278 / no | 210 / 503 · 11,270 | 210 / 480 · 11,051 | 213 / 483 · 11,163 |
+   | (d) hide Source / Audio / Scanned below 600 px | 287 / yes | 233 / 2,124 · 14,883 | fits (308 / no) · 150 / 1,365 · 9,570 | 200 / 2,009 · 13,035 |
+   | (b) + (d) | 304 / yes | 150 / 1,365 · 9,570 | fits · 150 / 1,365 · 9,570 | 336 / yes · 150 / 1,365 · 9,570 |
+   | **(c) + (d)** cards without Source / Audio / Scanned | 278 / no | **140 / 432 · 7,745** | **140 / 410 · 7,526** | 143 / 413 · 7,616 |
+
+   - (d) alone does nothing at 360: the four remaining columns still need 287 px in a 278 px box,
+     so the rows stay as in (a). At 390 they fit, and once [B30] adds codec chips they no longer
+     fit well (max row 2,009 px).
+   - (b) makes each chip one unbreakable line, so a narrow Tags column stacks one chip per line
+     (screenshot `media-as-is-bd-390-typical.png`). As mocked it applies at every width; at 768
+     with [B30]'s fields it makes rows taller (median 83 → 88 px, max 533 → 690 px), so if picked
+     it belongs under `max-width:600px`. (c), (d) and (c)+(d) sit under 600 px and leave 768
+     unchanged (measured equal).
+   - (c)+(d) hides Source, which is `jellyfin` on all 9,463 production rows; Scanned; and Audio,
+     whose languages the `xt-` tags already carry. It is the shortest option, about half of (a),
+     and nothing scrolls sideways.
+
+   **Recommendation: (c)+(d) — cards below 600 px, without Source, Audio and Scanned.** It is the only
+   option that both removes the sideways scroll and halves the height. (c) alone if the operator
+   wants every field on a phone (median row 210 px instead of 140). (a) stays defensible on the
+   2026-10-05 reasoning that the phone case is checking a scan and the Overview card covers that,
+   but it now has a number: 18½ screens, with the Tags column hidden. Fix [B30] first or with it,
+   because it changes what the Video and Rating cells hold. No option needs a new control.
+
+   *2. The health grid:* see [P12], whose options were measured here.
+
+   Not determined: real titles (lengths only); pages 2+ of the media browser; the `Healthy`
+   message state (shorter than the two measured, `Unreachable` and `Invalid API key`); heights
+   other than 800 px; browsers other than Chromium. Touch-target size was not assessed. Recorded,
+   not judged: the adapt toggle is 36×20 px and the threshold field 19 px tall, under WCAG 2.5.8's
+   24 px.
  - **P5 — SHIPPED 2026-09-26** (`scripts/generate_readme_images.py`; CI runs its `--check`). README gains (1) overlay examples rendered with `generate_preview_bytes()`
    over the **synthetic** backgrounds in `app/preview_samples.py` — never real posters, which are
    copyrighted art and this repo is public — at the shipped defaults, one per `badge_size`, and
