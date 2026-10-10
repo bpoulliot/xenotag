@@ -56,7 +56,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113)) · **RELEASED v1.11.0** (2026-10-07) | — |
 | B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | **SHIPPED 2026-10-06** ([#129](https://github.com/bpoulliot/xenotag/pull/129)) · **RELEASED v1.11.0** (2026-10-07) — `preview_image()` now builds its `AppConfig` with `tags=get_config().tags`; default (all `poster`) stays byte-identical | — |
 | B24 | **`/health` reports Jellyfin unreachable without ever contacting it — and the container healthcheck only ever reads that answer.** For a caller with no web session `health()` returns early with a *fabricated* verdict, `jellyfin={"ok": False, "status": "unreachable", "message": "Not authenticated"}` (`app/web/routes.py:175-183`), so a perfectly healthy Jellyfin is reported as down; the message describes the **caller's** missing cookie, not the dependency. `docker-compose.yml:30-34` sets the healthcheck to `curl -f http://localhost:7755/health`, which carries no cookie, so it always takes that branch — and because the branch still returns **HTTP 200 with `status: "ok"`**, `curl -f` can never fail on a dependency problem. The one endpoint whose job is to report dependency health is structurally unable to: unauthenticated it invents the answer, and authenticated it hardcodes `status="ok"` (`:195`) whatever `jf.health()` returned. **Measured 2026-10-06** while verifying the Jellyfin 10.11→12.2 upgrade (`~/docker` TODO I62): prod xenotag reported `jellyfin: unreachable / Not authenticated` while its configured API key was byte-identical to Jellyfin's, `jellyfin:8096` answered 200 from inside the container, and tags read back correctly by `Ids=` — it cost real diagnosis time and briefly looked like an upgrade regression. Fix: either exempt `/health` from the session gate (it leaks only up/down, and the port is bound to `127.0.0.1`) or give the probe its own unauthenticated liveness route and keep the authenticated one for the UI; in both cases report an **unknown** dependency as unknown rather than as `unreachable`, and let `status` follow the checks. | 3 | 1 | **SHIPPED 2026-10-07** ([#132](https://github.com/bpoulliot/xenotag/pull/132)) · **RELEASED v1.11.0** (2026-10-07) — exempted from the session gate; unauthenticated callers get `status: "up"` only, authenticated callers keep full detail with `status` computed from the real checks | — |
-| B25 | **An \*arr `api_key_file` can name any file the container can read** (CodeQL #11, `py/path-injection`, `app/config.py:538`). `_apply_arr_key_files()` reads whatever path the row names and sends the contents as that instance's `X-Api-Key`, to a URL the same row sets. Only an admin can set it (config.yml / raw YAML editor). | 2 | 1 | **SHIPPED 2026-10-10** ([#148](https://github.com/bpoulliot/xenotag/pull/148)) — fixes CodeQL #11; `API_KEY_FILE_ROOT` module constant (`/run/secrets`), resolved before any read; production's `config.yml` carries 5 `api_key_file` fields, all empty strings (I9 not wired up), so nothing breaks. Merged, not released. | — |
+| B25 | **An \*arr `api_key_file` can name any file the container can read** (CodeQL #11, `py/path-injection`, `app/config.py:538`). `_apply_arr_key_files()` reads whatever path the row names and sends the contents as that instance's `X-Api-Key`, to a URL the same row sets. Only an admin can set it (config.yml / raw YAML editor). | 2 | 1 | **BLOCKED on PR [#148](https://github.com/bpoulliot/xenotag/pull/148), NEEDS DECISION — the build is done, CI's CodeQL check still won't clear.** See note below. | — |
 | B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **SHIPPED 2026-10-10** ([#143](https://github.com/bpoulliot/xenotag/pull/143)) · **RELEASED v1.11.1** (2026-10-10) — `CollapseBoxSetItems=false` always sent at all four sites, no setting. The post-release full scan (scan 163) listed **9,467** items, 0 BoxSets, and reached all 1,134 hidden films; its deleted-items report shows **strip 0 objects / 0 tags** on every instance — see *Release v1.11.1* | — |
 | B27 | **A Settings save blanks the session-signing key.** The Settings page sends `auth: {username}` only, and `PUT /api/settings` restores `password_hash` but not `secret_key`, so every structured save writes `auth.secret_key: ""` to `config.yml` and into the running config. Until the next restart, sessions are signed with `":" + password_hash[:16]` (a constant prefix and 9 bcrypt-salt characters) in place of the 256-bit key. Separately, `GET /api/settings` returns `auth.secret_key` to the browser. Found in production on 2026-10-10. | 3 | 1 | **READY** — see *B27* below | — |
 | B28 | **A Settings save resets `scan.max_workers` to 4.** `buildSettings()` builds `scan` from the four fields the page shows (`schedule`, `incremental`, `path_filters`, and since B12(b) the two `reconcile_*` ones) without spreading the loaded `settings.scan`, so a structured save drops any other `scan` key and `ScanConfig` fills its default. B27's class (an object replaced, not merged). Production has `max_workers: 4` (the default), so nothing is lost there today. | 1 | 1 | **READY** — see *B28* below | — |
@@ -232,6 +232,42 @@ The tests point the root at `tmp_path` by monkeypatching a module constant — n
 variable, which would be (b) by the back door. **Release note:** an `api_key_file` outside `/run/secrets`
 becomes a fatal start error; production uses none today (I9 is not wired up), so nothing breaks. This
 note and the B25 row were filed in PR #136 and brought to `main` with the decision on 2026-10-09.
+
+**B25 — BUILT 2026-10-10 ([#148](https://github.com/bpoulliot/xenotag/pull/148)); CI's CodeQL check
+will not clear. NEEDS DECISION.** The build is exactly the decided paragraph above: `_apply_arr_key_files()`
+resolves each `api_key_file` and refuses anything outside `/run/secrets` before any read; unreadable/empty
+stays fatal; the four new tests (outside the root, a symlink inside it pointing outside, a `..` escape, a
+file inside the root loading as before) all fail on `origin/main` and pass on the branch; the full suite is
+994 passed (990 on `origin/main`), `ruff`/`black` clean. Production's `config.yml` carries 5 `api_key_file`
+fields, all empty strings (I9 not wired up) — grepped for the key name only, nothing printed — so nothing
+breaks at the next release regardless of how this resolves.
+
+What won't clear: the PR's **separate `CodeQL` check** (distinct from the `codeql` workflow job, which is
+green) still reports one new high-severity `py/path-injection` alert on every attempt, always at the
+`Path(...).read_text(...)` call that actually opens the file (`app/config.py:538` on `origin/main`; the
+line moves as the function is edited, most recently `:561`). Two fix attempts, both pushed and both still
+red:
+
+1. **`os.path.realpath` + `str.startswith`, as a separate helper function** (`Path.resolve()` +
+   `is_relative_to()` was the first cut, in the PR's first commit, and CodeQL flagged *two* sinks —
+   the resolve call and the read — because pathlib's `.resolve()` only propagates taint and
+   `is_relative_to` is not a recognized guard). Rewriting to the pair CodeQL's py/path-injection query
+   *does* model as a sanitizer (confirmed by searching prior false-positive reports against the same
+   query) dropped it from 2 alerts to 1 — the resolve call cleared, the read did not.
+2. **Inlining the guard and the read into one function** (`_apply_arr_key_files()` itself, no helper),
+   on the theory that the sanitizer-guard recognition is intraprocedural and a helper returning the
+   checked path put the read one hop beyond what it follows. Still one alert, same line, same message.
+
+**Not determined — this is the decision:** whether a third code shape would clear it (candidates not
+tried: reading through `open(resolved, encoding=...).read()` on the plain string instead of
+`Path(resolved).read_text()`, since the query's reference sinks may be modeled against `open()` rather
+than `pathlib.Path` methods; or a bare single-condition guard `if not resolved.startswith(root):` instead
+of the `resolved == root or resolved.startswith(root_prefix)` compound used here, in case the pattern
+match is syntactic); or whether the alert is a tooling false positive that needs an operator-written
+dismissal in the Security tab (an operator action — out of scope for an overnight session: no CodeQL
+dismissal). The code change itself is complete and tested; PR #148 is left **unmerged** (its CodeQL check
+is red, not a policy hold) on branch `fix/b25-key-file-root`; worktree `/tmp/xt-b25` is left in place for
+whoever picks this up next.
 
 **B26 — FILED 2026-10-07 by the v1.11.0 release session (measured on production, GET only). READY.**
 B25 is claimed by the open PR #136 (CodeQL #11), so this takes B26.
