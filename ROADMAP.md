@@ -42,7 +42,8 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B9 | **Radarr refuses xenotag's commonest codec labels.** Radarr 6.3 accepts only `[a-z0-9-]` in a tag label, so `xt-h.264`, `xt-h.265`, `xt-dd+` (and `xt-hdr10+`, `xt-truehd atmos`) can never be created there — 4,589 label applications in the B5 dry run. | 3 | 2 | **FIXED 2026-09-27; LIVE (v1.8.0)** — tags respelled (`xt-H264`, `xt-DDplus`), badges unchanged; production re-tagged 2026-09-27 09:00–10:15Z | — |
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
-| B12 | **Jellyfin loses xenotag's tags and nothing notices.** Five films the 2026-09-24 full scan tagged (`tags_applied` non-empty, files present, items not locked) carry **no** `xt-` tag on Jellyfin two days later — their tags are now TMDB keywords plus `luxe` (and `av1`/`nav1s` on two). The scan is mtime-driven, so it never re-writes them. | 3 | 2 | **NEEDS DECISION** (measured 2026-10-07, [docs/measurements/b12-tag-loss.md](docs/measurements/b12-tag-loss.md)) — premise wrong: a library-wide `replaceAllMetadata=true`-type refresh on 2026-09-04 wiped ~8,000 items before the 09-24 write, which then did not stick on the five (B17's class); since B5 the \*arr NFOs respell 82% of items in lowercase (no loss). (a) case-insensitive compare needs no decision; (b) a reconciliation pass does | — |
+| B12(a) | **U9's drift check and B17's read-back compare Jellyfin tags case-sensitively; Jellyfin does not.** Split from B12 on 2026-10-09. Since B5 the \*arr NFO merge respells 82% of items in lowercase (`xt-aac` for `xt-AAC` — no loss, Jellyfin's `Tags=` ignores case), so `_tag_drift()` warns on every one at each full scan: scan 158 logged 6,704 drift lines, 6,700 case-only. | 3 | 1 | **READY** (split 2026-10-09; no decision needed) — compare case-insensitively in `_tag_drift()` and B17's read-back | — |
+| B12(b) | **Jellyfin loses xenotag's tags and nothing notices** (the original B12). A replace-all metadata refresh (~8,000 items on 2026-09-04) or an item re-created by Jellyfin drops the `xt-` tags, and the mtime-driven scan never goes back to an unchanged file. | 3 | 2 | **NEEDS DECISION** (narrowed 2026-10-09): the operator chose a reconciliation pass on a **schedule** plus a **manual rescan** option; open: its default cadence (recommend daily, after the scan) and whether it also re-writes the \*arrs (recommend no). Builds after B12(a). Measured 2026-10-07, [docs/measurements/b12-tag-loss.md](docs/measurements/b12-tag-loss.md) | — |
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **SHIPPED 2026-10-06** ([#122](https://github.com/bpoulliot/xenotag/pull/122)) · **RELEASED v1.11.0** (2026-10-07) — its first scan was the full re-tag with live \*arr writes (see *Release v1.11.0* below) | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116)) · **RELEASED v1.11.0** (2026-10-07) | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115)) · **RELEASED v1.11.0** (2026-10-07) | — |
@@ -55,7 +56,8 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113)) · **RELEASED v1.11.0** (2026-10-07) | — |
 | B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | **SHIPPED 2026-10-06** ([#129](https://github.com/bpoulliot/xenotag/pull/129)) · **RELEASED v1.11.0** (2026-10-07) — `preview_image()` now builds its `AppConfig` with `tags=get_config().tags`; default (all `poster`) stays byte-identical | — |
 | B24 | **`/health` reports Jellyfin unreachable without ever contacting it — and the container healthcheck only ever reads that answer.** For a caller with no web session `health()` returns early with a *fabricated* verdict, `jellyfin={"ok": False, "status": "unreachable", "message": "Not authenticated"}` (`app/web/routes.py:175-183`), so a perfectly healthy Jellyfin is reported as down; the message describes the **caller's** missing cookie, not the dependency. `docker-compose.yml:30-34` sets the healthcheck to `curl -f http://localhost:7755/health`, which carries no cookie, so it always takes that branch — and because the branch still returns **HTTP 200 with `status: "ok"`**, `curl -f` can never fail on a dependency problem. The one endpoint whose job is to report dependency health is structurally unable to: unauthenticated it invents the answer, and authenticated it hardcodes `status="ok"` (`:195`) whatever `jf.health()` returned. **Measured 2026-10-06** while verifying the Jellyfin 10.11→12.2 upgrade (`~/docker` TODO I62): prod xenotag reported `jellyfin: unreachable / Not authenticated` while its configured API key was byte-identical to Jellyfin's, `jellyfin:8096` answered 200 from inside the container, and tags read back correctly by `Ids=` — it cost real diagnosis time and briefly looked like an upgrade regression. Fix: either exempt `/health` from the session gate (it leaks only up/down, and the port is bound to `127.0.0.1`) or give the probe its own unauthenticated liveness route and keep the authenticated one for the UI; in both cases report an **unknown** dependency as unknown rather than as `unreachable`, and let `status` follow the checks. | 3 | 1 | **SHIPPED 2026-10-07** ([#132](https://github.com/bpoulliot/xenotag/pull/132)) · **RELEASED v1.11.0** (2026-10-07) — exempted from the session gate; unauthenticated callers get `status: "up"` only, authenticated callers keep full detail with `status` computed from the real checks | — |
-| B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **READY** (measured 2026-10-07) — blocks U2 removal | — |
+| B25 | **An \*arr `api_key_file` can name any file the container can read** (CodeQL #11, `py/path-injection`, `app/config.py:538`). `_apply_arr_key_files()` reads whatever path the row names and sends the contents as that instance's `X-Api-Key`, to a URL the same row sets. Only an admin can set it (config.yml / raw YAML editor). | 2 | 1 | **READY** (operator decided 2026-10-09: allowed roots = `/run/secrets` **only**, option (a)) — fixes CodeQL #11 | — |
+| B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **READY** (measured 2026-10-07) — blocks U2 removal. *Note 2026-10-09 (operator: "an extra API param? a setting?"):* yes, one query parameter, `CollapseBoxSetItems=false`, on every recursive Movie/Series `/Items` listing (four call sites, below); no downside measured; **not a setting** — the collapsed answer is never right for a tagger | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -99,6 +101,60 @@ half and the CodeQL #10 change (#135). **Not in it:** P6 (#134, HOLD) and CodeQL
 - Record: `~/docker/xenotag/release-1.11.0-20261007/README.md` (snapshots, verify output, scan log,
   the tools).
 
+**B25 — FILED 2026-10-06 by the CodeQL #11 item, which stopped before building. NEEDS DECISION.**
+The item said to allow only the directories that production's compose file mounts for key files,
+not to guess one, and to stop if the mounts were unclear. They are clear, but there are none:
+
+* **The prod container** (`docker inspect xenotag`, mounts only) mounts `/config` and seven
+  `/media/*` roots. It has no `/run/secrets` and no compose `secrets:`, and its environment holds
+  only `PUID`/`PGID`/`TZ`. **The prod `config.yml` contains no `api_key_file`** (grep for the key name,
+  no match), and the host's `materialize-secrets.sh` renders nothing for xenotag. I9 is merged but not
+  wired up in production (as recorded under I9), so a root allowlist breaks no live key today.
+* **This repo's `docker-compose.yml`** also mounts only `/config` and media. Its `_FILE` lines are
+  commented out and point at `/run/secrets/…`.
+* **The documentation names one place:** the README (two examples, and the `secrets:` block it
+  shows), `config.example.yml` and the I9 entry all use `/run/secrets/<name>`, which is Compose's
+  default secret target. Across the host stack (`docker compose config --format json` in
+  `~/docker`), 19 secret mounts in 9 services all land under `/run/secrets/`. The only other secret
+  directory is one bind mount at `/etc/prometheus/secrets`.
+
+Taken literally, "what prod mounts" means an **empty** allowlist. That refuses every
+`api_key_file` and switches off I9, which the operator chose on 2026-09-26. The only grounded
+alternative comes from the documentation, not from a mount, and choosing it is exactly the guess
+the item forbade. So the decision goes to the operator:
+
+* **(a) `/run/secrets` only.** Recommended. It is the documented convention and Compose's default,
+  and nothing in prod breaks. Cost: a Compose long-syntax secret with an absolute `target:`
+  elsewhere, or a bind-mounted key directory, is refused. The fix is to mount it under
+  `/run/secrets`.
+* **(b) `/run/secrets` plus roots added by an environment variable** (for example
+  `XENOTAG_KEY_FILE_ROOTS`). The web UI cannot set the environment, so the admin path stays closed.
+  Cost: one more setting and one more README section.
+* **Considered and not recommended:** allowing `/config`. A key file there sits beside
+  `config.yml`, in the directory the app writes and backs up, and keeping keys out of that
+  directory is why I9 exists.
+
+**Found while checking. The build needs this, and it changes nothing above:** the only code that
+reads the path is `_apply_arr_key_files()`. `_drop_file_backed_keys()` checks only that the field
+is set, and the Settings **Test** route (`app/web/routes.py`) compares the path as a string against
+the configured instances. Neither opens the file. I8's `<VAR>_FILE` reader (`_read_env_value()`)
+takes its path from the environment, not from config. CodeQL did not flag it, and putting it under
+the same root would change I8, so that is not part of this item. Once the operator decides, the
+build is: resolve the path (symlinks and `..`) before any read, refuse anything outside a root with
+a `ConfigError` that names the path, and keep unreadable or empty as fatal. Tests: a path outside
+the roots is refused and never read; a symlink inside a root that points outside is refused; a file
+inside a root loads as it does today. The 29 tests in `tests/test_arr_key_files.py` use `tmp_path`
+key files, so they need the root pointed at `tmp_path`.
+
+**OPERATOR DECISION 2026-10-09: (a) — the allowed `api_key_file` root is `/run/secrets` ONLY. Relabelled
+READY.** (b)'s environment-variable roots and `/config` are both declined. The build is the paragraph
+above with the root fixed: resolve the path (symlinks and `..`) before any read, refuse anything that
+does not resolve under `/run/secrets` with a `ConfigError` naming the path, keep unreadable/empty FATAL.
+The tests point the root at `tmp_path` by monkeypatching a module constant — not through an environment
+variable, which would be (b) by the back door. **Release note:** an `api_key_file` outside `/run/secrets`
+becomes a fatal start error; production uses none today (I9 is not wired up), so nothing breaks. This
+note and the B25 row were filed in PR #136 and brought to `main` with the decision on 2026-10-09.
+
 **B26 — FILED 2026-10-07 by the v1.11.0 release session (measured on production, GET only). READY.**
 B25 is claimed by the open PR #136 (CodeQL #11), so this takes B26.
 
@@ -132,6 +188,39 @@ B25 is claimed by the open PR #136 (CodeQL #11), so this takes B26.
   its pages AND its recount — with a test whose fake Jellyfin collapses unless asked not to.
   Check that dev (12.1.0) and the 10.11.10 lab image honour it. After the release that carries it,
   run one full scan (`POST /scan/full`) to reach the 1,134 films.
+
+**B26 — the operator's question, answered 2026-10-09: "is this an extra API param? Can be turned off if
+setting."** Yes, it is one query parameter, and it should not be a setting. Measured on production
+Jellyfin 12.2.0 by GET only (xenotag's own client from inside the `xenotag` container), 2026-10-09:
+
+| listing (`Recursive=true`) | default | `CollapseBoxSetItems=false` |
+|---|---:|---:|
+| `IncludeItemTypes=Movie,Series` | 8,779 (incl. BoxSets) | 9,465: 6,983 Movie + 2,482 Series, 0 BoxSet, 0 duplicate Ids |
+| `IncludeItemTypes=Movie` | 6,297 = 5,849 Movie + **448 BoxSet** | 6,983 |
+| `IncludeItemTypes=Series` | 2,482 | 2,482 |
+
+(13 more items than on 10-07: the library grew.) **Every call site that needs it** — all recursive
+Movie/Series listings collapse, the movie-only one too:
+
+1. `JellyfinClient._fetch_items()` — the scan (`get_items()`, per library) **and** B8's webhook folder
+   lookup `list_item_paths("Movie")`, which today would miss a collected film's folder.
+2. U2's `complete_listing()` — its pages **and** its `Limit=0` recount, or the completeness check
+   compares two different populations.
+3. `get_sample_items()` / `get_diverse_sample_items()` (the Preview page's samples): 2 of the newest 50
+   are BoxSets today, so a collection's poster can be offered as a sample. Cosmetic, but one parameter.
+
+Not needed: `/Items?Ids=` lookups (every hidden film answers by id, measured 10-07), `/Items/{id}`, and
+`_get_first_episode_path()` (`IncludeItemTypes=Episode` under a series; episodes are not boxed).
+**Downsides — none found.** No duplicates (a film in a collection is listed once, as itself; Ids unique =
+rows), no BoxSet rows at all (so the 448 `skip (no_file)` scan errors go away too), and no measurable cost:
+a 500-item page with the scan's fields took 1.58/1.78/1.87 s collapsed vs 1.94/2.18/1.38 s with `=false`
+(three each — noise), for 8 % more items, which are exactly the films that should be scanned.
+**Why not a toggle:** the only thing the toggle could do is turn the bug back on — `true` hides ~1,100 films
+from tagging and makes U2 strip live films' \*arr tags. Collapsing is a *display* grouping for browsing
+clients; xenotag needs every file. It is not something an operator would want to choose, and B26's own
+"not determined" (whether a server/user setting drives the default) is exactly why the client should send
+it explicitly rather than inherit it. **Recommendation: hard-code `CollapseBoxSetItems=false` at the four
+sites, no setting.** Still to check in the build, as above: dev 12.1.0 and the 10.11.10 lab honour it.
 
 **B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113)); released in v1.11.0 (2026-10-07).**
 `_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
@@ -769,6 +858,30 @@ on exactly the 747.
   unchanged file. **Decision needed on (b):** how often it runs, and whether it may write to items
   whose file did not change. Not recommended: adopting the \*arrs' lowercase in Jellyfin (that would
   undo B9's spelling) or disabling the \*arrs' NFO tags.
+
+**OPERATOR DECISION 2026-10-09 — B12 is split in two.**
+
+- **B12(a) — READY.** Case-insensitive compare in `_tag_drift()` and B17's read-back, as recommended
+  above; it needed no decision. It must land **before or with** B12(b): a reconciliation pass that
+  compares case-sensitively would re-write the ~7,800 lowercase-respelled items on every run, and the
+  next \*arr NFO merge would respell them again — a write loop that repairs nothing.
+- **B12(b) — the reconciliation pass. Decided:** it runs **on a schedule**, and the operator also gets
+  **a manual "rescan" option** (a button / `POST` route beside the scan ones). **Implied by the choice, not
+  separately asked:** it writes to items whose file has not changed — that is the point of reconciling
+  (nothing else repairs a 09-04-style wipe or a re-created item). Its writes are the scan's own: managed
+  `xt-` tags only, through `set_managed_tags()` with B17's read-back; it never touches a non-managed tag.
+  A missing tag is judged **regardless of case** (B12(a)). Read side, as measured: every tracked item by
+  `Ids=`, ~95 GETs.
+- **Still open (why B12(b) stays NEEDS DECISION, narrowed):**
+  1. **Default cadence.** Recommend its own `scan.reconcile_schedule` cron (empty = off, like
+     `scan.schedule`), default daily `0 5 * * *` — after the 03:00 scan (scan 158, a full one, took 99 min).
+     The read side is cheap enough for daily; a wipe would be repaired within a day.
+  2. **Scope: Jellyfin only, or the \*arrs too?** Recommend Jellyfin only — every loss B12 measured was
+     Jellyfin-side, and the \*arr copies were unaffected; the \*arrs are re-written by the scan already.
+  3. **Worth a confirming nod (flagged, not blocking):** after a mass wipe the pass would re-write
+     thousands of items in one run — the v1.11.0 re-tag's scale, hours under host load. It is the repair
+     working as intended, but the operator may want a per-run write cap, or a log/ntfy line when it
+     writes more than N items. Posters are out of scope: the pass restores tags, not overlays.
 
 *The filing, as written on 2026-09-26:*
 
@@ -2637,8 +2750,8 @@ webhook resolves the wrong item.)*
 | I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
 | I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | **SHIPPED 2026-10-06** (#118) · **RELEASED v1.11.0** (2026-10-07) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
-| I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure. **Triaged 2026-09-27:** five are false positives (probes committed); #6/#7 → B15, #8 → B16. What remains is dismissing the five on GitHub with the reasons recorded below | 3 | 1 | READY (measured 2026-09-27) | — |
-| I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **DECIDED 2026-10-05** — waits on the production upgrade | — |
+| I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure. **Triaged 2026-09-27:** five are false positives (probes committed); #6/#7 → B15, #8 → B16. What remains is dismissing the five on GitHub with the reasons recorded below | 3 | 1 | **DONE 2026-10-07** — #1, #3, #4, #5, #9 dismissed on GitHub as *false positive* with the comments below; #6/#7 fixed by B15, #8 by B16 (verified by `gh api` 2026-10-09) | — |
+| I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **READY** (2026-10-09) — production has run Jellyfin **12.2.0** (`jellyfin/jellyfin:12.2`) since 2026-10-06, so the 2026-10-05 decision can be built: move jellyfin-dev to 12.2 | — |
 
 **I14 — FILED 2026-09-27, found while measuring B8. Not fixed here.**
 
@@ -2661,6 +2774,16 @@ production's current 10.11.10, move it to Jellyfin 12.2 **together with** produc
 upgrade, when that happens. Production's upgrade is expected "maybe tomorrow"; nothing in this
 repo changes until it does. Relabelled **DECIDED**, waiting on the production upgrade, not
 NEEDS DECISION.
+
+**RELABELLED READY 2026-10-09: the blocker is gone.** Production moved to Jellyfin 12.2.0 on 2026-10-06
+(`~/docker` TODO I62); its image is the **official** `jellyfin/jellyfin:12.2`, and that image is already
+pulled locally. Build: pin `jellyfin-dev` in `docker-compose.dev.yml` to 12.2 instead of
+`lscr.io/linuxserver/jellyfin:latest` (12.1.0). The dev database is on 12.1, so 12.2 migrates it forward;
+keep a copy of `~/.mf-dev/configs/jellyfin` first, since there is no way back. **Trap:** dev uses the
+linuxserver image, whose `/config` layout differs from the official image's (`/config` + `/cache`, no
+PUID/PGID) — either pin a linuxserver tag that carries 12.2.0 (check that it exists before pinning) or
+switch to the official image and re-map its mounts. Then confirm `"Version":"12.2.0"` and that the
+seeded Firefly/Serenity still resolve.
 
 **Sweep 2026-09-26 — I1–I6.**
 
@@ -3214,6 +3337,11 @@ outward action — the operator's, or a session whose item says so in so many wo
 - **#1:** `Value is create_session()'s base64url HMAC token, set only when the username equals the configured one; no ; , " or CR/LF can reach the header. CodeQL propagates taint through base64. Pinned by tests/test_codeql_triage.py (I13).`
 - **#3, #4, #5:** `sample is reduced to Path(sample).name, so the path is always _PREVIEW_CACHE/<one component>; '..' reaches only the parent dir, which fails is_file(). CodeQL has no barrier for PurePath.name. Pinned by tests/test_codeql_triage.py (I13).`
 - **#9:** `Returns str(exc) of a failed dry run (the message, never a traceback) to the signed-in admin only; client keys travel in headers, not URLs. CodeQL treats the exception object as stack-trace info. Pinned by tests/test_codeql_triage.py (I13).`
+
+**DONE — verified 2026-10-09** (`gh api repos/bpoulliot/xenotag/code-scanning/alerts`): #1, #3, #4, #5
+and #9 are `dismissed`, reason *false positive*, 2026-10-07 00:12:45–50Z by the operator, with the
+comments above; #6 and #7 are `fixed` 2026-10-06 15:18Z (B15), #8 `fixed` 2026-10-06 17:11Z (B16).
+Still open, and not I13's: #10 (`py/stack-trace-exposure`, open after #135) and #11 (B25).
 
 B2's trap still applies after dismissal: a PR whose diff re-attributes `preview_image`'s or
 `login`'s signature can re-surface these on the PR check.
