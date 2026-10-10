@@ -17,11 +17,13 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from pathlib import Path
 
 import pytest
 import yaml
 
 from app import auth as _auth
+from app import config as _config
 from app.config import (
     AuthConfig,
     ConfigError,
@@ -58,10 +60,17 @@ ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
-    """The ambient environment must not decide the outcome of these tests."""
+def _clean_env(monkeypatch, tmp_path):
+    """The ambient environment must not decide the outcome of these tests.
+
+    B25's allowed root is a module constant, not an env var — point it at
+    this test's own tmp_path so every fixture's key files resolve under it.
+    A test exercising the root refusal itself monkeypatches the constant
+    again, to a narrower root, after this fixture has already run.
+    """
     for var in ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(_config, "API_KEY_FILE_ROOT", tmp_path)
 
 
 @pytest.fixture
@@ -199,6 +208,64 @@ def test_module_state_is_not_sticky_between_loads(cfg_file, tmp_path):
     other.write_text(yaml.dump({"sonarr": {"instances": [{"name": "main", "url": "http://s", "api_key": "k"}]}}))
     load_config(other)
     assert file_backed_instances() == []
+
+
+# ---------------------------------------------------------------------------
+# B25 (fixes CodeQL #11) — an api_key_file must resolve under
+# API_KEY_FILE_ROOT before it is ever opened. The root is a module constant
+# (operator decision 2026-10-09: (a), not an environment variable), so each
+# test below narrows it with monkeypatch rather than through the environment.
+# ---------------------------------------------------------------------------
+
+
+def test_path_outside_the_root_is_refused_and_never_read(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setattr(_config, "API_KEY_FILE_ROOT", root)
+    outside = tmp_path / "outside"
+    outside.write_text("outside-sentinel-must-never-be-read")
+
+    def _must_not_read(self, *a, **k):
+        raise AssertionError(f"must not be read: {self} resolves outside the root")
+
+    monkeypatch.setattr(Path, "read_text", _must_not_read)
+    data = {"sonarr": {"instances": [{"name": "x", "url": "http://s", "api_key_file": str(outside)}]}}
+    with pytest.raises(ConfigError, match="does not resolve under"):
+        _config._apply_arr_key_files(data)
+
+
+def test_a_symlink_inside_the_root_pointing_outside_is_refused(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setattr(_config, "API_KEY_FILE_ROOT", root)
+    outside = tmp_path / "outside-secret"
+    outside.write_text("outside-secret-sentinel")
+    link = root / "sonarr_4k"
+    link.symlink_to(outside)
+    data = {"sonarr": {"instances": [{"name": "x", "url": "http://s", "api_key_file": str(link)}]}}
+    with pytest.raises(ConfigError, match="does not resolve under"):
+        _config._apply_arr_key_files(data)
+
+
+def test_dot_dot_escaping_the_root_is_refused(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setattr(_config, "API_KEY_FILE_ROOT", root)
+    escaping = str(root / ".." / "escaped")
+    data = {"radarr": {"instances": [{"name": "r", "url": "http://r", "api_key_file": escaping}]}}
+    with pytest.raises(ConfigError, match="does not resolve under"):
+        _config._apply_arr_key_files(data)
+
+
+def test_a_file_inside_the_root_still_loads(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setattr(_config, "API_KEY_FILE_ROOT", root)
+    key_file = root / "sonarr_main"
+    key_file.write_text("inside-root-sentinel")
+    data = {"sonarr": {"instances": [{"name": "main", "url": "http://s", "api_key_file": str(key_file)}]}}
+    _config._apply_arr_key_files(data)
+    assert data["sonarr"]["instances"][0]["api_key"] == "inside-root-sentinel"
 
 
 # ---------------------------------------------------------------------------
