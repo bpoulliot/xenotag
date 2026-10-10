@@ -101,6 +101,34 @@ half and the CodeQL #10 change (#135). **Not in it:** P6 (#134, HOLD) and CodeQL
 - Record: `~/docker/xenotag/release-1.11.0-20261007/README.md` (snapshots, verify output, scan log,
   the tools).
 
+**OPERATOR DECISIONS 2026-10-09 (round 5) — release, dependencies, I9, P4, I1, GitHub issues.**
+
+- **Release 1.12.0 — queued for tonight, last in the overnight chain.** A minor release of whatever has landed of
+  B12(a), B12(b), B25 and P6 (plus any Dependabot bumps merged before it). Skip-and-release-what-landed: an item that
+  did not merge is left out, but **B12(b) never ships without its threshold guard** — if any of its code is on `main`
+  without the guard, the release stops. When B12(b) ships, the release first adds its Alertmanager rule to the host's
+  `monitoring/prometheus/rules/xenotag.yml` through a `~/docker` worktree and a Gitea PR (never the main `~/docker`
+  checkout); activating it in the live checkout is the operator's step. No forced re-tag (none of the four is expected to change
+  the tag-config hash; the release checks it and stops if it does), no scan run by the release. B25 is safe to release: production's `config.yml` names no
+  `api_key_file`. Backup, deploy, verify and rollback follow the v1.11.0 release.
+- **Dependabot PRs #103–#110 — triage authorised and queued before the release**, so 1.12.0 carries the bumps that
+  pass. Per-PR rules: patch/minor pip bumps merge when green on a rebased head with no new warnings; SQLAlchemy
+  2.0→2.1 (#105) also needs `python -m app.migrate check` and a clean `scripts/verify_state_db_upgrade.py` run on a
+  production copy; action bumps that edit `release.yml`/`docker-publish.yml` (#109, #110) stay open unless every
+  workflow they touch ran green on the PR, so an unverified workflow cannot reach the release.
+- **I9 (move the five \*arr keys out of `config.yml`) — an interactive session with the operator, after 1.12.0.**
+  Not an overnight item: it touches compose, secret files and `~/docker/SECRETS.md`. Since B25, key files must sit
+  under `/run/secrets`.
+- **P4 — the post-feature phone-width audit runs after P6 and B12(b) merge** (P4a/P4b harness; the media browser
+  and the `.health-grid` tile truncation), and lays out the options with screenshots; the operator then picks the
+  layout. Queued, measurement only.
+- **I1 — the browser Settings save through Authentik is an operator action** (one save at
+  `https://xenotag.bitmapserv.org`, then `docker logs xenotag | grep Rejected`); no session owes it.
+- **GitHub issues closed 2026-10-09**, each with a comment linking its row here: #10 (P2, shipped), #18 (I2), #20
+  (I7), #21 (P1), #24 (U5, interlacing only), #25 (U6). Left open: #16 (deferred), #26 (P4), #36 (U2).
+- *Recorded for the `~/docker` backlog:* the image-registry question (`~/docker` TODO I59, decision 4: ghcr, Gitea
+  or both for xenotag) is **measure first**; the measurement is queued and will file its own item here.
+
 **B25 — FILED 2026-10-06 by the CodeQL #11 item, which stopped before building. NEEDS DECISION.**
 The item said to allow only the directories that production's compose file mounts for key files,
 not to guess one, and to stop if the mounts were unclear. They are clear, but there are none:
@@ -2786,14 +2814,14 @@ webhook resolves the wrong item.)*
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| I1 | CSRF protection: ~~form token validation on login and settings forms~~ **decided 2026-09-26: an `Origin`/`Referer` check on every state-changing request** | 4 | 1 | **SHIPPED 2026-09-27; LIVE (v1.10.0)** — proxy-shape smoke passed; browser save owed | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
+| I1 | CSRF protection: ~~form token validation on login and settings forms~~ **decided 2026-09-26: an `Origin`/`Referer` check on every state-changing request** | 4 | 1 | **SHIPPED 2026-09-27; LIVE (v1.10.0)** — proxy-shape smoke passed; browser save = **operator action** (decided 2026-10-09, round 5) | [#14](https://github.com/bpoulliot/xenotag/issues/14) |
 | I2 | Backup/restore API: download/upload state.db; prevents full rescan after container upgrades | 4 | 2 | **CLOSED 2026-09-26** — moved to [Deferred / Out of Scope](#deferred--out-of-scope) | [#18](https://github.com/bpoulliot/xenotag/issues/18) |
 | I3 | Alembic DB migrations: structured schema versioning; required before any further schema changes | 5 | 3 | **SHIPPED 2026-09-26** | [#15](https://github.com/bpoulliot/xenotag/issues/15) |
 | I4 | HTTP connection pooling for Jellyfin/Sonarr/Radarr clients | 3 | 1 | **SHIPPED 2026-05-05** (`53c9f3f`) | [#19](https://github.com/bpoulliot/xenotag/issues/19) |
 | I5 | Prometheus metrics endpoint | 3 | 2 | **SHIPPED 2026-09-27; LIVE (v1.10.0)** — scraped, three alert rules on the host | [#17](https://github.com/bpoulliot/xenotag/issues/17) |
 | I6 | ntfy push notifications: configurable server URL, token, and topic in settings UI; notify on scan complete, scan error, and batch tag events | 3 | 2 | **CLOSED 2026-09-26** — superseded by I5 | — |
 | I8 | **Secrets can only live in `config.yml`, which the app rewrites** — no env override, so the host's SOPS pipeline cannot reach them | 4 | 2 | **SHIPPED 2026-09-24** | — |
-| I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | **SHIPPED 2026-09-27** · **RELEASED v1.11.0** (2026-10-07); prod wiring is the operator's | — |
+| I9 | **Sonarr/Radarr API keys cannot be externally managed** — I8's override table is addressed by dotted path, and the `*arr` keys live in a list | 3 | 3 | **SHIPPED 2026-09-27** · **RELEASED v1.11.0** (2026-10-07); prod wiring: **interactive session with the operator, after 1.12.0** (decided 2026-10-09, round 5) | — |
 | I10 | **`ORJSONResponse` is deprecated in the FastAPI xenotag pins** — `main.py` sets it as the app-wide `default_response_class`, and every start logs a `FastAPIDeprecationWarning` | 2 | 1 | **SHIPPED 2026-09-26** | — |
 | I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | **SHIPPED 2026-10-06** (#118) · **RELEASED v1.11.0** (2026-10-07) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
@@ -4294,7 +4322,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser deferred to the post-feature UI pass — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser + `.health-grid` truncation: **audit after P6 + B12(b) merge, then the operator picks a layout** (decided 2026-10-09, round 5) — measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
 | P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
