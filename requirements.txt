@@ -5,7 +5,7 @@ pydantic==2.13.5
 pydantic-settings==2.14.2
 PyYAML==6.0.3
 httpx==0.28.1
-SQLAlchemy==2.0.50
+SQLAlchemy==2.1.4
 alembic==1.20.0
 APScheduler==3.11.2
 Pillow==12.3.0
