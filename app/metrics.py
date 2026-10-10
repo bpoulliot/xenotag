@@ -43,6 +43,9 @@ arr_sync_halted                                 gauge
 arr_last_halt_timestamp_seconds                 gauge
 tag_drift_total                                 counter
 tag_writeback_mismatch_total                    counter  result
+reconcile_halted                                gauge
+reconcile_candidates                            gauge
+reconcile_writes_total                          counter  result
 ==============================================  =======  ==========================
 
 ``outcome`` is ``success`` / ``failed`` / ``cancelled``. ``error_type`` is one of
@@ -57,6 +60,21 @@ or webhook reached them, before the write that replaced them.
 ``tag_writeback_mismatch_total`` counts Jellyfin tag writes whose read-back did
 not show the managed tags written (roadmap B17), by ``result``: ``fixed`` (the
 one retry stuck) or ``unresolved`` (still wrong; the row records what was read).
+
+The ``reconcile_*`` metrics are the tag reconciliation pass's (roadmap B12(b)).
+``reconcile_halted`` is 1 after a *scheduled* pass found more items to re-write
+than ``scan.reconcile_write_threshold`` and wrote none of them, and 0 after a
+pass that was not halted (a manual one included); a cancelled pass leaves it.
+It is the alert: the host's ``XenotagReconcileHalted`` rule fires on it, and the
+count and a sample are in the WARNING line and ``reconcile-report.json``.
+``reconcile_candidates`` is the last pass's count of items missing a managed
+tag. ``reconcile_writes_total`` counts its writes by ``result``: ``written``
+(read back as written), ``readback_fixed`` (stuck on the one retry),
+``unresolved`` (still wrong after it) or ``error`` (the write, its re-read or
+its read-back failed). Both gauges are seeded at startup from the stored report.
+A pass is not a scan: it never moves ``scans_total`` or the ``scan_last_*``
+gauges, and its ``scan_runs`` rows (``scan_type="reconcile"``) are not what
+:func:`seed_from_disk` reads as the last scan.
 """
 
 from __future__ import annotations
@@ -99,6 +117,12 @@ READBACK_MISMATCH = "readback_mismatch"
 
 MISMATCH_FIXED = "fixed"
 MISMATCH_UNRESOLVED = "unresolved"
+
+RECONCILE_WRITTEN = "written"
+RECONCILE_FIXED = "readback_fixed"
+RECONCILE_UNRESOLVED = "unresolved"
+RECONCILE_ERROR = "error"
+RECONCILE_RESULTS = (RECONCILE_WRITTEN, RECONCILE_FIXED, RECONCILE_UNRESOLVED, RECONCILE_ERROR)
 
 # The `*_created` twin of every counter is noise for a scrape-and-alert setup.
 disable_created_metrics()
@@ -160,6 +184,22 @@ tag_writeback_mismatch_total = Counter(
     ["result"],
     registry=REGISTRY,
 )
+reconcile_halted = Gauge(
+    "xenotag_reconcile_halted",
+    "1 after a scheduled tag reconciliation halted at its write threshold, writing nothing; 0 after one that did not.",
+    registry=REGISTRY,
+)
+reconcile_candidates = Gauge(
+    "xenotag_reconcile_candidates",
+    "Items the last tag reconciliation pass found missing a managed Jellyfin tag.",
+    registry=REGISTRY,
+)
+reconcile_writes = Counter(
+    "xenotag_reconcile_writes",
+    "Jellyfin tag writes by the reconciliation pass, by read-back result.",
+    ["result"],
+    registry=REGISTRY,
+)
 
 
 # Every known label set exists from the first scrape, at 0: a series that only
@@ -171,6 +211,8 @@ for _error in (*ERROR_TYPES, "other"):
     scan_errors.labels(error_type=_error)
 for _result in (MISMATCH_FIXED, MISMATCH_UNRESOLVED):
     tag_writeback_mismatch_total.labels(result=_result)
+for _result in RECONCILE_RESULTS:
+    reconcile_writes.labels(result=_result)
 
 
 def _scan_running() -> float:
@@ -239,6 +281,25 @@ def tag_writeback_mismatch(result: str) -> None:
     tag_writeback_mismatch_total.labels(result=result).inc()
 
 
+def reconcile_finished(candidates: int, *, halted: bool, writes: dict[str, int], cancelled: bool = False) -> None:
+    """End of a reconciliation pass (roadmap B12(b)). A cancelled pass moves only the write counters."""
+    for result, n in writes.items():
+        if n:
+            reconcile_writes.labels(result=result).inc(n)
+    if cancelled:
+        return
+    reconcile_candidates.set(candidates)
+    reconcile_halted.set(1 if halted else 0)
+
+
+def seed_reconcile(report: dict | None) -> None:
+    """Restore the reconciliation gauges from its stored report after a restart."""
+    if not report or report.get("outcome") == "cancelled":
+        return
+    reconcile_halted.set(1 if report.get("halted") else 0)
+    reconcile_candidates.set(report.get("candidates") or 0)
+
+
 def arr_halt(now: float | None = None) -> None:
     arr_halts.inc()
     arr_halted.set(1)
@@ -293,13 +354,13 @@ def seed(last_run: object | None, report: dict | None) -> None:
 def seed_from_disk() -> None:
     """Startup: :func:`seed` from ``state.db`` and the stored report. Never raises."""
     from .arr_sync import load_report
-    from .state import ScanRun, get_session
+    from .state import ScanRun, get_session, scans_only
 
     try:
         session = get_session()
         try:
             last_run = (
-                session.query(ScanRun)
+                scans_only(session.query(ScanRun))
                 .filter(ScanRun.completed_at.isnot(None))
                 .order_by(ScanRun.completed_at.desc())
                 .first()
@@ -309,6 +370,12 @@ def seed_from_disk() -> None:
         seed(last_run, load_report())
     except Exception as exc:  # metrics must never stop the app booting
         log.warning("Could not seed metrics from disk: %s", exc)
+    try:
+        from .reconcile import load_report as load_reconcile_report
+
+        seed_reconcile(load_reconcile_report())
+    except Exception as exc:
+        log.warning("Could not seed the reconciliation metrics from disk: %s", exc)
 
 
 def render() -> tuple[bytes, str]:

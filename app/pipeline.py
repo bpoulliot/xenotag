@@ -301,7 +301,9 @@ class _PendingRecord:
     item: dict
     written: list[str]
     fallback_rating: str
-    record: dict  # upsert_media_state() arguments other than tags_applied
+    # upsert_media_state() arguments other than tags_applied; None records no row
+    # (the reconciliation pass, B12(b): the row's tags_applied is what it restores).
+    record: dict | None
     settled_from: float  # time.monotonic() of the item's last write or refresh
 
 
@@ -309,6 +311,7 @@ class _Readback:
     """One scan's read-back outcomes (B17); logged once at the end."""
 
     def __init__(self) -> None:
+        self.stuck = 0  # read back as written the first time
         self.fixed = 0
         self.unresolved = 0
         self.unrecorded = 0
@@ -343,7 +346,8 @@ def _read_back(jf: JellyfinClient, pending: list[_PendingRecord], readback: _Rea
 
 
 def _record(session: object, p: _PendingRecord, tags_applied: list[str]) -> None:
-    upsert_media_state(session, tags_applied=tags_applied, **p.record)
+    if p.record is not None:
+        upsert_media_state(session, tags_applied=tags_applied, **p.record)
 
 
 def _record_after_readback(
@@ -388,6 +392,7 @@ def _record_after_readback(
         if tags is None:
             missing(p)
         elif _tags_match_ci(managed(tags), managed(p.written)):
+            readback.stuck += 1
             _record(session, p, p.written)
         else:
             undone.append((p, tags))

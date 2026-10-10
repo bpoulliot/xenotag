@@ -52,6 +52,9 @@ XENOTAG_FAMILIES = {
     "xenotag_arr_last_halt_timestamp_seconds",
     "xenotag_tag_drift",
     "xenotag_tag_writeback_mismatch",
+    "xenotag_reconcile_halted",
+    "xenotag_reconcile_candidates",
+    "xenotag_reconcile_writes",
 }
 
 

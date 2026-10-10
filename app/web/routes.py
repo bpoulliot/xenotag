@@ -46,8 +46,10 @@ from ..pipeline import (
     run_incremental_scan,
 )
 from ..preview_samples import ensure_sample_posters
+from ..reconcile import load_report as load_reconcile_report
+from ..reconcile import run_scheduled_reconcile, start_manual_reconcile
 from ..scanner import AudioTrack, MediaInfo, SubTrack
-from ..scheduler import next_run_time, reschedule
+from ..scheduler import next_reconcile_time, next_run_time, reschedule, reschedule_reconcile
 from ..state import (
     MediaState,
     clear_scan_errors,
@@ -242,6 +244,28 @@ async def trigger_incremental_scan(request: Request):
     cfg = get_config()
     threading.Thread(target=run_incremental_scan, args=(cfg,), daemon=True).start()
     return {"status": "started", "type": "incremental"}
+
+
+@router.post("/scan/reconcile")
+async def trigger_reconcile(request: Request):
+    """Roadmap B12(b): the manual tag rescan -- Jellyfin only, and it bypasses the write threshold."""
+    _require_user(request)
+    if not start_manual_reconcile(get_config()):
+        raise HTTPException(status_code=409, detail="Scan already in progress")
+    return {"status": "started", "type": "reconcile"}
+
+
+@router.get("/api/reconcile/report")
+async def reconcile_report(request: Request):
+    """The last reconciliation pass's report, and when the next scheduled one runs."""
+    _require_user(request)
+    cfg = get_config()
+    return {
+        "schedule": cfg.scan.reconcile_schedule,
+        "write_threshold": cfg.scan.reconcile_write_threshold,
+        "next_run_at": next_reconcile_time(),
+        "report": load_reconcile_report(),
+    }
 
 
 @router.post("/scan/cancel")
@@ -441,6 +465,12 @@ async def webhook(source: str, request: Request, background_tasks: BackgroundTas
 # ---------------------------------------------------------------------------
 
 
+def _reschedule(cfg: AppConfig) -> None:
+    """A settings save re-arms both cron jobs: the scan and the tag reconciliation (B12(b))."""
+    reschedule(cfg.scan.schedule, lambda: run_incremental_scan(get_config()))
+    reschedule_reconcile(cfg.scan.reconcile_schedule, lambda: run_scheduled_reconcile(get_config()))
+
+
 @router.get("/api/settings")
 async def get_settings(request: Request):
     _require_user(request)
@@ -459,7 +489,7 @@ async def save_settings(request: Request):
         validated = save_config_from_dict(body)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    reschedule(validated.scan.schedule, lambda: run_incremental_scan(get_config()))
+    _reschedule(validated)
     clear_pill_cache()
     return {"status": "saved"}
 
@@ -501,7 +531,7 @@ async def save_config_yaml(request: Request, body: ConfigSaveRequest):
         validated = save_config(body.yaml)
     except Exception as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
-    reschedule(validated.scan.schedule, lambda: run_incremental_scan(get_config()))
+    _reschedule(validated)
     clear_pill_cache()
     return {"status": "saved"}
 
