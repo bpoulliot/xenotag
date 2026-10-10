@@ -57,7 +57,8 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | **SHIPPED 2026-10-06** ([#129](https://github.com/bpoulliot/xenotag/pull/129)) · **RELEASED v1.11.0** (2026-10-07) — `preview_image()` now builds its `AppConfig` with `tags=get_config().tags`; default (all `poster`) stays byte-identical | — |
 | B24 | **`/health` reports Jellyfin unreachable without ever contacting it — and the container healthcheck only ever reads that answer.** For a caller with no web session `health()` returns early with a *fabricated* verdict, `jellyfin={"ok": False, "status": "unreachable", "message": "Not authenticated"}` (`app/web/routes.py:175-183`), so a perfectly healthy Jellyfin is reported as down; the message describes the **caller's** missing cookie, not the dependency. `docker-compose.yml:30-34` sets the healthcheck to `curl -f http://localhost:7755/health`, which carries no cookie, so it always takes that branch — and because the branch still returns **HTTP 200 with `status: "ok"`**, `curl -f` can never fail on a dependency problem. The one endpoint whose job is to report dependency health is structurally unable to: unauthenticated it invents the answer, and authenticated it hardcodes `status="ok"` (`:195`) whatever `jf.health()` returned. **Measured 2026-10-06** while verifying the Jellyfin 10.11→12.2 upgrade (`~/docker` TODO I62): prod xenotag reported `jellyfin: unreachable / Not authenticated` while its configured API key was byte-identical to Jellyfin's, `jellyfin:8096` answered 200 from inside the container, and tags read back correctly by `Ids=` — it cost real diagnosis time and briefly looked like an upgrade regression. Fix: either exempt `/health` from the session gate (it leaks only up/down, and the port is bound to `127.0.0.1`) or give the probe its own unauthenticated liveness route and keep the authenticated one for the UI; in both cases report an **unknown** dependency as unknown rather than as `unreachable`, and let `status` follow the checks. | 3 | 1 | **SHIPPED 2026-10-07** ([#132](https://github.com/bpoulliot/xenotag/pull/132)) · **RELEASED v1.11.0** (2026-10-07) — exempted from the session gate; unauthenticated callers get `status: "up"` only, authenticated callers keep full detail with `status` computed from the real checks | — |
 | B25 | **An \*arr `api_key_file` can name any file the container can read** (CodeQL #11, `py/path-injection`, `app/config.py:538`). `_apply_arr_key_files()` reads whatever path the row names and sends the contents as that instance's `X-Api-Key`, to a URL the same row sets. Only an admin can set it (config.yml / raw YAML editor). | 2 | 1 | **READY** (operator decided 2026-10-09: allowed roots = `/run/secrets` **only**, option (a)) — fixes CodeQL #11 | — |
-| B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **SHIPPED 2026-10-10** ([#143](https://github.com/bpoulliot/xenotag/pull/143)), merged NOT released — `CollapseBoxSetItems=false` always sent at all four sites, no setting. **U2 removal stays BLOCKED until released and a post-release full scan's deleted-items report shows strip 0.** | — |
+| B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **SHIPPED 2026-10-10** ([#143](https://github.com/bpoulliot/xenotag/pull/143)) · **RELEASED v1.11.1** (2026-10-10) — `CollapseBoxSetItems=false` always sent at all four sites, no setting. The post-release full scan (scan 163) listed **9,467** items, 0 BoxSets, and reached all 1,134 hidden films; its deleted-items report shows **strip 0 objects / 0 tags** on every instance — see *Release v1.11.1* | — |
+| B27 | **A Settings save blanks the session-signing key.** The Settings page sends `auth: {username}` only, and `PUT /api/settings` restores `password_hash` but not `secret_key`, so every structured save writes `auth.secret_key: ""` to `config.yml` and into the running config. Until the next restart, sessions are signed with `":" + password_hash[:16]` (a constant prefix and 9 bcrypt-salt characters) in place of the 256-bit key. Separately, `GET /api/settings` returns `auth.secret_key` to the browser. Found in production on 2026-10-10. | 3 | 1 | **READY** — see *B27* below | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -99,6 +100,54 @@ half and the CodeQL #10 change (#135). **Not in it:** P6 (#134, HOLD) and CodeQL
   answered by id** (B26's hidden films) and **87 rows / 82 radarr/general objects marked STRIP**
   — every one a live film the listing hides. Nothing was written (53 GETs).
 - Record: `~/docker/xenotag/release-1.11.0-20261007/README.md` (snapshots, verify output, scan log,
+  the tools).
+
+**Release v1.11.1 — LIVE 2026-10-10 (the overnight release session; B26 only).** `bump=patch` from
+`main` `76efb97` (CI green) → release commit `fff764a`, tag `v1.11.1`, image
+`ghcr.io/bpoulliot/xenotag:1.11.1` (= `:latest`), deployed 15:31:16Z. The operator authorised the
+sequence on 2026-10-09: B26 alone, release, deploy, one full scan. Since v1.11.0 the only code on
+`main` was B26's: `app/clients/jellyfin.py` and `app/deleted_items.py`, and every other commit was
+ROADMAP-only. The release had no Alembic revision and no `TAG_VOCABULARY` change, and the
+tag-config hash stayed `f57e91dbac6fbe70`. Nothing was rolled back.
+- *Deploy.* `state.db` was backed up after a clean stop as `state.db.bak-20261010-pre-1.11.1`
+  (10,660 rows, WAL checkpointed, `integrity_check` ok). `:1.11.0` is still pulled for a back-out.
+  Startup logged `state.db schema: current (revision 0002)`; the container came up healthy with no
+  restarts. The backup restart regenerated `auth.secret_key`, because a Settings save earlier that
+  day had blanked it (filed as **B27**). `arr_sync` (`live`) and `deleted_items` (`report`) were not
+  changed.
+- *Before the scan* (GET only): the default listing holds **8,781** items (448 BoxSets);
+  `CollapseBoxSetItems=false` returns **9,467** (6,984 films, 2,483 series, 0 BoxSets), so the default
+  hides **1,134** films. The scan's own `get_items()` over its 17 libraries now returns those 9,467.
+- *The full scan, scan 163* (`full`, 15:33:50Z → 17:07:21Z, 94 min): **9,467 listed (0 BoxSets)**,
+  9,456 tagged, 9,408 posters. **All 1,134 formerly hidden films** have an index row refreshed by
+  this scan, with a poster path; before the deploy their newest row dated from 2026-10-06.
+  Scan errors: `no_file` **3** (all under `/media/multi`, which is not mounted; **the 448 BoxSet
+  errors are gone**) and `probe_failed` 8 (all on `xtor`).
+  - **\*arr:** **95 objects written** (radarr/general 91, sonarr/general 4), **0 write errors,
+    0 read-back failures, not halted**, 0 labels created.
+  - **B17:** `xenotag_tag_writeback_mismatch_total` fixed **109**, unresolved **1**. The unresolved
+    one is *Spectre*: Jellyfin keeps its lowercase NFO spelling, a case-only difference (B12).
+  - **B13:** **89 of 89** predicted movers among the hidden films moved to their predicted class
+    (81 `720p→1080p`, 8 `480p→720p`), with 90 \*arr resolution relabels. All 747 of B13's movers
+    are now done.
+  - **U9:** 2,838 drift warnings. 2,835 are case-only (B12; expected until B12(a) ships), and the
+    3 real ones were repaired by the write.
+  - **Other warnings:** 12 Jellyfin tag-write timeouts on very large series (not recorded, so the
+    next scan retries them) and 6 `folder.jpg` permission errors.
+- *Library read-back* (GET-only snapshots before and after; `b9verify.py`): on every instance the
+  objects whose tags changed equal the report's `written`. 0 operator tags and 0 non-tag fields
+  changed on any written object.
+  - Two sonarr/anime labels (`xt-de`, `xt-re-encode`) disappeared. Both had **0** users before the
+    scan, and xenotag sent no `DELETE`, so this is Sonarr's unused-tag housekeeping.
+  - 11 Jellyfin keywords came back trimmed of a trailing space or no-break space. This is
+    Jellyfin 12.2 trimming on save, as recorded for v1.11.0.
+- *U2's report-mode pass* in the same scan (`status: ok`, 42 GETs, nothing written):
+  - the listing is 9,467, and so are its total and its recount;
+  - **1,198 candidates, 1,198 confirmed deleted, 0 answered by id** (scan 158 had 1,134);
+  - fraction **0.1124** against the 0.15 bound;
+  - **strip_objects 0 / strip_tags 0 on all five instances** (scan 158 had 87 rows,
+    82 objects and 330 tags).
+- Record: `~/docker/xenotag/release-1.11.1-20261010/README.md` (snapshots, verify output, scan log,
   the tools).
 
 **OPERATOR DECISIONS 2026-10-09 (round 5) — release, dependencies, I9, P4, I1, GitHub issues.**
@@ -255,7 +304,7 @@ sites, no setting.** Still to check in the build, as above: dev 12.1.0 and the 1
 (`_fetch_items()`, `complete_listing()`'s pages and its recount, and the two Preview sample helpers).
 There is no config key, no UI control and no way to turn it off.
 
-**B26 — SHIPPED 2026-10-10 ([#143](https://github.com/bpoulliot/xenotag/pull/143)), merged NOT released.**
+**B26 — SHIPPED 2026-10-10 ([#143](https://github.com/bpoulliot/xenotag/pull/143)); released in v1.11.1 (2026-10-10).**
 One module-level constant, `COLLAPSE_BOX_SET_ITEMS = "false"` in `app/clients/jellyfin.py`, sent as
 `CollapseBoxSetItems` at all four sites: `_fetch_items()` (so both `get_items()` and B8's
 `list_item_paths()` carry it), `deleted_items.complete_listing()`'s pages **and** its `Limit=0`
@@ -276,7 +325,40 @@ the param from each call in turn) turned red only that site's own test(s). Suite
   after deploy to reach the ~1,134 hidden films (B26's premise; the exact count will differ by
   2026-10-10 — re-measure at release time). **U2 removal stays blocked** until that scan's
   deleted-items report shows strip 0 (queue 52's authorisation from 2026-10-06 stands for after
-  B26 ships, per the *U2 removal switch* record below).
+  B26 ships, per the *U2 removal switch* record below). *Both done 2026-10-10: released in v1.11.1,
+  scan 163 reached all 1,134 films, and its report shows strip 0. See Release v1.11.1.*
+
+**B27 — FILED 2026-10-10 by the v1.11.1 release session (found in production). READY.**
+B25 and B26 are taken, so this takes B27.
+
+- *Found.* The backup step stopped and restarted the container (`docker stop`/`start`, 1.11.0).
+  It came back with a **new** `auth.secret_key`, and every session was signed out. The `config.yml`
+  copied while the container was stopped was last written 2026-10-10 06:19Z, before the session
+  began. Compared by key with the 10-07 backup (values redacted), that write had added the 11
+  default keys a structured `/api/settings` save writes (`image.*` colours/opacity/palette/positions,
+  `image.prefer_languages`, `deleted_items`, an empty `api_key_file` per \*arr instance), and it had
+  left `auth.secret_key` **empty** (64 characters before). On start, `auth.bootstrap()` saw the empty
+  key, generated one and saved it. That is the only difference between the copy and the live file.
+  **Who made the 06:19Z save was not determined.** The likely candidate is the operator's I1
+  browser save.
+- *Cause.* `buildSettings()` in `app/web/templates/index.html` spreads the loaded settings, then
+  replaces the whole `auth` object with `{ username: getVal('s-auth-username') }`.
+  `save_settings()` (`app/web/routes.py`) restores only `body["auth"]["password_hash"]`, so
+  `AuthConfig.secret_key` validates to its default `""`. `save_config_from_dict()` writes that to
+  disk and installs it as the live config. From then until the next restart, `create_session()` and
+  `get_session_user()` use `_session_key("", hash)` = `":" + hash[:16]`. That is `":$2b$12$"` plus
+  the first 9 characters of the bcrypt salt, still secret but far below the 256-bit key. Production
+  ran that way from 06:19Z to 15:31Z on 2026-10-10. Separately, `config_as_dict_safe()` pops
+  `password_hash` but not `secret_key`, so `GET /api/settings` hands the signing key to the browser
+  unless `XENOTAG_SECRET_KEY` supplies it.
+- *Fix* (no decision needed; neither half changes behaviour anyone relies on):
+  - in `save_settings()`, restore `secret_key` from the running config, as `password_hash` already is;
+  - in `config_as_dict_safe()`, drop `auth.secret_key` as it drops `password_hash`.
+  Tests: a structured save keeps the key on disk and in memory, and a session minted before the
+  save still verifies after it; `GET /api/settings` carries no `secret_key`. The raw YAML editor
+  (`PUT /config`) is not affected: it writes the submitted text, which carries the key.
+- *Effect of a release:* none on its own. The key regenerated in production at the 2026-10-10
+  restart is intact today (64 characters).
 
 **B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113)); released in v1.11.0 (2026-10-07).**
 `_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
@@ -2363,7 +2445,7 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
-| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **LIVE report-only (v1.9.0, 2026-09-27)** — removal OFF until the operator switches it · removal **BLOCKED on B26** (2026-10-07: on Jellyfin 12.2 it would strip 82 live films' objects; the operator-authorised switch stopped at its gate the same day) · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
+| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **LIVE report-only (v1.9.0, 2026-09-27)** — removal OFF until the operator switches it · removal **UNBLOCKED 2026-10-10**. It was blocked on B26 (on 2026-10-07 it would have stripped 82 live films' objects, and the operator-authorised switch stopped at its gate). B26 is released in v1.11.1, and that release's full scan reports **strip 0**. Production is still `mode: report`, and the switch is owed (see *U2, deleted items* below) · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution fixed by [B8] (2026-10-06, released in v1.11.0) | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
@@ -2545,6 +2627,13 @@ rows, **1,197 confirmed deleted (11.24 %, under the 0.15 bound)**, but **87 rows
 non-zero → do not switch". Production `config.yml` is untouched (`mode: report`), no backup was
 taken and no scan was run. The authorisation stands: the switch is owed again once the release that
 carries B26 is live and a full scan's report shows 0 rows to strip.
+
+**2026-10-10: both conditions are met, and the switch has NOT been made.** B26 is live in v1.11.1.
+Its full scan (scan 163) wrote a report-mode deleted-items report at 17:07:30Z: `status: ok`, not
+halted, listing 9,467 (= total = recount), **1,198 confirmed deleted, 0 answered by id**, fraction
+**0.1124** (bound 0.15), and **strip_objects 0 / strip_tags 0 on every instance**. Production still
+runs `deleted_items: {mode: report}`. The switch is the operator-authorised overnight item that
+re-checks this report (queued as item 55).
 
 **Not covered:** an \*arr object carrying managed tags whose folder holds no live item and that no
 index row points at (a row removed by hand) is never found — 0 exist today (the cross-check above).
