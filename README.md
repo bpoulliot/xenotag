@@ -405,6 +405,9 @@ When an instance has `api_key_file`, the same rules as the table above apply to 
 - the file supplies the key on every boot and every save, and **wins** over an `api_key` beside it;
 - Xenotag **never writes that instance's `api_key`** to `config.yml` — from the Settings page, the
   raw YAML editor, or the first-run bootstrap. The path itself is not a secret and is saved;
+- the path must resolve (after following symlinks and `..`) under `/run/secrets` — Compose's
+  default secret target. One that resolves anywhere else **fails startup** (and refuses a save)
+  before the file is ever opened;
 - a file that is unreadable or empty **fails startup** (and refuses a save) — there is no
   "ignored with a warning" case, because a set `api_key_file` is always deliberate;
 - the Settings page shows that instance's key read-only, labelled as externally managed. Its
