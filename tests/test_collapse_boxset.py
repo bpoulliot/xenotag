@@ -11,7 +11,6 @@ the parameter -- the scan, the webhook folder lookup, U2's completeness pass
 from __future__ import annotations
 
 import httpx
-import pytest
 
 from app.clients.jellyfin import COLLAPSE_BOX_SET_ITEMS, JellyfinClient
 from app.deleted_items import complete_listing
