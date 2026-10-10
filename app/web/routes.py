@@ -747,6 +747,11 @@ async def preview_image(
     prefer_languages: str = "",
     item_id: str = "",
     sample: str = "",
+    adapt: str = "false",
+    backup_video_color: str = "",
+    backup_audio_color: str = "",
+    backup_sub_color: str = "",
+    backup_rating_color: str = "",
 ):
     _require_user(request)
     cfg_img = _image_config_from_params(
@@ -764,6 +769,11 @@ async def preview_image(
         show_subs=show_subs,
         show_rating=show_rating,
         prefer_languages=prefer_languages,
+        adapt=adapt,
+        backup_video_color=backup_video_color,
+        backup_audio_color=backup_audio_color,
+        backup_sub_color=backup_sub_color,
+        backup_rating_color=backup_rating_color,
     )
 
     # The groups a scan would build for this sample (roadmap B14): the same
@@ -863,6 +873,11 @@ def _image_config_from_params(
     show_subs: str = "true",
     show_rating: str = "true",
     prefer_languages: str = "",
+    adapt: str = "false",
+    backup_video_color: str = "",
+    backup_audio_color: str = "",
+    backup_sub_color: str = "",
+    backup_rating_color: str = "",
 ) -> ImageConfig:
     """The ImageConfig the Badge settings controls describe right now.
 
@@ -891,6 +906,12 @@ def _image_config_from_params(
         show_sub_badges=show_subs.lower() not in ("false", "0"),
         show_rating_badge=show_rating.lower() not in ("false", "0"),
         prefer_languages=prefer_languages,
+        # Roadmap P6: the checkbox and the backup palette's four pickers.
+        adapt_badge_colors=adapt.lower() in ("true", "1"),
+        backup_video_badge_color=backup_video_color or default.backup_video_badge_color,
+        backup_audio_badge_color=backup_audio_color or default.backup_audio_badge_color,
+        backup_sub_badge_color=backup_sub_color or default.backup_sub_badge_color,
+        backup_rating_badge_color=backup_rating_color or default.backup_rating_badge_color,
     )
 
 
@@ -907,6 +928,11 @@ async def badge_contrast_check(
     show_audio: str = "true",
     show_subs: str = "true",
     show_rating: str = "true",
+    adapt: str = "false",
+    backup_video_color: str = "",
+    backup_audio_color: str = "",
+    backup_sub_color: str = "",
+    backup_rating_color: str = "",
 ):
     """Rendered contrast of the badge colours being chosen (roadmap B2).
 
@@ -928,6 +954,11 @@ async def badge_contrast_check(
         show_audio=show_audio,
         show_subs=show_subs,
         show_rating=show_rating,
+        adapt=adapt,
+        backup_video_color=backup_video_color,
+        backup_audio_color=backup_audio_color,
+        backup_sub_color=backup_sub_color,
+        backup_rating_color=backup_rating_color,
     )
     return badge_contrast(cfg_img)
 

@@ -3748,12 +3748,42 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **READY (approved 2026-10-09)** — build the Settings UI on [#134](https://github.com/bpoulliot/xenotag/pull/134) (branch `feat/p6-rebase`, `HOLD:`) before it merges; L 0.12 and the per-drawn-row reading signed off. #95 is closed | — |
+| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **SHIPPED 2026-10-10** ([#134](https://github.com/bpoulliot/xenotag/pull/134)), merged NOT released — `image.adapt_badge_colors` (default **off**) plus four backup-colour pickers with B2's contrast chips on the badge settings; the Preview renders what Save would write. L 0.12 and the per-drawn-row reading as signed off 2026-10-09. See *P6 — SHIPPED* below | — |
 | P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **SHIPPED 2026-10-06** ([#126](https://github.com/bpoulliot/xenotag/pull/126)) · **RELEASED v1.11.0** (2026-10-07) — (d), 2-row budget, counted `+N`, stack clamped · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
 | P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | **CLOSED 2026-09-25 — keep the PNGs** | — |
+
+**P6 — SHIPPED 2026-10-10 ([#134](https://github.com/bpoulliot/xenotag/pull/134)), merged NOT released.**
+It changes a poster only for an operator who turns the checkbox on, and only below 100 % opacity; with it
+off (the default) every render is byte-identical to before (B21's and P7's pinned sha256 tests pass
+unchanged). The Settings UI built on the rebase, on the Preview page's badge settings beside the main
+pickers:
+
+- **"Adapt badge colours to the poster"** — one checkbox, off by default, with the note that it only
+  matters below 100 % opacity (an opaque pill hides the poster, B1). It loads and saves
+  `image.adapt_badge_colors` through both Save buttons.
+- **Four backup pickers** (`backup_{video,audio,sub,rating}_badge_color`), shown while the box is on;
+  their values load and save either way. Each carries the main pickers' chip, drawn by the same
+  `renderChip()` from the same `/api/badge-contrast` response (`app/contrast.py`'s `backup` map) — no
+  second contrast implementation.
+- **Preview** and the contrast check send `adapt` and `backup_*_color`, so the Preview renders what the
+  saved settings would.
+
+Measured: suite **990** on `main` (a `git archive` extract), **998** on the branch after `main` was
+merged in, **1,007** with the UI (+9, `tests/test_adaptive_palette_settings.py`: the five keys
+saved → `config.yml` → reloaded → GET with the box on and off, the default still off; the page's
+load/save/send wiring, each sent name a route parameter; the route hands the params to the renderer,
+on a white sample at 65 % adapt on renders different bytes, on with backup = main renders off's bytes,
+and at 100 % the box is a no-op). Mutation-checked: the template reverted, the Preview URL unwired,
+the route's `adapt` or one backup neutered — each turns a test red. `measure_adaptive_palette.py
+--self-test`: `self-test: PASS`. A browser check in a throwaway container (synthetic config, no
+Jellyfin) passed 21/21: box off by default with its note, pickers hidden then shown with four filled
+chips, 65 % on the *Light warm* sample renders a different poster with the box on (9,419 of 117,600
+pixels differ) while *Dark navy* is byte-identical, and both Save buttons round-trip the five keys
+through `config.yml` and a reload. Turning the checkbox on does not move the tag-config hash (it
+covers tags only), so it forces no re-tag.
 
 **OPERATOR DECISION 2026-10-09 (second round) — P6 APPROVED as recommended. READY.** The work is the
 rebase held in [#134](https://github.com/bpoulliot/xenotag/pull/134) (branch `feat/p6-rebase`); #95 is
@@ -3830,6 +3860,18 @@ that fails if the cache key is not widened with the palette choice.
 **OPERATOR DECISION 2026-09-26:** (1a) main + backup palette chosen per badge row by the luminance of the region
 under it, and (2a) one checkbox, off by default, whose backup pickers carry B2's contrast chips;
 the backup palette must clear B4's dE 5.
+
+**P6 — REBASED 2026-10-06 onto `main`, held unmerged in [#134](https://github.com/bpoulliot/xenotag/pull/134)
+(`HOLD:`; #95 is closed).** B14's preview and B21's composite are kept. P7 (#126) replaced
+`_render_group()`, so the hook now lives in `_draw_rows()`: **each drawn row** samples its own strip
+of the bare poster, and each pill on it picks main or backup by its own fill — a wrap row decides
+independently, and a `+N` pill counting a dropped group follows that group's backup — the reading
+of decision (1a) under P7's layout the operator confirmed on 2026-10-09. Measured on the rebase:
+suite 938 → 946 (+8, `tests/test_adaptive_palette.py`, mutation-checked); probe `--self-test`
+PASS (and FAIL with the hook neutered); acceptance 3/3 PASS with every provisional number below
+unchanged; seeded `--search` re-derives the shipped backup palette exactly (dE 11.47). L 0.12 and
+the P7 reading were signed off on 2026-10-09 (above). Untestable through the stack: bare-poster vs.
+drawn-so-far sampling (a neighbour's glow moves a strip's L by < 0.001).
 
 **P6 — UNBLOCKED 2026-10-06: [B21] shipped (#124), option (b).** The poster now composites a
 translucent pill the way the instrument does (chip = poster to the level, 65–100%), so the numbers

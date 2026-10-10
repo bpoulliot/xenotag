@@ -222,6 +222,7 @@
   .dest-grid tr:hover td{background:var(--surface2)}
   .arr-dry-flag{font-size:10px;font-weight:400;color:var(--yellow)}
   .cat-color-grid{display:grid;grid-template-columns:100px 1fr auto;gap:5px 10px;align-items:center;margin-top:6px}
+  .cat-color-grid[hidden]{display:none}  /* the P6 backup grid; display:grid would beat [hidden] */
   /* The colour cell holds the picker AND its contrast chip, side by side; on a
      phone the chip drops under the picker. One cell, so the grid's rows can
      never come apart (a spanning chip plus dense flow scrambled them). */
@@ -450,6 +451,64 @@
             <div class="contrast-status" id="contrast-status"></div>
             <div class="contrast-req" id="contrast-req">Advisory only: a colour that fails still saves and renders as chosen.</div>
           </div>
+        </div>
+
+        <!-- Roadmap P6: the background-aware palette. Off by default; the
+             backup pickers show only while it is on, but their values are
+             loaded and saved either way. Their chips are the same chips as
+             above, from the same /api/badge-contrast call. -->
+        <div style="margin-top:12px;display:flex;align-items:center;gap:10px">
+          <label class="toggle"><input type="checkbox" id="prev-adapt" onchange="onAdaptChange()"><span class="slider"></span></label>
+          <span style="font-size:13px">Adapt badge colours to the poster</span>
+        </div>
+        <div class="hint" style="margin-top:4px;font-size:11px">Where the poster under a badge row is light, that row draws in the backup colour instead. Only matters below 100% opacity: an opaque badge hides the poster.</div>
+        <div class="cat-color-grid" id="backup-color-grid" hidden>
+          <span style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Backup</span>
+          <div class="cc-cell">
+            <span style="flex:1;font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px">Color</span>
+            <span class="cc-head" style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.3px" title="Label against the badge as it renders, worst case over black, white and grey posters">Contrast</span>
+          </div>
+          <span></span>
+
+          <span style="font-size:12px;color:var(--text);font-weight:600">Video</span>
+          <div class="cc-cell">
+            <div class="color-row">
+              <input type="color" id="prev-backup-video-color" value="{{ badge_defaults.backup_video_badge_color }}" oninput="syncCatHex('backup-video'); onColorChange()">
+              <input type="text" id="prev-backup-video-hex" value="{{ badge_defaults.backup_video_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('backup-video'); onColorChange()">
+            </div>
+            <div class="cc-chip" id="cc-backup-video" aria-live="polite">—</div>
+          </div>
+          <span></span>
+
+          <span style="font-size:12px;color:var(--text);font-weight:600">Audio</span>
+          <div class="cc-cell">
+            <div class="color-row">
+              <input type="color" id="prev-backup-audio-color" value="{{ badge_defaults.backup_audio_badge_color }}" oninput="syncCatHex('backup-audio'); onColorChange()">
+              <input type="text" id="prev-backup-audio-hex" value="{{ badge_defaults.backup_audio_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('backup-audio'); onColorChange()">
+            </div>
+            <div class="cc-chip" id="cc-backup-audio" aria-live="polite">—</div>
+          </div>
+          <span></span>
+
+          <span style="font-size:12px;color:var(--text);font-weight:600">Subtitles</span>
+          <div class="cc-cell">
+            <div class="color-row">
+              <input type="color" id="prev-backup-sub-color" value="{{ badge_defaults.backup_sub_badge_color }}" oninput="syncCatHex('backup-sub'); onColorChange()">
+              <input type="text" id="prev-backup-sub-hex" value="{{ badge_defaults.backup_sub_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('backup-sub'); onColorChange()">
+            </div>
+            <div class="cc-chip" id="cc-backup-sub" aria-live="polite">—</div>
+          </div>
+          <span></span>
+
+          <span style="font-size:12px;color:var(--text);font-weight:600">Rating</span>
+          <div class="cc-cell">
+            <div class="color-row">
+              <input type="color" id="prev-backup-rating-color" value="{{ badge_defaults.backup_rating_badge_color }}" oninput="syncCatHex('backup-rating'); onColorChange()">
+              <input type="text" id="prev-backup-rating-hex" value="{{ badge_defaults.backup_rating_badge_color }}" class="hex-input" maxlength="7" oninput="syncCatPicker('backup-rating'); onColorChange()">
+            </div>
+            <div class="cc-chip" id="cc-backup-rating" aria-live="polite">—</div>
+          </div>
+          <span></span>
         </div>
       </div>
 
@@ -855,7 +914,24 @@ function contrastParams() {
     + `&video_color=${enc(val('prev-video-color'))}&audio_color=${enc(val('prev-audio-color'))}`
     + `&sub_color=${enc(val('prev-sub-color'))}&rating_color=${enc(val('prev-rating-color'))}`
     + `&show_video=${shown('prev-show-video')}&show_audio=${shown('prev-show-audio')}`
-    + `&show_subs=${shown('prev-show-subs')}&show_rating=${shown('prev-show-rating')}`;
+    + `&show_subs=${shown('prev-show-subs')}&show_rating=${shown('prev-show-rating')}`
+    + adaptParams();
+}
+
+// Roadmap P6: the checkbox and the backup palette, as the preview and the
+// contrast routes read them. Both send them, so the chips judge the backup
+// colours being picked and the Preview renders what Save would write.
+function adaptParams() {
+  const enc = v => encodeURIComponent(v || '');
+  const val = id => document.getElementById(id)?.value;
+  return `&adapt=${document.getElementById('prev-adapt')?.checked ? 'true' : 'false'}`
+    + `&backup_video_color=${enc(val('prev-backup-video-color'))}&backup_audio_color=${enc(val('prev-backup-audio-color'))}`
+    + `&backup_sub_color=${enc(val('prev-backup-sub-color'))}&backup_rating_color=${enc(val('prev-backup-rating-color'))}`;
+}
+
+function onAdaptChange() {
+  document.getElementById('backup-color-grid').hidden = !document.getElementById('prev-adapt').checked;
+  onPreviewChange();
 }
 
 // Both thresholds named every time, each marked met or not.
@@ -868,6 +944,14 @@ function ccThresholds(ratio, t) {
 const ccClass = grade => ({AAA:'cc-aaa', AA:'cc-aa', fail:'cc-fail'})[grade] || '';
 const ccWhere = backdrop => backdrop ? `on a ${backdrop} poster` : 'on any poster';
 
+function renderChip(el, b, t) {
+  el.className = 'cc-chip' + (b.shown ? '' : ' cc-off');
+  el.title = `Rendered: black ${b.rendered.black.toFixed(2)} · white ${b.rendered.white.toFixed(2)} · grey ${b.rendered.grey.toFixed(2)} · opaque hex ${b.opaque_text}:1`
+    + (b.shown ? '' : ' (badge hidden)');
+  el.innerHTML = `<b class="${ccClass(b.grade)}">${b.worst_text}:1</b> ${ccThresholds(b.worst, t)}`
+    + `<br><span class="cc-where">${ccWhere(b.worst_backdrop)}${b.shown ? '' : ' · hidden'}</span>`;
+}
+
 async function runContrastCheck() {
   const seq = ++contrastSeq;
   let m;
@@ -875,7 +959,10 @@ async function runContrastCheck() {
     m = await apiFetch('/api/badge-contrast?' + contrastParams());
   } catch (e) {
     if (seq !== contrastSeq) return;
-    for (const {cat} of CC_CATS) document.getElementById('cc-' + cat).textContent = '—';
+    for (const {cat} of CC_CATS) {
+      document.getElementById('cc-' + cat).textContent = '—';
+      document.getElementById('cc-backup-' + cat).textContent = '—';
+    }
     document.getElementById('contrast-ratio').textContent = '—';
     document.getElementById('contrast-status').textContent = 'Contrast check unavailable';
     document.getElementById('cc-opacity').textContent = '';
@@ -885,13 +972,9 @@ async function runContrastCheck() {
   const t = m.thresholds;
 
   for (const {cat} of CC_CATS) {
-    const b = m.badges[cat];
-    const el = document.getElementById('cc-' + cat);
-    el.className = 'cc-chip' + (b.shown ? '' : ' cc-off');
-    el.title = `Rendered: black ${b.rendered.black.toFixed(2)} · white ${b.rendered.white.toFixed(2)} · grey ${b.rendered.grey.toFixed(2)} · opaque hex ${b.opaque_text}:1`
-      + (b.shown ? '' : ' (badge hidden)');
-    el.innerHTML = `<b class="${ccClass(b.grade)}">${b.worst_text}:1</b> ${ccThresholds(b.worst, t)}`
-      + `<br><span class="cc-where">${ccWhere(b.worst_backdrop)}${b.shown ? '' : ' · hidden'}</span>`;
+    renderChip(document.getElementById('cc-' + cat), m.badges[cat], t);
+    // Roadmap P6: the backup colour's chip, judged the same way.
+    renderChip(document.getElementById('cc-backup-' + cat), m.backup[cat], t);
   }
 
   const w = m.worst;
@@ -1305,6 +1388,7 @@ function refreshPreviews() {
       + `&sub_color=${subColor}&rating_color=${ratingColor}`
       + `&show_video=${showVideo}&show_audio=${showAudio}&show_subs=${showSubs}&show_rating=${showRating}`
       + `&prefer_languages=${enc(preferLangs.join(','))}`
+      + adaptParams()
       + `${bgParam}&t=${ts}`;
     const posterName = item ? `<span style="color:var(--muted);font-weight:400"> — ${esc(item.name)}</span>` : '';
     return `<div class="preview-card">
@@ -1314,6 +1398,19 @@ function refreshPreviews() {
       </div>
     </div>`;
   }).join('');
+}
+
+// Roadmap P6: the five keys both Save buttons write. The backup colours are
+// saved even while the checkbox is off, so turning it on later finds them.
+function adaptSettings() {
+  const val = id => document.getElementById(id)?.value;
+  return {
+    adapt_badge_colors:        document.getElementById('prev-adapt')?.checked ?? false,
+    backup_video_badge_color:  val('prev-backup-video-color')  || '{{ badge_defaults.backup_video_badge_color }}',
+    backup_audio_badge_color:  val('prev-backup-audio-color')  || '{{ badge_defaults.backup_audio_badge_color }}',
+    backup_sub_badge_color:    val('prev-backup-sub-color')    || '{{ badge_defaults.backup_sub_badge_color }}',
+    backup_rating_badge_color: val('prev-backup-rating-color') || '{{ badge_defaults.backup_rating_badge_color }}',
+  };
 }
 
 function collectPreviewSettings() {
@@ -1342,6 +1439,7 @@ function collectPreviewSettings() {
       show_rating_badge: document.getElementById('prev-show-rating')?.checked ?? true,
       normalize_portrait: document.getElementById('prev-normalize-portrait')?.checked ?? true,
       prefer_languages: [...preferLangs],
+      ...adaptSettings(),
     },
   };
 }
@@ -1416,12 +1514,19 @@ function populateForm(s) {
   setColor('prev-audio',  s.image?.audio_badge_color  ?? '{{ badge_defaults.audio_badge_color }}');
   setColor('prev-sub',    s.image?.sub_badge_color    ?? '{{ badge_defaults.sub_badge_color }}');
   setColor('prev-rating', s.image?.rating_badge_color ?? '{{ badge_defaults.rating_badge_color }}');
+  // Roadmap P6: the backup palette is loaded whether or not the checkbox is on.
+  setColor('prev-backup-video',  s.image?.backup_video_badge_color  ?? '{{ badge_defaults.backup_video_badge_color }}');
+  setColor('prev-backup-audio',  s.image?.backup_audio_badge_color  ?? '{{ badge_defaults.backup_audio_badge_color }}');
+  setColor('prev-backup-sub',    s.image?.backup_sub_badge_color    ?? '{{ badge_defaults.backup_sub_badge_color }}');
+  setColor('prev-backup-rating', s.image?.backup_rating_badge_color ?? '{{ badge_defaults.backup_rating_badge_color }}');
 
   const setChk = (id, val) => { const el = document.getElementById(id); if (el) el.checked = val; };
   setChk('prev-show-video',  s.image?.show_video_badges  ?? true);
   setChk('prev-show-audio',  s.image?.show_audio_badges  ?? true);
   setChk('prev-show-subs',   s.image?.show_sub_badges    ?? true);
   setChk('prev-show-rating', s.image?.show_rating_badge  ?? true);
+  setChk('prev-adapt',       s.image?.adapt_badge_colors ?? false);
+  document.getElementById('backup-color-grid').hidden = !document.getElementById('prev-adapt').checked;
 
   setVal('prev-prefix', s.tags?.managed_prefix ?? 'mf-');
   setVal('prev-dual',   s.tags?.dual_audio_tag  ?? 'dual-audio');
@@ -1702,6 +1807,7 @@ function collectForm() {
       show_rating_badge:  document.getElementById('prev-show-rating')?.checked ?? true,
       normalize_portrait: document.getElementById('prev-normalize-portrait')?.checked ?? true,
       prefer_languages:   [...preferLangs],
+      ...adaptSettings(),
     },
     auth: { username: getVal('s-auth-username') },
     log_level: settings.log_level ?? 'INFO',

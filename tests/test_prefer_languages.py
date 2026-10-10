@@ -118,6 +118,16 @@ def _cfg(image: ImageConfig, prefer: list[str]) -> AppConfig:
     return AppConfig(image=image.model_copy(update={"prefer_languages": prefer}))
 
 
+def _pre_p6(groups):
+    """What a pre-P6 BadgeGroup held: the builder copy above predates the
+    backup fill (roadmap P6), which only renders with adapt_badge_colors on."""
+    if groups is None:
+        return None
+    if isinstance(groups, BadgeGroup):
+        return (groups.labels, groups.fill_color, groups.text_color)
+    return [_pre_p6(g) for g in groups]
+
+
 def _render(groups, rating, image: ImageConfig, size=(600, 900)) -> bytes:
     base = Image.new("RGBA", size, (90, 120, 150, 255))
     return render_badge_groups(base, groups, rating, image).tobytes()
@@ -134,8 +144,8 @@ def test_empty_prefer_renders_byte_identical_to_pre_p7(info, image):
     cfg = _cfg(image, [])
     old_groups, old_rating = _pre_p7_groups(info, "PG-13", cfg)
     new_groups, new_rating = pipeline._make_badge_groups(info, "PG-13", cfg)
-    assert new_groups == old_groups
-    assert new_rating == old_rating
+    assert _pre_p6(new_groups) == _pre_p6(old_groups)
+    assert _pre_p6(new_rating) == _pre_p6(old_rating)
     assert _render(new_groups, new_rating, cfg.image) == _render(old_groups, old_rating, cfg.image)
 
 
@@ -146,7 +156,7 @@ def test_the_byte_comparison_can_see_a_reorder():
     old_groups, rating = _pre_p7_groups(info, "PG-13", _cfg(ImageConfig(), []))
     cfg = _cfg(ImageConfig(), ["DE"])
     new_groups, _ = pipeline._make_badge_groups(info, "PG-13", cfg)
-    assert new_groups != old_groups
+    assert _pre_p6(new_groups) != _pre_p6(old_groups)
     assert _render(new_groups, rating, cfg.image) != _render(old_groups, rating, cfg.image)
 
 
