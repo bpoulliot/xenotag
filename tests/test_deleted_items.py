@@ -18,6 +18,7 @@ from sqlalchemy.orm import sessionmaker
 
 from app import deleted_items, pipeline
 from app.clients.jellyfin import JellyfinClient
+from app.clients.radarr import RadarrClient
 from app.clients.readonly import ReadOnlyTransport, ReadOnlyViolation
 from app.config import AppConfig
 from app.deleted_items import (
@@ -534,6 +535,26 @@ def test_an_instance_that_cannot_be_read_aborts(tmp_path, monkeypatch):
     assert sonarr.writes == [] and len(row_ids(db)) == 8
 
 
+def test_a_preload_failure_does_not_put_the_raw_exception_in_the_report(tmp_path, monkeypatch):
+    """CodeQL #10: the per-instance error is the exception TYPE only -- `str(exc)` on an
+    httpx failure carries the instance's URL, and that must never reach the report."""
+    jf, db, sonarr, radarr = scenario(tmp_path)
+    radarr.fail_status = {"GET": 503}
+    transport = httpx.MockTransport(radarr.handle)
+    sentinel_client = RadarrClient("http://SENTINEL-internal-host/SENTINEL-TOKEN", "key", "r0", transport=transport)
+
+    def fake_build(cfg_, *, arr_writable, guards):
+        client = jf.client(guarded=True)
+        guards.append(client._client._transport)
+        return client, [], [sentinel_client]
+
+    monkeypatch.setattr(deleted_items, "_build_clients", fake_build)
+    report = deleted_items.run_deleted_items(cfg("remove"), db_path=db, store=False)
+    assert report["status"] == "aborted"
+    assert "SENTINEL" not in json.dumps(report)
+    assert report["instances"]["radarr/r0"]["error"] == "HTTPStatusError"
+
+
 # ── ownership: B5's folder rule ─────────────────────────────────────────────
 def test_row_folders():
     def row(file_path, image_path=None):
@@ -648,6 +669,20 @@ def test_run_report_now_is_report_only_even_when_removal_is_on(api, monkeypatch)
 def test_run_report_now_refuses_a_second_run(api, monkeypatch):
     monkeypatch.setitem(deleted_items.state, "running", True)
     assert api.post("/api/deleted-items/report").status_code == 409
+
+
+def test_a_failed_pass_reports_a_fixed_message_not_the_exception_text(api, monkeypatch):
+    """CodeQL #10: the GET route's `error` is a fixed message, never raw exception text."""
+    monkeypatch.setattr(deleted_items, "state", {"running": False, "error": None})
+
+    def boom(c, **kw):
+        raise RuntimeError("GET http://SENTINEL-internal-host/SENTINEL-TOKEN timed out")
+
+    monkeypatch.setattr(deleted_items, "run_deleted_items", boom)
+    assert api.post("/api/deleted-items/report").status_code == 200
+    body = api.get("/api/deleted-items/report").json()
+    assert "SENTINEL" not in json.dumps(body)
+    assert body["error"] == "RuntimeError: deleted-items pass failed; see the server log"
 
 
 def test_the_report_route_returns_the_mode_and_the_last_report(api, monkeypatch):

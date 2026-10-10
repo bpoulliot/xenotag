@@ -282,6 +282,7 @@
       <div class="btn-row">
         <button class="btn primary" id="btn-inc" onclick="triggerScan('incremental')">▶ Incremental scan</button>
         <button class="btn" id="btn-full" onclick="triggerScan('full')">⟳ Full rescan</button>
+        <button class="btn" id="btn-reconcile" onclick="triggerScan('reconcile')" title="Re-read every tracked item's Jellyfin tags and put back any xt- tag Jellyfin lost. Jellyfin only; writes past the threshold too (it is the path after a halted scheduled run).">⟲ Tag rescan</button>
         <button class="btn" id="btn-cancel" onclick="cancelScan()" style="display:none;color:var(--red);border-color:var(--red)">✕ Cancel</button>
       </div>
       <div class="progress-wrap" id="progress-wrap" style="display:none">
@@ -652,6 +653,18 @@
             <label class="toggle"><input type="checkbox" id="s-scan-incremental" checked><span class="slider"></span></label>
             <span style="font-size:12px;color:var(--muted)">Skip unchanged files</span>
           </div>
+        </div>
+      </div>
+      <div class="field-row" style="margin-top:12px">
+        <div class="field" style="flex:2">
+          <label>Tag reconciliation schedule <span style="font-weight:400;text-transform:none">(cron; empty = off)</span></label>
+          <input type="text" id="s-reconcile-schedule" placeholder="0 5 * * *" style="width:160px">
+          <div class="hint">Re-reads every tracked item's Jellyfin tags and puts back any <code>xt-</code> tag Jellyfin lost (a metadata refresh, a re-created item). Jellyfin only; never writes Sonarr/Radarr.</div>
+        </div>
+        <div class="field">
+          <label>Write threshold</label>
+          <input type="number" id="s-reconcile-threshold" min="1" step="1" placeholder="500" style="width:100px">
+          <div class="hint">If more items than this need a write, a scheduled run writes none, logs the count and a sample, and raises an alert. The ⟲ Tag rescan button bypasses it.</div>
         </div>
       </div>
       <div class="field" style="margin-top:12px">
@@ -1115,6 +1128,7 @@ function nextPage() { mediaPage++; loadMedia(); }
 async function triggerScan(type) {
   document.getElementById('btn-inc').disabled = true;
   document.getElementById('btn-full').disabled = true;
+  document.getElementById('btn-reconcile').disabled = true;
   document.getElementById('btn-cancel').style.display = '';
   try {
     await apiFetch('/scan/' + type, {method:'POST'});
@@ -1173,6 +1187,7 @@ async function pollProgress() {
       if (!d.running) {
         document.getElementById('btn-inc').disabled = false;
         document.getElementById('btn-full').disabled = false;
+        document.getElementById('btn-reconcile').disabled = false;
         const cancelBtn = document.getElementById('btn-cancel');
         cancelBtn.style.display = 'none';
         cancelBtn.disabled = false;
@@ -1377,6 +1392,8 @@ function populateForm(s) {
   // Scan
   parseCronToUI(s.scan?.schedule ?? '0 3 * * *');
   document.getElementById('s-scan-incremental').checked = s.scan?.incremental ?? true;
+  document.getElementById('s-reconcile-schedule').value = s.scan?.reconcile_schedule ?? '0 5 * * *';
+  document.getElementById('s-reconcile-threshold').value = s.scan?.reconcile_write_threshold ?? 500;
   pathFilters = [...(s.scan?.path_filters ?? [])];
   renderPathTags();
 
@@ -1657,6 +1674,8 @@ function collectForm() {
       schedule: buildCronFromUI(),
       incremental: document.getElementById('s-scan-incremental').checked,
       path_filters: [...pathFilters],
+      reconcile_schedule: document.getElementById('s-reconcile-schedule').value.trim(),
+      reconcile_write_threshold: (v => Number.isNaN(v) ? 500 : v)(parseInt(document.getElementById('s-reconcile-threshold').value, 10)),
     },
     tags: {
       ...(settings.tags || {}),
@@ -2071,7 +2090,9 @@ async function loadRecentScans() {
     }
     const typeBadge = t => t === 'full'
       ? `<span style="color:var(--accent)">full</span>`
-      : `<span style="color:var(--muted)">incremental</span>`;
+      : t === 'reconcile'
+        ? `<span style="color:var(--muted)">tag rescan</span>`
+        : `<span style="color:var(--muted)">incremental</span>`;
     body.innerHTML = `<div style="overflow-x:auto"><table>
       <thead><tr><th>Started</th><th>Type</th><th>Scanned</th><th>Tagged</th><th>Images</th><th>Duration</th></tr></thead>
       <tbody>${runs.map(r => `<tr>
@@ -2146,6 +2167,7 @@ apiFetch('/scan/status').then(d => {
   if (d.running) {
     document.getElementById('btn-inc').disabled = true;
     document.getElementById('btn-full').disabled = true;
+    document.getElementById('btn-reconcile').disabled = true;
     document.getElementById('btn-cancel').style.display = '';
     startSSE();
     pollProgress();

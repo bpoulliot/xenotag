@@ -85,8 +85,13 @@ class ScanConfig(BaseModel):
     incremental: bool = True
     path_filters: list[str] = Field(default_factory=list)
     max_workers: int = 4
+    # Roadmap B12(b): the Jellyfin tag reconciliation pass. Its own cron (empty =
+    # off), after the 03:00 scan; past the threshold a SCHEDULED run writes
+    # nothing and raises xenotag_reconcile_halted -- the manual rescan bypasses it.
+    reconcile_schedule: str = "0 5 * * *"
+    reconcile_write_threshold: int = Field(default=500, ge=1)
 
-    @field_validator("schedule")
+    @field_validator("schedule", "reconcile_schedule")
     @classmethod
     def _validate_schedule(cls, v: str) -> str:
         if not v:

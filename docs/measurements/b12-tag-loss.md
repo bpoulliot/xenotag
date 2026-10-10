@@ -150,6 +150,8 @@ the order the monitor path merges in (s4: NFO first) and the opposite order on t
 
 ## Recommended fix — an opinion, not built here
 
+*Since built, as the operator decided it (ROADMAP B12): (a) in [#146](https://github.com/bpoulliot/xenotag/pull/146), (b) in [#147](https://github.com/bpoulliot/xenotag/pull/147) — a scheduled pass with a write threshold, plus a manual **Tag rescan**, which after a replace-all refresh does what a full scan did below without re-probing.*
+
 * **(a) Compare Jellyfin tags case-insensitively wherever xenotag compares them**: U9's
   `_tag_drift()` and B17's read-back. Jellyfin itself does. Without this, the next full scan logs
   roughly 7,800 false drift warnings, and real losses disappear in that noise. Nothing in this

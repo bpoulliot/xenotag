@@ -41,7 +41,10 @@ class Server:
     An undone write returns 204 and leaves the item's tags as they were, which
     is what B17's 22 films looked like from xenotag. ``timeout_writes`` makes
     every tag write time out client-side; ``fail_ids_from`` fails every ``Ids=``
-    read from that one on (1-based).
+    read from that one on (1-based). ``respell`` lowercases a write's tags before
+    storing them, as the *arrs' NFO merge does (roadmap B12(a)); ``respell_drop``
+    does the same and also removes the named tags (case-insensitively), simulating
+    a real loss alongside the respelling.
     """
 
     def __init__(
@@ -51,6 +54,8 @@ class Server:
         timeout_writes: bool = False,
         fail_ids_from: int | None = None,
         drop_from_readback: tuple[str, ...] = (),
+        respell: tuple[str, ...] = (),
+        respell_drop: dict[str, list[str]] | None = None,
     ):
         self.listing = listing
         self.current = {i["Id"]: list(i.get("Tags") or []) for i in listing}
@@ -58,6 +63,8 @@ class Server:
         self.timeout_writes = timeout_writes
         self.fail_ids_from = fail_ids_from
         self.drop_from_readback = drop_from_readback
+        self.respell = respell
+        self.respell_drop = respell_drop or {}
         self.log: list[tuple[str, str, dict]] = []
         self.writes: list[tuple[str, dict]] = []
         self.ids_reads: list[list[str]] = []
@@ -86,6 +93,11 @@ class Server:
             self.writes.append((item_id, body))
             if self.undo.get(item_id, 0) > 0:
                 self.undo[item_id] -= 1
+            elif item_id in self.respell_drop:
+                drop = {t.casefold() for t in self.respell_drop[item_id]}
+                self.current[item_id] = [t.lower() for t in body["Tags"] if t.casefold() not in drop]
+            elif item_id in self.respell:
+                self.current[item_id] = [t.lower() for t in body["Tags"]]
             else:
                 self.current[item_id] = body["Tags"]
             return httpx.Response(204)
@@ -208,6 +220,37 @@ def test_the_happy_path_sends_the_same_write_calls_and_reads_back_after_the_refr
     assert "Ids" in server.log[1][2] and "Ids" in server.log[4][2]
     [(_, body)] = server.writes
     assert body["Tags"] == ["favourite", *WRITTEN]
+
+
+# ── roadmap B12(a): a case-only difference is a match ───────────────────────
+def test_a_case_only_readback_difference_is_a_match_no_retry(scan, caplog):
+    """The *arrs' NFO merge respells tags in lowercase; that alone is not an undone write."""
+    movie, run, row, _, _ = scan
+    [a] = _ids(1)
+    server = Server([movie(a, ["favourite"])], respell=(a,))
+    before = (_mismatch("fixed"), _mismatch("unresolved"))
+    with caplog.at_level(logging.WARNING, logger="app.pipeline"):
+        run(server)
+    assert len(server.writes) == 1  # no retry
+    assert server.ids_reads == [[a], [a]]  # B18's read, then B17's -- no second read-back
+    assert _tags(row(a)) == WRITTEN  # what was SENT, not Jellyfin's lowercase copy
+    assert (_mismatch("fixed"), _mismatch("unresolved")) == before
+    assert _did_not_stick(caplog) == []
+
+
+def test_a_real_loss_beside_a_case_only_difference_still_retries_and_reports_only_the_loss(scan, caplog):
+    """Roadmap B12(a): the respelling is not reported; a genuinely missing tag still is."""
+    movie, run, row, _, _ = scan
+    [a] = _ids(1)
+    server = Server([movie(a, ["favourite"])], respell_drop={a: ["xt-AAC"]})
+    before = _mismatch("unresolved")
+    with caplog.at_level(logging.WARNING, logger="app.pipeline"):
+        run(server)
+    assert len(server.writes) == 2  # one retry, same as any other undone write
+    assert _tags(row(a)) == ["xt-1080p", "xt-h264", "xt-en"]  # Jellyfin's lowercase copy, minus the real loss
+    [line] = _did_not_stick(caplog)
+    assert "lacks ['xt-AAC']" in line and "has [] not written" in line
+    assert _mismatch("unresolved") == before + 1
 
 
 # ── a write Jellyfin undoes ─────────────────────────────────────────────────

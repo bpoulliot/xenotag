@@ -31,6 +31,7 @@ MUTATING_ROUTES = {
     ("POST", "/scan/full"),
     ("POST", "/scan/incremental"),
     ("POST", "/scan/cancel"),
+    ("POST", "/scan/reconcile"),
     ("DELETE", "/api/scan-errors"),
     ("DELETE", "/api/legacy-tags"),
     ("POST", "/webhook/{source}"),

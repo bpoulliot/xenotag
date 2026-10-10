@@ -57,6 +57,7 @@ Rendered by the real overlay code over synthetic backgrounds, at the shipped def
 - Preserves existing user-defined tags; only manages its own prefixed set
 - `xt-*` tags are owned by Xenotag: a hand edit to one is replaced the next time Xenotag writes that item. Before the write it logs a `Tag drift` WARNING naming the item and the `xt-` tags that differ from what it last wrote (counted in `xenotag_tag_drift_total`)
 - A Jellyfin tag write is read back before it is recorded: a write Jellyfin undid is made once more, and if it is still wrong Xenotag logs a `Tag write did not stick` WARNING (counted in `xenotag_tag_writeback_mismatch_total`) and records what Jellyfin has. A write that fails is not recorded, so the next scan retries it
+- Puts back `xt-*` tags Jellyfin lost — a replace-all metadata refresh or a re-created item drops them, and the mtime-driven scan never revisits an unchanged file. A **tag reconciliation pass** (`scan.reconcile_schedule`, daily at 05:00 by default, or **⟲ Tag rescan** on the dashboard) reads every tracked item's current tags and re-writes, Jellyfin only, the items missing a tag Xenotag wrote (case-insensitively). If more items than `scan.reconcile_write_threshold` need a write, a scheduled pass writes **none**, logs a `Tag reconciliation HALTED` WARNING with the count and a sample, and sets `xenotag_reconcile_halted`; the manual rescan bypasses the threshold. Posters are not touched
 - Notices items Jellyfin no longer has: reports the stale index rows and the managed tags left on their Sonarr/Radarr series/movie, and removes them once `deleted_items.mode` is `remove` (ships report-only)
 
 ### Poster Badge Overlay
@@ -254,6 +255,8 @@ forces no re-tag.
 | `scan.incremental` | bool | `true` | Skip files unchanged since last scan |
 | `scan.path_filters` | list | `[]` | Only scan paths matching these prefixes; empty = all |
 | `scan.max_workers` | int | `4` | Parallel `ffprobe` workers; lower for slow/spinning disks |
+| `scan.reconcile_schedule` | string | `"0 5 * * *"` | Cron for the Jellyfin tag reconciliation pass; empty = off (the manual **⟲ Tag rescan** still works) |
+| `scan.reconcile_write_threshold` | int | `500` | A scheduled reconciliation pass that finds **more** items than this to re-write writes none of them and raises `xenotag_reconcile_halted`; the manual rescan bypasses it. Minimum 1 |
 
 ### Tags
 
@@ -441,12 +444,14 @@ Configure the webhook URL in your *arr application's Connect settings. Xenotag w
 | GET | `/stats` | Yes | Scan statistics and next scheduled run time |
 | POST | `/scan/full` | Yes | Trigger a full library scan |
 | POST | `/scan/incremental` | Yes | Trigger an incremental scan |
-| POST | `/scan/cancel` | Yes | Cancel a running scan |
+| POST | `/scan/reconcile` | Yes | Start the Jellyfin tag reconciliation pass by hand — bypasses `scan.reconcile_write_threshold`; 409 while a scan runs |
+| POST | `/scan/cancel` | Yes | Cancel a running scan (or reconciliation pass) |
 | GET | `/scan/status` | Yes | Current scan progress (total, done, running, current item) |
 | GET | `/scan/stream` | Yes | SSE stream of live scan log lines |
 | GET | `/api/scan-errors` | Yes | All scan errors (probe failures, missing files) |
 | DELETE | `/api/scan-errors` | Yes | Clear all scan errors |
-| GET | `/api/scan-runs` | Yes | Recent scan run records |
+| GET | `/api/scan-runs` | Yes | Recent scan run records (reconciliation passes as `scan_type: reconcile`) |
+| GET | `/api/reconcile/report` | Yes | The last reconciliation pass's report (counts, threshold, halted or not, a sample) and its next scheduled run |
 | GET | `/api/legacy-tags` | Yes | Dry run: what a legacy-prefix sweep would remove from the local index |
 | DELETE | `/api/legacy-tags` | Yes | Apply the legacy-prefix sweep to the local index |
 | GET | `/media` | Yes | Paginated media browser (filter by resolution, language) |
@@ -493,13 +498,20 @@ only: no item names, paths or secrets.
 | `xenotag_arr_halts_total` | counter | | Times live \*arr writes halted |
 | `xenotag_arr_sync_halted` | gauge | | 1 from a halt until a later **live** scan syncs without one |
 | `xenotag_arr_last_halt_timestamp_seconds` | gauge | | When the last halt happened |
+| `xenotag_tag_drift_total` | counter | | Items whose Jellyfin `xt-` tags differed from what Xenotag last wrote, seen before a write |
+| `xenotag_tag_writeback_mismatch_total` | counter | `result` | Jellyfin tag writes whose read-back differed: `fixed` (the retry stuck) / `unresolved` |
+| `xenotag_reconcile_halted` | gauge | | 1 after a **scheduled** reconciliation pass halted at its write threshold (wrote nothing); 0 after a pass that did not halt |
+| `xenotag_reconcile_candidates` | gauge | | Items the last reconciliation pass found missing an `xt-` tag |
+| `xenotag_reconcile_writes_total` | counter | `result` | Reconciliation writes: `written` / `readback_fixed` / `unresolved` / `error` |
 
 Plus the standard `process_*` and `python_*` series. A failed scan is one that could not list
 Jellyfin or raised; items that error inside a scan are counted in `xenotag_scan_errors_total`
 and do not fail it.
 
 **After a restart** the last completed scan is read back from `state.db`, and a halt from the
-stored \*arr sync report, so a redeploy does not look like "never scanned". A failure is not
+stored \*arr sync report, so a redeploy does not look like "never scanned"; the reconciliation
+gauges are read back from `reconcile-report.json` beside `state.db`. A reconciliation pass is not
+a scan: it never moves `xenotag_scans_total` or the `xenotag_scan_last_*` gauges. A failure is not
 stored anywhere and is forgotten by a restart. A halt stays set until a live scan finishes its
 \*arr sync cleanly — a dry run, a cancelled scan or a webhook does not clear it.
 
@@ -516,6 +528,8 @@ Example alerts:
   expr: xenotag_scan_last_failure_timestamp_seconds > xenotag_scan_last_success_timestamp_seconds
 - alert: XenotagArrSyncHalted
   expr: xenotag_arr_sync_halted == 1
+- alert: XenotagReconcileHalted
+  expr: xenotag_reconcile_halted == 1
 ```
 
 ---
