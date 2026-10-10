@@ -216,7 +216,6 @@ def _docker_run(image: str, args: list[str], mounts: list[str], name: str) -> in
 
 def run_self_test(image: str) -> dict:
     with tempfile.TemporaryDirectory(prefix="xt-reencode-st-") as tmp:
-        os.chmod(tmp, 0o777)
         code = _docker_run(
             image,
             ["--self-test-inner", "/work"],
@@ -250,7 +249,9 @@ def _rows(db: Path, where: str = "", params: tuple = ()) -> list[dict]:
     con = sqlite3.connect(f"file:{db}?mode=ro", uri=True)
     con.row_factory = sqlite3.Row
     try:
-        sql = f"SELECT {ROW_COLUMNS} FROM media_state WHERE file_path IS NOT NULL AND file_path != '' {where}"
+        have = {r[1] for r in con.execute("PRAGMA table_info(media_state)")}
+        cols = ", ".join(c for c in ROW_COLUMNS.split(", ") if c in have)  # field_order: revision 0002
+        sql = f"SELECT {cols} FROM media_state WHERE file_path IS NOT NULL AND file_path != '' {where}"  # noqa: S608 -- columns from a constant, values bound
         return [dict(r) for r in con.execute(sql, params)]
     finally:
         con.close()
@@ -314,7 +315,7 @@ def cmd_sample(a) -> dict:
     excluded = _reported_deleted(a.report)
     population = [r for r in _rows(a.db) if r["item_id"] not in excluded]
     kinds = Counter(kind(r["file_path"]) for r in population)
-    rng = random.Random(a.seed)
+    rng = random.Random(a.seed)  # noqa: S311 -- seeded so a re-run reproduces the draw
     sample = rng.sample(population, a.n)
     sample_kinds = Counter(kind(r["file_path"]) for r in sample)
     if min(sample_kinds.get(k, 0) for k in ("movie", "episode")) < 30:
@@ -339,7 +340,9 @@ def cmd_sample(a) -> dict:
 
 def cmd_census(a) -> dict:
     con = sqlite3.connect(f"file:{a.old_db}?mode=ro", uri=True)
-    started, completed = con.execute("SELECT started_at, completed_at FROM scan_runs WHERE id = ?", (a.scan,)).fetchone()
+    started, completed = con.execute(
+        "SELECT started_at, completed_at FROM scan_runs WHERE id = ?", (a.scan,)
+    ).fetchone()
     con.close()
     old = _rows(a.old_db, "AND last_scanned BETWEEN ? AND ?", (started, completed))
     new = {r["item_id"]: r for r in _rows(a.db)}
@@ -421,7 +424,8 @@ def main() -> int:
         if not (a.old_db and a.scan):
             p.error("census needs --old-db and --scan")
         result = cmd_census(a)
-    (a.out / f"{a.mode}-summary.json").write_text(json.dumps(result, indent=1))
+    tag = a.mode if a.mode == "sample" else f"census{a.scan}"
+    (a.out / f"{tag}-summary.json").write_text(json.dumps(result, indent=1))
     print(json.dumps(result, indent=1))
     return 0
 

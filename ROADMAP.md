@@ -2674,7 +2674,7 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
-| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **removal LIVE 2026-10-10** — production runs `deleted_items: {mode: remove, max_fraction: 0.15}`; the first pass (scan 164) deleted **1,198** index rows (10,661 → 9,463) and stripped **0** \*arr tags, every removed id checked gone (see *U2, deleted items* below). It was report-only from v1.9.0 (2026-09-27) and blocked on B26 until v1.11.1 · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
+| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **removal LIVE 2026-10-10** — production runs `deleted_items: {mode: remove, max_fraction: 0.15}`; the first pass (scan 164) deleted **1,198** index rows (10,661 → 9,463) and stripped **0** \*arr tags, every removed id checked gone (see *U2, deleted items* below). It was report-only from v1.9.0 (2026-09-27) and blocked on B26 until v1.11.1 · re-encodes: **CLOSED 2026-10-10** (measured: 0 files with new content under an old mtime — 0/200 sampled, 0/8,876 over 09-27 → 10-10; no `file_size` column; see *U2, mtime-preserving re-encodes*) | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution fixed by [B8] (2026-10-06, released in v1.11.0) | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
@@ -2747,13 +2747,15 @@ resolve) so the path is right if one is ever wired. Relabelled **CLOSED**.
      comparing, on a copy of `state.db`, each row's `file_mtime` and stored codec against a
      fresh `stat` + ffprobe of a random 200 files (~1 h, read-only). If the count is zero, this
      half closes; if not, the size check #36 proposes needs a `file_size` column — an Alembic
-     revision (I3, SHIPPED 2026-09-26).
+     revision (I3, SHIPPED 2026-09-26). *Measured 2026-10-10: zero. This half is CLOSED. See
+     U2, mtime-preserving re-encodes.*
 
 **U2, deleted items — BUILT 2026-09-27; LIVE report-only in v1.9.0 (deployed 2026-09-27 11:40Z). Removal LIVE in production since 2026-10-10 (v1.11.1; the operator's switch, made by an overnight item — see the end of this section).**
 
 The operator's option (c): when a Jellyfin item is gone, a scan deletes its index row and strips
 the managed tags from the \*arr object it owned — behind one report-only release first. The
-re-encode half below is untouched and still NEEDS MEASUREMENT.
+re-encode half was measured separately and CLOSED on 2026-10-10 (see *U2, mtime-preserving
+re-encodes*, after this section).
 
 **What shipped** — `app/deleted_items.py`, run at the end of every scan (not a cancelled one),
 from Settings → **Deleted items** → **Run report now**, and as
@@ -2912,6 +2914,100 @@ The overnight item made the switch only after three gates held, and nothing need
 
 **Not covered:** an \*arr object carrying managed tags whose folder holds no live item and that no
 index row points at (a row removed by hand) is never found — 0 exist today (the cross-check above).
+
+**U2, mtime-preserving re-encodes — MEASURED 2026-10-10: CLOSED, 0 files with new content under
+an old mtime.** The incremental scan skips a file when `os.path.getmtime()` equals the row's
+`file_mtime` exactly (`_run_scan()`, phase 1b), so the question was whether any file carries new
+content under its old mtime. None was found, so per the sweep's rule no `file_size` column is
+needed.
+
+- *Instrument.* `scripts/measure_reencode_mtime.py`. It stats each file and re-probes it with
+  xenotag's own `app.scanner.probe_file()`, inside a throwaway container of the image that wrote
+  the row: media `:ro`, `--network none`, `--cpus 2`, serial, the scanner's own 10M probesize.
+  Each file lands in one class:
+  - **A**: mtime equal and content fields equal (consistent);
+  - **B**: mtime differs, so the next incremental scan re-probes it;
+  - **C**: mtime equal but content fields differ (the case U2 asks about);
+  - **D**: file missing;
+  - **P**: probe failed.
+
+  The content fields are `video_codec`, `resolution`, `hdr_type` and the audio track list.
+  Subtitle tracks and `field_order` are compared too and reported beside the class.
+  **mtime tolerance: none.** The scan's own skip test is `==` on the float, so any difference at
+  all is B.
+- *Self-test, both ways.* `--self-test` runs inside the image (it needs docker and the image's
+  ffmpeg, so it is **not a CI step**). It generates a 2 s clip and plants seven files, each of which
+  lands in its class:
+  - an untouched copy → A;
+  - a touched-only copy → B;
+  - a copy re-encoded with a new mtime → B;
+  - three copies with the mtime restored by `os.utime`, each → C: video re-encoded (mpeg4), audio
+    re-encoded and relabelled (ac3/fre), and downscaled;
+  - a missing file → D.
+
+  It also requires both A and C to occur, and a row compared with its own probe to read A. Every
+  other mode refuses to report if it fails. Three planted mutations all fail it (exit 2): the
+  comparator never firing, the comparator always firing, and the mtime test removed. It passes in
+  both images used (1.11.1, 1.9.0).
+- *Why the 200-file sample alone could not answer.* The sampled index rows are those of production
+  `state.db`, copied at 2026-10-10 17:31Z (9,463 rows, all with a path). Of those rows, 9,444 were
+  rewritten by that day's full scan 163, and a full scan re-probes every file whatever its mtime.
+  So the sample only covers re-encodes that happened in the hours since scan 163. Two **census**
+  windows reach back further. Each compares *every* row written by an earlier full scan (in a
+  backup) with today's row for the same path and mtime:
+  - *Census 158→163* (10-07 → 10-10). Scans 158 and 163 ran v1.11.0 and v1.11.1, and their
+    scanner code is identical (`git diff v1.11.0 v1.11.1 -- app/scanner.py app/iso639.py` is
+    empty). Of the 8,280 rows scan 158 wrote, 8,278 kept their path and mtime. **0 differ in any
+    content field**, so no probe was needed.
+  - *Census 148→163* (09-27 → 10-10). Scan 148 ran v1.9.0. Of its 8,898 rows, 8,876 kept their
+    path and mtime. 659 differ, all in `resolution` only (B13's rule change, cf. B13's 658 movers).
+    All 659 were re-probed with **the v1.9.0 image**, and all **659 read A**: the old code gives
+    the old answer on today's bytes, so the difference is the rule, not the file.
+  - *09-23 → 10-07, comparing the two databases only* (the `pre-u1` and `pre-release` backups).
+    Of 8,650 rows, 8,202 kept their
+    path and mtime, and 11 differ, all in an audio language label with the codec unchanged
+    (`BU`→`MY`, `PE`→`FA`, `EG`→`EGY`, …). That is exactly B7's replacement of the
+    first-two-letters rule. They were not re-probed, because the image that wrote them (pre-1.7.0)
+    is not on the host.
+
+  | Window | Rows checked | A | B | C | D | P |
+  |---|---|---|---|---|---|---|
+  | Sample since scan 163 (seed **61**; 148 movie / 52 episode rows) | 200 | 200 | 0 | **0** | 0 | 0 |
+  | Census 158→163 (same scanner) | 8,278 | 8,278 | — | **0** | — | — |
+  | Census 148→163 (659 re-probed with v1.9.0) | 8,876 | 8,876 | — | **0** | — | — |
+
+  - Population and exclusions: the newest `deleted-items-report.json` (scan 164's removal pass)
+    names 50 example ids. None is in the index, because removal had already deleted its 1,198
+    rows, so 0 rows were excluded.
+  - Movie vs episode is a path rule (`SxxEyy` or `/Season N/`). An "episode" is a series row,
+    whose file is the scan's representative episode. The population is 6,986 movie and 2,477
+    episode rows; neither class drew fewer than 30, so the sample is not stratified.
+  - The sample saw 0 subtitle or `field_order` differences.
+- *Precision* (95 %, one-sided, exact binomial):
+  - the sample: 0 of 200 → **≤ 1.49 %** of files changed in the hours since scan 163;
+  - census 148→163: 0 of 8,876 → ≤ **0.034 %** of files per 13-day window;
+  - census 158→163: 0 of 8,278 → ≤ 0.036 % per 3-day window.
+
+  The censuses enumerate every row in their windows rather than sampling them, so the bound speaks
+  to the *rate* only if those windows are typical.
+- *In-place writes do happen, and they move the mtime.*
+  - 09-27 → 10-10: 1 of scan 148's 8,898 rows changed its mtime at the same path.
+  - 10-07 → 10-10: 0 of scan 158's 8,280 rows did.
+  - 09-23 → 10-07: 419 of the rows written on 09-23 changed their mtime at the same path, 416 of
+    them on 10-01..10-03. 416 kept their codec and 3 went H.264 → AV1. Those are class B: the
+    incremental scan re-probed them. The writer was not identified, and it is not this item's
+    question.
+  - `nav1s.sh` and `scripts/tdarr-{setup,requeue}.py` contain no mtime-restoring step (`touch -r`,
+    `utime`). That was checked by grep, not by an audit of Tdarr's own plugins.
+- *Not determined:*
+  - anything before 2026-09-23;
+  - a re-encode that changes none of the compared fields. The instrument cannot see one, but such
+    a re-encode also leaves every content tag correct.
+  - rows not written by scan 148 (new items, or rows re-scanned later), which have shorter windows;
+  - an external subtitle sidecar added later. It changes tags without touching the video's mtime.
+    That is a separate question, and the sample saw 0.
+- Per-file records (paths, so titles) are in the overnight run directory, not this repo. The state
+  copies are in `/tmp/xt-u2re/` on the host.
 
 **U1 — FIXED 2026-09-24, and the premise was half wrong in a way worth recording.**
 
@@ -3193,7 +3289,9 @@ create a third owner for one behaviour. Re-tagging when a file changes is U2's "
 mtime-preserving re-encodes" (the detection half: a re-encode that preserves mtime is invisible
 to an incremental scan) plus U3's per-item rescan on Sonarr/Radarr/Jellyfin `Download` events
 (the trigger half). **Do U3 then U2** — the webhook is Complexity 2 and delivers most of the
-benefit; the mtime problem is the residue for files that change without an event. *(Sweep
+benefit; the mtime problem is the residue for files that change without an event. *(Measured
+2026-10-10: no file in production was found with new content under an old mtime, so U2's detection half is
+CLOSED.)* *(Sweep
 2026-09-26: U3 had in fact shipped on 2026-05-05; the trigger half is B8 now, since the shipped
 webhook resolves the wrong item.)*
 
