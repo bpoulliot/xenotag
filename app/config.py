@@ -532,24 +532,6 @@ def _key_file(inst: dict) -> str:
     return raw.strip() if isinstance(raw, str) else ""
 
 
-def _resolve_key_file_path(label: str, path: str) -> Path:
-    """Resolve ``path`` (symlinks and ``..``) and refuse anything that does not
-    resolve under :data:`API_KEY_FILE_ROOT`, before the caller ever opens it.
-
-    ``os.path.realpath`` + ``str.startswith`` rather than ``Path.resolve`` +
-    ``is_relative_to``: CodeQL's py/path-injection sanitizer recognizes the
-    former pair, not the latter (pathlib's ``.resolve()`` only propagates
-    taint, and ``is_relative_to`` is not a recognized guard) -- same check,
-    expressed so the alert this item exists to fix actually clears.
-    """
-    resolved = os.path.realpath(path)
-    root = os.path.realpath(str(API_KEY_FILE_ROOT))
-    root_prefix = root if root.endswith(os.sep) else root + os.sep
-    if not (resolved == root or resolved.startswith(root_prefix)):
-        raise ConfigError(f"{label}: its api_key_file {path} does not resolve under {API_KEY_FILE_ROOT}")
-    return Path(resolved)
-
-
 def _apply_arr_key_files(data: dict) -> dict:
     """
     Read each file-backed instance's key into ``data`` *in place*, and record
@@ -557,6 +539,12 @@ def _apply_arr_key_files(data: dict) -> dict:
     not resolve under ``API_KEY_FILE_ROOT``, or is unreadable or empty: naming
     a file is unambiguous intent, and carrying on with a stale key from
     config.yml is the silent failure I8 exists to prevent.
+
+    The root check and the read live in one function on purpose: CodeQL's
+    py/path-injection sanitizer recognizes ``os.path.realpath`` +
+    ``str.startswith`` as a guard, but only when the guard and the file access
+    it protects are in the same function body -- a helper returning the
+    checked path left the read beyond the alert this item exists to fix.
     """
     global _arr_key_files
     found: list[tuple[str, str]] = []
@@ -564,9 +552,13 @@ def _apply_arr_key_files(data: dict) -> dict:
         path = _key_file(inst)
         if not path:
             continue
-        resolved = _resolve_key_file_path(label, path)
+        resolved = os.path.realpath(path)
+        root = os.path.realpath(str(API_KEY_FILE_ROOT))
+        root_prefix = root if root.endswith(os.sep) else root + os.sep
+        if not (resolved == root or resolved.startswith(root_prefix)):
+            raise ConfigError(f"{label}: its api_key_file {path} does not resolve under {API_KEY_FILE_ROOT}")
         try:
-            value = resolved.read_text(encoding="utf-8").strip()
+            value = Path(resolved).read_text(encoding="utf-8").strip()
         except OSError as exc:
             raise ConfigError(f"{label}: its api_key_file could not be read: {exc}") from exc
         if not value:
