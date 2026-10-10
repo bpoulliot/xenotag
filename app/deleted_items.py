@@ -60,7 +60,7 @@ from sqlalchemy.orm import Session
 
 from .arr_sync import MODE_LIVE, _norm_path, item_folders, readback_problems
 from .clients.arr import ArrClient
-from .clients.jellyfin import JellyfinClient
+from .clients.jellyfin import COLLAPSE_BOX_SET_ITEMS, JellyfinClient
 from .clients.radarr import RadarrClient
 from .clients.readonly import ReadOnlyTransport
 from .clients.sonarr import SonarrClient
@@ -116,6 +116,7 @@ def complete_listing(jf: JellyfinClient, *, page_size: int = PAGE_SIZE) -> Listi
     params: dict = {
         "Recursive": "true",
         "IncludeItemTypes": "Movie,Series",
+        "CollapseBoxSetItems": COLLAPSE_BOX_SET_ITEMS,
         "Fields": "Path",
         "EnableImages": "false",
         "Limit": page_size,
@@ -153,7 +154,13 @@ def complete_listing(jf: JellyfinClient, *, page_size: int = PAGE_SIZE) -> Listi
         if pages > total // page_size + 2:
             raise PassAborted(f"listing needed {pages} pages for {total} items")
         params["StartIndex"] = len(items)
-    recount = jf._get("/Items", Recursive="true", IncludeItemTypes="Movie,Series", Limit=0).get("TotalRecordCount")
+    recount = jf._get(
+        "/Items",
+        Recursive="true",
+        IncludeItemTypes="Movie,Series",
+        CollapseBoxSetItems=COLLAPSE_BOX_SET_ITEMS,
+        Limit=0,
+    ).get("TotalRecordCount")
     if recount != total:
         raise PassAborted(f"a recount after the listing says {recount}, the listing {total}: the library is changing")
     return Listing(items=items, total=total, pages=pages, recount=recount)

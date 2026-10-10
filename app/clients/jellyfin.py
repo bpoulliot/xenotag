@@ -16,6 +16,12 @@ ITEM_FIELDS = (
 # request line Kestrel and nginx accept by default; 9,400 items = 94 GETs.
 TAG_READ_BATCH = 100
 
+# Roadmap B26: on Jellyfin 12.2 a recursive Movie/Series listing collapses every
+# item in a collection into its BoxSet unless told not to -- hiding the films
+# from the scan and (via U2) making a live film's folder look empty. Always
+# sent, never a setting: the collapsed answer is never right for a tagger.
+COLLAPSE_BOX_SET_ITEMS = "false"
+
 
 class JellyfinClient:
     def __init__(self, url: str, api_key: str, transport: httpx.BaseTransport | None = None) -> None:
@@ -74,6 +80,7 @@ class JellyfinClient:
             "/Items",
             Recursive="true",
             IncludeItemTypes="Movie,Series",
+            CollapseBoxSetItems=COLLAPSE_BOX_SET_ITEMS,
             Fields="ImageTags",
             SortBy="DateCreated",
             SortOrder="Descending",
@@ -91,6 +98,7 @@ class JellyfinClient:
                 "/Items",
                 Recursive="true",
                 IncludeItemTypes=media_type,
+                CollapseBoxSetItems=COLLAPSE_BOX_SET_ITEMS,
                 Fields="ImageTags",
                 SortBy="DateCreated",
                 SortOrder="Descending",
@@ -122,6 +130,7 @@ class JellyfinClient:
         params: dict[str, Any] = {
             "Recursive": "true",
             "IncludeItemTypes": item_types,
+            "CollapseBoxSetItems": COLLAPSE_BOX_SET_ITEMS,
             "Fields": fields,
             "Limit": 500,
             "StartIndex": 0,
