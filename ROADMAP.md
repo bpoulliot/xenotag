@@ -60,6 +60,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **SHIPPED 2026-10-10** ([#143](https://github.com/bpoulliot/xenotag/pull/143)) · **RELEASED v1.11.1** (2026-10-10) — `CollapseBoxSetItems=false` always sent at all four sites, no setting. The post-release full scan (scan 163) listed **9,467** items, 0 BoxSets, and reached all 1,134 hidden films; its deleted-items report shows **strip 0 objects / 0 tags** on every instance — see *Release v1.11.1* | — |
 | B27 | **A Settings save blanks the session-signing key.** The Settings page sends `auth: {username}` only, and `PUT /api/settings` restores `password_hash` but not `secret_key`, so every structured save writes `auth.secret_key: ""` to `config.yml` and into the running config. Until the next restart, sessions are signed with `":" + password_hash[:16]` (a constant prefix and 9 bcrypt-salt characters) in place of the 256-bit key. Separately, `GET /api/settings` returns `auth.secret_key` to the browser. Found in production on 2026-10-10. | 3 | 1 | **READY** — see *B27* below | — |
 | B28 | **A Settings save resets `scan.max_workers` to 4.** `buildSettings()` builds `scan` from the four fields the page shows (`schedule`, `incremental`, `path_filters`, and since B12(b) the two `reconcile_*` ones) without spreading the loaded `settings.scan`, so a structured save drops any other `scan` key and `ScanConfig` fills its default. B27's class (an object replaced, not merged). Production has `max_workers: 4` (the default), so nothing is lost there today. | 1 | 1 | **READY** — see *B28* below | — |
+| B29 | **CodeQL #10: the deleted-items report puts an HTTP error's text, URL included, into the admin's browser.** `GET /api/deleted-items/report` returns the stored report, whose `reason` (an aborted pass) and `halted` (a failed strip) are `str(exc)`. CodeQL names three sources, `deleted_items.py` 364/366/539. #135 changed two *other* values, so the alert stayed open. No traceback and no API key ever reaches the response (probed), but a failed HTTP call's message is the full request URL, and **a `user:password@` in a configured Jellyfin or \*arr URL reaches the response verbatim** (and the ntfy, for a halt). Latent: production's 6 URLs carry no userinfo. | 2 | 1 | **READY** — fix spec in *B29* below (measured to close #10 under CodeQL 2.27.2). The dismissal alternative is written out there | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -74,7 +75,8 @@ the release note must say so. *Released together in v1.11.0 on 2026-10-07 — se
 B15, B16, B17, B18, B20, B21, B22, B23, B24, I9, I11, P4a, P4b, P7 containment, U5, U9's drift
 half and the CodeQL #10 change (#135). **Not in it:** P6 (#134, HOLD) and CodeQL #11's fix (B25,
 #136, needs a decision). **CodeQL alerts #10 and #11 are both still open on `main` at `b3858bc`**
-— #135 did not clear #10 in CodeQL's own analysis; neither alert was touched.
+— #135 did not clear #10 in CodeQL's own analysis (it changed two values CodeQL never followed;
+see B29); neither alert was touched.
 - *Deploy.* `state.db` backed up after a clean stop as `state.db.bak-20261007-pre-release` (WAL
   checkpointed); `:1.10.0` is still pulled for a back-out. Startup logged `state.db schema:
   upgraded (revision 0002)`; healthy, no restarts. **B24:** `/health` without a session answers
@@ -373,6 +375,103 @@ B27 is taken, so this takes B28.
 - *Fix* (no decision needed): spread `...(settings.scan || {})` before the page's fields, as `tags`
   and `image` do. Test: a structured save keeps a non-default `max_workers`. Not fixed in B12(b)'s PR:
   it is a separate defect in behaviour, not B12(b)'s.
+
+**B29 — FILED 2026-10-10 by the CodeQL #10 measurement session (queue item 60). READY.**
+This was a measurement-only item, so nothing in `app/` changed. Line numbers below are from `main`
+`0b210a3`.
+
+- *The three flows.* The REST alert names its sources only in `most_recent_instance.message.markdown`.
+  The analysis SARIF (`gh api repos/bpoulliot/xenotag/code-scanning/analyses/<id> -H 'Accept:
+  application/sarif+json'`, analysis 1929409561 on `0b210a3`) gives **4 codeFlows from 3 sources**
+  to one sink, the return dict of `deleted_items_report()` (`routes.py:1037–1044`), entering
+  through `load_report()` at `routes.py:1043`:
+
+  | Source | Value | Path to the response |
+  |---|---|---|
+  | `deleted_items.py:364` `except PassAborted as exc` | `self._abort(str(exc))` | `self.reason` → `report()["reason"]` → `run_deleted_items()` → `store_report()` → global `_last_report` → `load_report()` (two flows: lines 740 and 741) |
+  | `deleted_items.py:366` `except Exception as exc` | `self._abort(f"{type(exc).__name__}: {exc}")` | the same, via `reason` |
+  | `deleted_items.py:539` a strip's `except Exception as exc` | `self._halt(f"{label}: {type(exc).__name__}: {exc}")` | `self.halted` → `remove()` → `run()` → `report()["halted"]` → the same tail |
+
+- *What reaches the response,* forced through the **real** pass and the **real** route (fake
+  Jellyfin/Radarr behind `httpx.MockTransport`, sentinel API keys in the real clients; new tests in
+  `tests/test_codeql_triage.py`):
+
+  | Source forced by | Text in the report |
+  |---|---|
+  | 364: Radarr preload answers 503 | `could not read radarr/r0: rows owned there cannot be judged` |
+  | 366: Jellyfin listing answers 500 | `HTTPStatusError: Server error '500 Internal Server Error' for url 'http://jf/Items?Recursive=true&…&Limit=500&StartIndex=0'` + httpx's MDN link |
+  | 539: Radarr's editor PUT answers 500 (remove + live) | `radarr/r0: HTTPStatusError: Server error '500 Internal Server Error' for url 'http://r0/api/v3/movie/editor'` + the link |
+
+  In all three the response carries **no `Traceback`, no `File "`, no `.py` and neither API key**:
+  the code stores an exception's *message*, never a formatted traceback, and the clients send keys as
+  headers. **But 366 and 539 carry the full request URL, and with `http://xt:<password>@host` as
+  the configured URL the password is in the response** (httpx quotes the URL with its userinfo).
+  For 539 it also goes out in the ntfy (`_halt()` emits it). 364 is clean even then: every
+  `PassAborted` message is built by the pass from labels, counts, page numbers and item ids, and
+  never copies another exception's text. A report file that cannot be read gives `report: null`.
+  Production's `config.yml`
+  has 6 `url:` fields and **0** with userinfo (counted by key, nothing printed), so this is latent.
+  *Probe self-test, both directions:* a variant that puts `traceback.format_exc()` and the three
+  sentinels into `_abort`/`_halt` is caught through the same route (all 6 markers found), and the
+  committed `no_traceback_and_no_key` tests **fail, 3 of 3**, against a scratch copy of `app/` patched
+  to append the traceback at each source. Suite: 1,007 on `0b210a3` → 1,019.
+- *Why #135 missed.* #135 changed `run_report_background()`'s `state["error"]` (now line 818) and
+  `prepare()`'s per-instance `st.error` (now line 431). **Neither is on any CodeQL flow**, before or
+  after: the SARIF for `1b95933` (pre-#135), `0da1c31` (#135's merge) and `0b210a3` has the same
+  4 flows from the same 3 `except` clauses. CodeQL follows the module global `_last_report`, but it
+  did not trace the `state` dict's item write or the `st.as_dict()` path. #135 sanitised two real
+  carriers of the URL, but it left the three CodeQL names, and two of those carry the same URL.
+- *What closes it, measured* with CodeQL CLI 2.27.2 and `codeql/python-queries` 1.8.12 (the
+  versions in main's latest analysis), `StackTraceExposure.ql` on databases built from `git archive`
+  extracts. **Control:** unpatched `0b210a3` reproduces #10 exactly (sink `routes.py:1037`, 4 flows,
+  sources 364/366/539), plus #9's dismissed flow (`routes.py:1007`, source `arr_sync.py:488`).
+
+  | Variant | #10 |
+  |---|---|
+  | 366 + 539 become fixed text + `type(exc).__name__` | still open, source **364** only (so a type name is not tainted) |
+  | only 364 changed (to an attribute) | still open, sources 366 + 539 |
+  | all three: 366/539 as above, 364 reads `exc.args[0]` or a `reason` attribute | **closed** |
+  | **the spec below** | **closed**; with the `arr_sync.py:488` line too, #9's flow is gone as well |
+
+- *Options.*
+  **(a) Dismiss** as *won't fix* (not *false positive*: the URL does reach the browser). Comment, 259
+  characters, ready to paste:
+  `No traceback reaches it: reason/halted hold an exception's message; API keys go in headers. Accepted residual: an HTTP error's text names the request URL, incl. any user:pass@ in a configured URL. Admin-only route. Probed by tests/test_codeql_triage.py (B29).`
+  This is an operator action, and it leaves the userinfo leak in place.
+  **(b) The code change below.** It needs no decision.
+  **(c) Both**, which is (b) followed by nothing: once (b) merges, #10 closes as *fixed* on main's
+  next analysis, so there is nothing left to dismiss.
+- **Recommendation: (b).** This is #135's own standard ("the exception text, which can hold a URL,
+  should never reach the response") applied to the values CodeQL actually follows. It also takes
+  the userinfo password out of the browser and the ntfy. It was measured to close the alert.
+- *Spec* (`app/deleted_items.py`; drafted and suite-run on a scratch copy only):
+  1. `PassAborted.__init__(self, reason: str)` calls `super().__init__(reason)` and sets
+     `self.reason = reason`. Line 364 becomes `self._abort(exc.reason)`. The text is unchanged, since it
+     is the pass's own message.
+  2. A helper `failure_text(exc)`: `f"{type(exc).__name__} {exc.response.status_code}"` for an
+     `httpx.HTTPStatusError`, else `type(exc).__name__`. Line 366 becomes
+     `self._abort(f"{failure_text(exc)}: the pass failed; see the server log")`. The `log.error(...,
+     exc_info=True)` above it already records the full exception.
+  3. Line 539 becomes `self._halt(f"{plan.client.label}: {failure_text(exc)} on a strip; see the
+     server log")`. The `log.error` above it keeps the message.
+  4. Same defect, same line, outside #10: `arr_sync.py:488`'s `self._halt(f"{label}:
+     {type(exc).__name__}: {exc}")` → `f"{label}: {type(exc).__name__}; see the server log"`.
+     This takes the userinfo URL out of the arr-sync halt and its ntfy, and removes #9's flow.
+  - *Tests:* flip the four `test_cq10_residual_*` tests (they pin today's URL and password in the
+    report) to assert neither is there. The rest of the suite passed unchanged against steps 1–3
+    on a scratch copy (1,015 passed, only those 4 failed), including
+    `test_a_listing_error_aborts…`'s `"500" in reason`, which `failure_text()` keeps. Add the same
+    probe for step 4 (a live arr sync whose write answers 500 with a userinfo URL).
+  - *Not changed:* the server log still holds the full message, URL and any userinfo included,
+    which is the operator's own log. No schema change and no tag-hash change, so no re-tag.
+- *#9 (dismissed 2026-10-07, I13), found here.* #9's SARIF flow starts at `arr_sync.py:488` and
+  reaches `/api/arr-sync/report` through `ArrTagSync._halt()` → the report's `halted` →
+  `_last_report`. I13's probe and dismissal comment are about `arr_dry_run_state["error"]`
+  (`pipeline.py:1070`), a value CodeQL did not flag. The conclusion "no traceback" holds for both,
+  but the `halted` text has the same URL/userinfo property as #10's 539. Step 4 covers it. Also,
+  the #9 probe's `'File "'` check reads the raw JSON body, where the quote is escaped (`File \"`),
+  so that one marker can never match (its `Traceback` and `.py` checks still work). The new #10
+  probe checks decoded strings.
 
 **B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113)); released in v1.11.0 (2026-10-07).**
 `_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
@@ -3704,7 +3803,11 @@ outward action — the operator's, or a session whose item says so in so many wo
 **DONE — verified 2026-10-09** (`gh api repos/bpoulliot/xenotag/code-scanning/alerts`): #1, #3, #4, #5
 and #9 are `dismissed`, reason *false positive*, 2026-10-07 00:12:45–50Z by the operator, with the
 comments above; #6 and #7 are `fixed` 2026-10-06 15:18Z (B15), #8 `fixed` 2026-10-06 17:11Z (B16).
-Still open, and not I13's: #10 (`py/stack-trace-exposure`, open after #135) and #11 (B25).
+Still open, and not I13's: #10 (`py/stack-trace-exposure`, open after #135, which changed values
+CodeQL never followed; measured and filed as **B29**) and #11 (B25). **B29 also found that #9's
+dismissal describes a different value from the one CodeQL flagged:** the SARIF flow for #9 is
+`arr_sync.py:488` → `ArrTagSync._halt()` → the arr report's `halted`, not
+`arr_dry_run_state["error"]`, which the probe above tested. See *B29*, "#9".
 
 B2's trap still applies after dismissal: a PR whose diff re-attributes `preview_image`'s or
 `login`'s signature can re-surface these on the PR check.
