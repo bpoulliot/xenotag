@@ -326,7 +326,8 @@ the param from each call in turn) turned red only that site's own test(s). Suite
   2026-10-10 — re-measure at release time). **U2 removal stays blocked** until that scan's
   deleted-items report shows strip 0 (queue 52's authorisation from 2026-10-06 stands for after
   B26 ships, per the *U2 removal switch* record below). *Both done 2026-10-10: released in v1.11.1,
-  scan 163 reached all 1,134 films, and its report shows strip 0. See Release v1.11.1.*
+  scan 163 reached all 1,134 films, and its report shows strip 0. See Release v1.11.1. U2 removal
+  went live the same day (see *U2, deleted items*).*
 
 **B27 — FILED 2026-10-10 by the v1.11.1 release session (found in production). READY.**
 B25 and B26 are taken, so this takes B27.
@@ -2445,7 +2446,7 @@ operator's own U7 framing treats as meaningful, and it is the only place the bro
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
 | U1 | Tag migration: clean up legacy `mf-*` tags on upgrade from Metafin; `tags.legacy_prefixes` config option | 5 | 2 | **FIXED 2026-09-24** | [#35](https://github.com/bpoulliot/xenotag/issues/35) |
-| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **LIVE report-only (v1.9.0, 2026-09-27)** — removal OFF until the operator switches it · removal **UNBLOCKED 2026-10-10**. It was blocked on B26 (on 2026-10-07 it would have stripped 82 live films' objects, and the operator-authorised switch stopped at its gate). B26 is released in v1.11.1, and that release's full scan reports **strip 0**. Production is still `mode: report`, and the switch is owed (see *U2, deleted items* below) · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
+| U2 | Tag lifecycle: remove stale `xt-*` tags when items are deleted from Jellyfin; handle mtime-preserving re-encodes | 5 | 3 | Deleted items: **removal LIVE 2026-10-10** — production runs `deleted_items: {mode: remove, max_fraction: 0.15}`; the first pass (scan 164) deleted **1,198** index rows (10,661 → 9,463) and stripped **0** \*arr tags, every removed id checked gone (see *U2, deleted items* below). It was report-only from v1.9.0 (2026-09-27) and blocked on B26 until v1.11.1 · re-encodes: NEEDS MEASUREMENT | [#36](https://github.com/bpoulliot/xenotag/issues/36) |
 | U3 | Webhook / event-driven processing: per-item rescan on Sonarr/Radarr/Jellyfin Download events | 5 | 2 | **SHIPPED 2026-05-05** (`53c9f3f`) — item resolution fixed by [B8] (2026-10-06, released in v1.11.0) | [#22](https://github.com/bpoulliot/xenotag/issues/22) |
 | U4 | Subtitle language tagging: write `xt-sub-*` tags to Jellyfin/Sonarr/Radarr (ffprobe extraction already exists) | 4 | 2 | **SHIPPED** (in v1.0.0) | [#11](https://github.com/bpoulliot/xenotag/issues/11) (closed) |
 | U7 | ~~**Ratings ingest**~~ — **CLOSED 2026-09-23, premise was wrong**: xenotag already emits certification ratings from `OfficialRating` | 4 | 2 | **CLOSED** | — |
@@ -2520,7 +2521,7 @@ resolve) so the path is right if one is ever wired. Relabelled **CLOSED**.
      half closes; if not, the size check #36 proposes needs a `file_size` column — an Alembic
      revision (I3, SHIPPED 2026-09-26).
 
-**U2, deleted items — BUILT 2026-09-27; LIVE report-only in v1.9.0 (deployed 2026-09-27 11:40Z). Removal is built, tested on dev, and OFF: the operator's switch.**
+**U2, deleted items — BUILT 2026-09-27; LIVE report-only in v1.9.0 (deployed 2026-09-27 11:40Z). Removal LIVE in production since 2026-10-10 (v1.11.1; the operator's switch, made by an overnight item — see the end of this section).**
 
 The operator's option (c): when a Jellyfin item is gone, a scan deletes its index row and strips
 the managed tags from the \*arr object it owned — behind one report-only release first. The
@@ -2634,6 +2635,52 @@ halted, listing 9,467 (= total = recount), **1,198 confirmed deleted, 0 answered
 **0.1124** (bound 0.15), and **strip_objects 0 / strip_tags 0 on every instance**. Production still
 runs `deleted_items: {mode: report}`. The switch is the operator-authorised overnight item that
 re-checks this report (queued as item 55).
+
+**2026-10-10: removal is LIVE — production runs `deleted_items: {mode: remove, max_fraction: 0.15}`.**
+The overnight item made the switch only after three gates held, and nothing needed rolling back.
+
+- *Gates.* Two reports were checked by `gatecheck.py`, whose self-test breaks each check once and
+  which FAILs the pre-B26 nightly report as a control:
+  - scan 163's report (17:07:30Z);
+  - a fresh report-only pass started from the Settings route (17:25:38Z).
+
+  Both gave the same numbers:
+  - listing 9,467 = `TotalRecordCount` = recount;
+  - **1,198 confirmed deleted, 0 answered by id**, 60/60 controls;
+  - fraction **0.1124** against the 0.15 bound;
+  - **strip 0 objects / 0 tags on all five instances**.
+
+  An independent GET-only check named the same 1,198 rows, id for id: its own listing and its own
+  `Ids=` lookups, self-tested both ways (200 live ids must answer, 200 made-up ids must not).
+- *Backup and switch.*
+  - Backup taken after a clean stop (no WAL): `state.db.bak-20261010-pre-u2-remove` and
+    `deleted-items-report.json.bak-20261010-pre-u2-remove`.
+  - `config.yml` changed by exactly one line: `mode: report` → `mode: remove`. `max_fraction` stays
+    0.15; every other key was compared equal.
+  - Restarted 17:29:31Z, healthy, 0 restarts.
+- *The first removal pass.* It ran at the end of one incremental scan, scan 164 (17:30:41–17:31:22Z,
+  9,467 listed, 3 tagged). Its pass (`mode: remove`, `arr_writes: true`, 17:31:22–17:31:28Z):
+  - **`rows_deleted` 1,198** = `confirmed_deleted`, 0 rows kept;
+  - 322 rows had a live item in the folder (305 radarr/general objects left alone), and 876 had no
+    \*arr object;
+  - **0 objects / 0 tags stripped** on all five instances;
+  - 0 write errors, 0 read-back failures, not halted, not refused.
+- *Verified.*
+  - The index went from 10,661 to **9,463** rows (−1,198), and the scan added 0. The removed set
+    equals the independent prediction exactly.
+  - All 1,198 removed ids: 0 in a fresh complete listing, 0 answer `/Items?Ids=`. Three single-id
+    spot checks return `TotalRecordCount 0`.
+  - GET snapshots of all five \*arrs before and after show **one** change: one radarr/general
+    object `xt-h264` → `xt-av1`. That is the scan's own tag sync (its report: `written 1`), not
+    the pass.
+- *The removal log records strips only.* `deleted-items-removed.jsonl` was not created, because
+  nothing was stripped. A deleted index row can only be recovered from a `state.db` backup; the
+  pre-switch backup holds all 1,198.
+- *From now on* every scan that is not cancelled, the nightly incremental included, deletes the rows
+  of items Jellyfin no longer has. It strips managed tags from an \*arr object only when no live item
+  is in that object's folder. Back out: `mode: report`.
+- Record (titles, so not in this repo): `~/docker/xenotag/u2-remove-20261010/README.md`, with the
+  gate, prediction and diff tools.
 
 **Not covered:** an \*arr object carrying managed tags whose folder holds no live item and that no
 index row points at (a row removed by hand) is never found — 0 exist today (the cross-check above).
