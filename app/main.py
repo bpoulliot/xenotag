@@ -17,6 +17,7 @@ from . import auth as _auth
 from . import metrics
 from .config import AppConfig, get_config, initial_password_path, load_config, log_env_overrides, save_auth
 from .pipeline import run_incremental_scan
+from .reconcile import run_scheduled_reconcile
 from .scheduler import start, stop
 from .state import get_session, init_db, purge_legacy_tags
 from .web.csrf import OriginCheckMiddleware
@@ -90,7 +91,12 @@ async def lifespan(app: FastAPI):
     metrics.seed_from_disk()
     _purge_legacy_tags(cfg)
     _auth.bootstrap(cfg.auth, save_auth, initial_password_path())
-    start(cfg.scan.schedule, lambda: run_incremental_scan(get_config()))
+    start(
+        cfg.scan.schedule,
+        lambda: run_incremental_scan(get_config()),
+        cfg.scan.reconcile_schedule,
+        lambda: run_scheduled_reconcile(get_config()),
+    )
     yield
     stop()
 

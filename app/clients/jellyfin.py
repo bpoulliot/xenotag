@@ -175,15 +175,29 @@ class JellyfinClient:
         from the result -- the caller decides what that means. A failed batch
         raises, like every other read.
         """
+        items = self.get_items_by_ids(item_ids, Fields="Tags", EnableImages="false")
+        return {item_id: item.get("Tags") or [] for item_id, item in items.items()}
+
+    def get_items_by_ids(self, item_ids: list[str], **params: str) -> dict[str, dict]:
+        """Return ``{item id: item}`` read by ``/Items?Ids=``, in batches of ``TAG_READ_BATCH``.
+
+        ``params`` go on every request (``Fields`` above all). With the default
+        ``Fields=ITEM_FIELDS`` an item is complete enough for ``set_managed_tags()``
+        -- the same fields the scan's listing and ``get_item_by_id()`` ask for
+        (roadmap B12(b): a body built from a tags-only read would blank the
+        item's title, genres, studios and locks). An id Jellyfin does not return
+        is absent; a failed batch raises.
+        """
+        params = {"Fields": ITEM_FIELDS, **params}
         ids = list(dict.fromkeys(i for i in item_ids if i))
-        tags: dict[str, list[str]] = {}
+        items: dict[str, dict] = {}
         for start in range(0, len(ids), TAG_READ_BATCH):
             chunk = ids[start : start + TAG_READ_BATCH]
-            data = self._get("/Items", Ids=",".join(chunk), Fields="Tags", EnableImages="false")
+            data = self._get("/Items", Ids=",".join(chunk), **params)
             for item in data.get("Items") or []:
                 if item.get("Id") in chunk:
-                    tags[item["Id"]] = item.get("Tags") or []
-        return tags
+                    items[item["Id"]] = item
+        return items
 
     def get_item_by_id(self, item_id: str) -> dict:
         """Fetch full item metadata via list endpoint (direct /Items/{id} requires extra auth in 10.9+)."""

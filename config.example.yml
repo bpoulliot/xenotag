@@ -39,6 +39,9 @@ scan:
   incremental: true
   path_filters: []        # path prefixes to restrict scanning (e.g. /media/movies); empty = all
   max_workers: 4          # parallel ffprobe workers; lower for slow/spinning disks
+  # Jellyfin tag reconciliation (B12(b)): puts back xt- tags Jellyfin lost. Empty = off.
+  reconcile_schedule: "0 5 * * *"
+  reconcile_write_threshold: 500  # a scheduled pass with MORE items to fix writes none and alerts
 
 tags:
   managed_prefix: "xt-"

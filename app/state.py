@@ -66,7 +66,7 @@ class ScanRun(Base):
     items_scanned = Column(Integer, default=0)
     items_tagged = Column(Integer, default=0)
     items_image_modified = Column(Integer, default=0)
-    scan_type = Column(String)  # "full" | "incremental"
+    scan_type = Column(String)  # "full" | "incremental" | "reconcile" (B12(b))
 
 
 class ScanError(Base):
@@ -334,8 +334,16 @@ def finish_scan_run(session: Session, run: ScanRun, scanned: int, tagged: int, i
         session.commit()
 
 
+RECONCILE_SCAN_TYPE = "reconcile"
+
+
+def scans_only(query):
+    """``query`` without the tag reconciliation pass's rows (roadmap B12(b)): it is not a scan."""
+    return query.filter(or_(ScanRun.scan_type.is_(None), ScanRun.scan_type != RECONCILE_SCAN_TYPE))
+
+
 def get_last_scan(session: Session) -> ScanRun | None:
-    return session.query(ScanRun).order_by(ScanRun.completed_at.desc()).first()
+    return scans_only(session.query(ScanRun)).order_by(ScanRun.completed_at.desc()).first()
 
 
 def get_recent_scans(session: Session, limit: int = 10) -> list[dict]:
