@@ -3376,7 +3376,7 @@ PUID/PGID) — either pin a linuxserver tag that carries 12.2.0 (check that it e
 switch to the official image and re-map its mounts. Then confirm `"Version":"12.2.0"` and that the
 seeded Firefly/Serenity still resolve.
 
-**SHIPPED 2026-10-10.** A matching linuxserver tag exists —
+**SHIPPED 2026-10-10 (PR #152).** A matching linuxserver tag exists —
 `lscr.io/linuxserver/jellyfin:12.2ubu2604-ls53` was pulled fresh into a disposable tmpfs-config
 container and reported `"Version":"12.2.0"` before anything touched the dev `/config` layout, so
 that tag was pinned rather than switching to the official image: same `/config` layout, no mount
