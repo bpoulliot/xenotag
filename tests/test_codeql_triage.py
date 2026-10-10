@@ -16,6 +16,11 @@ only agree with itself.
   ``str(exc)`` of a failed dry run -- the message, never a traceback -- to the
   signed-in admin. CodeQL counts the exception object itself as stack-trace
   information.
+* ``py/stack-trace-exposure`` #10 (``/api/deleted-items/report``, roadmap B29):
+  the stored report's ``reason`` and ``halted`` carry text from the three
+  exceptions CodeQL names (``deleted_items.py`` 364, 366, 539). Measured, not
+  dismissed: no traceback and no API key reaches the response, but an HTTP
+  error's message carries the request URL -- with any ``user:password@`` in it.
 """
 
 from __future__ import annotations
@@ -27,10 +32,12 @@ import threading
 import traceback
 
 import bcrypt
+import httpx
 import pytest
 from fastapi.testclient import TestClient
 
 from app import pipeline
+from app.clients.jellyfin import JellyfinClient
 from app.config import AppConfig, AuthConfig, JellyfinConfig
 
 # ---------------------------------------------------------------------------
@@ -269,3 +276,181 @@ def test_arr_report_is_not_served_without_a_session(report):
     resp = report.get("/api/arr-sync/report")
     assert resp.status_code == 401
     assert "marker-9f2d" not in resp.text
+
+
+# ---------------------------------------------------------------------------
+# py/stack-trace-exposure #10 -- /api/deleted-items/report's "report" (B29)
+# ---------------------------------------------------------------------------
+#
+# CodeQL's three sources, each forced through the REAL pass and read back
+# through the REAL route (the pass stores its report in ``_last_report``; the
+# route returns ``load_report()``):
+#
+#   364  ``except PassAborted``  -> report["reason"]   (an *arr preload fails)
+#   366  ``except Exception``    -> report["reason"]   (the Jellyfin listing fails)
+#   539  a strip's ``except``    -> report["halted"]   (an *arr write fails)
+
+_JF_KEY = "SENTINEL-JF-KEY-0a7e"
+_ARR_KEY = "SENTINEL-ARR-KEY-3b9d"
+# A sentinel, never a credential: the probe looks for it in the response.
+_URL_PASSWORD = "SENTINEL-URL-PW-61c2"  # noqa: S105
+_TRACE_MARKERS = ("Traceback", 'File "', ".py")
+
+
+def _strings(value) -> list[str]:
+    """Every string in a decoded JSON body. Checking the raw body would miss
+    ``File "``, which JSON escapes to ``File \\"``."""
+    if isinstance(value, str):
+        return [value]
+    if isinstance(value, dict):
+        return [s for k, v in value.items() for s in (*_strings(k), *_strings(v))]
+    if isinstance(value, list):
+        return [s for v in value for s in _strings(v)]
+    return []
+
+
+def _leaks(body: dict, secrets=(_JF_KEY, _ARR_KEY, _URL_PASSWORD)) -> list[str]:
+    text = "\n".join(_strings(body))
+    return [m for m in (*_TRACE_MARKERS, *secrets) if m in text]
+
+
+@pytest.fixture
+def deleted_route(monkeypatch, tmp_path):
+    """The real deleted-items pass and route, over fakes, with sentinel keys in the clients."""
+    from app import deleted_items
+    from app.clients.radarr import RadarrClient
+    from app.main import app
+    from app.web import routes
+    from tests.test_deleted_items import FakeJellyfin, cfg, scenario
+
+    monkeypatch.setattr(deleted_items, "_last_report", None)
+    monkeypatch.setattr(deleted_items, "state", {"running": False, "error": None})
+    monkeypatch.setattr(deleted_items, "report_path", lambda: tmp_path / "deleted-items-report.json")
+    monkeypatch.setattr(routes, "_require_user", lambda request: "admin")
+
+    jf, db, _sonarr, radarr = scenario(tmp_path)
+    urls = {"jf": "http://jf", "arr": "http://r0"}
+
+    def build(cfg_, *, arr_writable, guards):
+        client = JellyfinClient(urls["jf"], _JF_KEY, transport=httpx.MockTransport(jf.handle))
+        arr = RadarrClient(urls["arr"], _ARR_KEY, "r0", transport=httpx.MockTransport(radarr.handle))
+        return client, [], [arr]
+
+    monkeypatch.setattr(deleted_items, "_build_clients", build)
+
+    def run(mode: str = "report") -> dict:
+        c = cfg(mode, "live")
+        monkeypatch.setattr(routes, "get_config", lambda: c)
+        deleted_items.run_deleted_items(c, db_path=db, store=True)  # the real pass, stored as a scan stores it
+        resp = TestClient(app).get("/api/deleted-items/report")
+        assert resp.status_code == 200
+        return resp.json()
+
+    return run, jf, radarr, urls, FakeJellyfin
+
+
+def _force(source: str, jf, radarr) -> str:
+    """Make one CodeQL source fire; return the pass mode it needs."""
+    if source == "364":
+        radarr.fail_status = {"GET": 503}  # preload fails -> PassAborted("could not read ...")
+        return "report"
+    if source == "366":
+        jf.fail_on_page = 1  # listing answers 500 -> httpx.HTTPStatusError
+        return "report"
+    radarr.fail_status = {"PUT": 500}  # 539: the strip's write fails -> _halt(...)
+    return "remove"
+
+
+def _fired(source: str, report: dict) -> str:
+    """The text the source wrote; asserts the source really fired."""
+    if source == "539":
+        assert report["halted"], report
+        return report["halted"]
+    assert report["status"] == "aborted" and report["reason"], report
+    return report["reason"]
+
+
+SOURCES = ["364", "366", "539"]
+
+
+@pytest.mark.parametrize("source", SOURCES)
+def test_deleted_items_report_carries_no_traceback_and_no_key(deleted_route, source):
+    run, jf, radarr, urls, _ = deleted_route
+    body = run(_force(source, jf, radarr))
+    text = _fired(source, body["report"])
+    assert _leaks(body) == [], (source, text)
+
+
+@pytest.mark.parametrize("source", SOURCES)
+def test_deleted_items_probe_sees_a_leak_when_there_is_one(deleted_route, monkeypatch, source):
+    """Control the other way: a pass that DID put the traceback and the keys in its
+    report is caught by the same probe, through the same route."""
+    from app import deleted_items
+
+    def leaky(original):
+        def wrapper(self, reason):
+            original(self, f"{reason}\n{traceback.format_exc()} {_JF_KEY} {_ARR_KEY} {_URL_PASSWORD}")
+
+        return wrapper
+
+    monkeypatch.setattr(deleted_items.DeletedItemsPass, "_abort", leaky(deleted_items.DeletedItemsPass._abort))
+    monkeypatch.setattr(deleted_items.DeletedItemsPass, "_halt", leaky(deleted_items.DeletedItemsPass._halt))
+    run, jf, radarr, urls, _ = deleted_route
+    body = run(_force(source, jf, radarr))
+    _fired(source, body["report"])
+    assert _leaks(body) == [*_TRACE_MARKERS, _JF_KEY, _ARR_KEY, _URL_PASSWORD]
+
+
+def test_deleted_items_route_survives_an_unreadable_report_file(deleted_route, monkeypatch, tmp_path):
+    """No report in memory and a report path that cannot be read (a directory):
+    ``load_report()`` swallows the OSError and the route answers ``report: null``."""
+    from app import deleted_items
+    from app.main import app
+    from app.web import routes
+    from tests.test_deleted_items import cfg
+
+    blocked = tmp_path / "unreadable"
+    blocked.mkdir()
+    monkeypatch.setattr(deleted_items, "report_path", lambda: blocked)
+    monkeypatch.setattr(routes, "get_config", lambda: cfg())
+    with pytest.raises(IsADirectoryError):
+        blocked.read_text()  # control: the read really fails
+    body = TestClient(app).get("/api/deleted-items/report").json()
+    assert body["report"] is None and body["error"] is None and _leaks(body) == []
+
+
+# What B29's fix changes. These pin the residual the probe found, so the fix
+# must flip them on purpose: an HTTP error's message is the request URL.
+
+
+@pytest.mark.parametrize("source", ["366", "539"])
+def test_cq10_residual_an_http_error_puts_the_request_url_in_the_report(deleted_route, source):
+    run, jf, radarr, urls, _ = deleted_route
+    urls["jf"], urls["arr"] = "http://jf-internal.example:8096", "http://r0-internal.example:7878"
+    body = run(_force(source, jf, radarr))
+    text = _fired(source, body["report"])
+    host = "jf-internal.example:8096" if source == "366" else "r0-internal.example:7878"
+    assert "HTTPStatusError" in text and f"for url 'http://{host}/" in text, text
+
+
+@pytest.mark.parametrize("source", ["366", "539"])
+def test_cq10_residual_a_password_in_the_configured_url_reaches_the_response(deleted_route, source):
+    """httpx quotes the URL with its userinfo, so a ``http://user:password@host``
+    Jellyfin or *arr URL puts the password in the report -- and in the ntfy for a halt."""
+    run, jf, radarr, urls, _ = deleted_route
+    urls["jf"] = f"http://xt:{_URL_PASSWORD}@jf"
+    urls["arr"] = f"http://xt:{_URL_PASSWORD}@r0"
+    body = run(_force(source, jf, radarr))
+    _fired(source, body["report"])
+    assert _leaks(body) == [_URL_PASSWORD]
+
+
+def test_cq10_source_364_messages_are_built_by_the_pass_not_copied_from_an_error(deleted_route):
+    """364's text is PassAborted's own message: instance labels, counts, page numbers.
+    Even with a password in the *arr URL it is not there (the label is the instance name)."""
+    run, jf, radarr, urls, _ = deleted_route
+    urls["arr"] = f"http://xt:{_URL_PASSWORD}@r0"
+    body = run(_force("364", jf, radarr))
+    assert body["report"]["reason"] == "could not read radarr/r0: rows owned there cannot be judged"
+    assert body["report"]["instances"]["radarr/r0"]["error"] == "HTTPStatusError"
+    assert _leaks(body) == []
