@@ -43,7 +43,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12(a) | **U9's drift check and B17's read-back compare Jellyfin tags case-sensitively; Jellyfin does not.** Split from B12 on 2026-10-09. Since B5 the \*arr NFO merge respells 82% of items in lowercase (`xt-aac` for `xt-AAC` — no loss, Jellyfin's `Tags=` ignores case), so `_tag_drift()` warns on every one at each full scan: scan 158 logged 6,704 drift lines, 6,700 case-only. | 3 | 1 | **READY** (split 2026-10-09; no decision needed) — compare case-insensitively in `_tag_drift()` and B17's read-back | — |
-| B12(b) | **Jellyfin loses xenotag's tags and nothing notices** (the original B12). A replace-all metadata refresh (~8,000 items on 2026-09-04) or an item re-created by Jellyfin drops the `xt-` tags, and the mtime-driven scan never goes back to an unchanged file. | 3 | 2 | **NEEDS DECISION** (narrowed 2026-10-09): the operator chose a reconciliation pass on a **schedule** plus a **manual rescan** option; open: its default cadence (recommend daily, after the scan) and whether it also re-writes the \*arrs (recommend no). Builds after B12(a). Measured 2026-10-07, [docs/measurements/b12-tag-loss.md](docs/measurements/b12-tag-loss.md) | — |
+| B12(b) | **Jellyfin loses xenotag's tags and nothing notices** (the original B12). A replace-all metadata refresh (~8,000 items on 2026-09-04) or an item re-created by Jellyfin drops the `xt-` tags, and the mtime-driven scan never goes back to an unchanged file. | 3 | 2 | **NEEDS DECISION** (narrowed twice 2026-10-09): **decided** — a reconciliation pass on its own schedule `scan.reconcile_schedule`, default daily `0 5 * * *` (after the 03:00 scan), plus a **manual rescan** option; **open:** Jellyfin only or the \*arrs too (recommend Jellyfin only, not yet accepted), and the mass-write guard (per-run write threshold that halts + notifies / notify and continue / a time cap / none). Builds after B12(a). Measured 2026-10-07, [docs/measurements/b12-tag-loss.md](docs/measurements/b12-tag-loss.md) | — |
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **SHIPPED 2026-10-06** ([#122](https://github.com/bpoulliot/xenotag/pull/122)) · **RELEASED v1.11.0** (2026-10-07) — its first scan was the full re-tag with live \*arr writes (see *Release v1.11.0* below) | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116)) · **RELEASED v1.11.0** (2026-10-07) | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115)) · **RELEASED v1.11.0** (2026-10-07) | — |
@@ -57,7 +57,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | **SHIPPED 2026-10-06** ([#129](https://github.com/bpoulliot/xenotag/pull/129)) · **RELEASED v1.11.0** (2026-10-07) — `preview_image()` now builds its `AppConfig` with `tags=get_config().tags`; default (all `poster`) stays byte-identical | — |
 | B24 | **`/health` reports Jellyfin unreachable without ever contacting it — and the container healthcheck only ever reads that answer.** For a caller with no web session `health()` returns early with a *fabricated* verdict, `jellyfin={"ok": False, "status": "unreachable", "message": "Not authenticated"}` (`app/web/routes.py:175-183`), so a perfectly healthy Jellyfin is reported as down; the message describes the **caller's** missing cookie, not the dependency. `docker-compose.yml:30-34` sets the healthcheck to `curl -f http://localhost:7755/health`, which carries no cookie, so it always takes that branch — and because the branch still returns **HTTP 200 with `status: "ok"`**, `curl -f` can never fail on a dependency problem. The one endpoint whose job is to report dependency health is structurally unable to: unauthenticated it invents the answer, and authenticated it hardcodes `status="ok"` (`:195`) whatever `jf.health()` returned. **Measured 2026-10-06** while verifying the Jellyfin 10.11→12.2 upgrade (`~/docker` TODO I62): prod xenotag reported `jellyfin: unreachable / Not authenticated` while its configured API key was byte-identical to Jellyfin's, `jellyfin:8096` answered 200 from inside the container, and tags read back correctly by `Ids=` — it cost real diagnosis time and briefly looked like an upgrade regression. Fix: either exempt `/health` from the session gate (it leaks only up/down, and the port is bound to `127.0.0.1`) or give the probe its own unauthenticated liveness route and keep the authenticated one for the UI; in both cases report an **unknown** dependency as unknown rather than as `unreachable`, and let `status` follow the checks. | 3 | 1 | **SHIPPED 2026-10-07** ([#132](https://github.com/bpoulliot/xenotag/pull/132)) · **RELEASED v1.11.0** (2026-10-07) — exempted from the session gate; unauthenticated callers get `status: "up"` only, authenticated callers keep full detail with `status` computed from the real checks | — |
 | B25 | **An \*arr `api_key_file` can name any file the container can read** (CodeQL #11, `py/path-injection`, `app/config.py:538`). `_apply_arr_key_files()` reads whatever path the row names and sends the contents as that instance's `X-Api-Key`, to a URL the same row sets. Only an admin can set it (config.yml / raw YAML editor). | 2 | 1 | **READY** (operator decided 2026-10-09: allowed roots = `/run/secrets` **only**, option (a)) — fixes CodeQL #11 | — |
-| B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **READY** (measured 2026-10-07) — blocks U2 removal. *Note 2026-10-09 (operator: "an extra API param? a setting?"):* yes, one query parameter, `CollapseBoxSetItems=false`, on every recursive Movie/Series `/Items` listing (four call sites, below); no downside measured; **not a setting** — the collapsed answer is never right for a tagger | — |
+| B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **READY** (measured 2026-10-07) — blocks U2 removal. *Note 2026-10-09 (operator: "an extra API param? a setting?"):* yes, one query parameter, `CollapseBoxSetItems=false`, on every recursive Movie/Series `/Items` listing (four call sites, below); no downside measured; **not a setting** — the collapsed answer is never right for a tagger. **DECIDED 2026-10-09 (second round): no setting — always send `CollapseBoxSetItems=false` at all four sites** | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -221,6 +221,11 @@ clients; xenotag needs every file. It is not something an operator would want to
 "not determined" (whether a server/user setting drives the default) is exactly why the client should send
 it explicitly rather than inherit it. **Recommendation: hard-code `CollapseBoxSetItems=false` at the four
 sites, no setting.** Still to check in the build, as above: dev 12.1.0 and the 10.11.10 lab honour it.
+
+**OPERATOR DECISION 2026-10-09 (second round): B26 gets NO setting.** xenotag always sends
+`CollapseBoxSetItems=false` on every recursive Movie/Series `/Items` listing — the four sites above
+(`_fetch_items()`, `complete_listing()`'s pages and its recount, and the two Preview sample helpers).
+There is no config key, no UI control and no way to turn it off. B26 stays **READY**.
 
 **B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113)); released in v1.11.0 (2026-10-07).**
 `_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
@@ -882,6 +887,23 @@ on exactly the 747.
      thousands of items in one run — the v1.11.0 re-tag's scale, hours under host load. It is the repair
      working as intended, but the operator may want a per-run write cap, or a log/ntfy line when it
      writes more than N items. Posters are out of scope: the pass restores tags, not overlays.
+
+**OPERATOR DECISION 2026-10-09 (second round) — B12(b)'s cadence is ACCEPTED.**
+
+- **Decided (open question 1):** the pass has **its own setting, `scan.reconcile_schedule`** (a cron
+  string; empty = off, like `scan.schedule`), **default daily `0 5 * * *`** — after the 03:00 scan. The
+  manual rescan option decided earlier stays: both triggers run the same pass.
+- **Still open — question 2, scope.** Jellyfin only, or the \*arrs too. The recommendation is
+  **Jellyfin only** (reasons in point 2 above); the operator has **not yet accepted** it.
+- **Still open — question 3, the mass-write guard.** The operator asked why the guard would cap
+  *writes per run* rather than *job time*, or have no cap at all, and will decide after an explanation.
+  The options on the table: (i) a **per-run write threshold** — past N writes the pass halts and
+  notifies, so a mass wipe is repaired only after the operator looks; (ii) **notify and continue** —
+  past N writes it sends one ntfy/log line and finishes the repair; (iii) a **time cap** — the pass
+  stops after T minutes and the next run resumes; (iv) **no cap**. No recommendation is recorded as
+  accepted.
+
+B12(b) therefore stays **NEEDS DECISION** on questions 2 and 3 only; B12(a) is READY regardless.
 
 *The filing, as written on 2026-09-26:*
 
@@ -3385,12 +3407,26 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **READY — unblocked 2026-10-06:** [B21] shipped (#124) (decided 2026-09-26; work held in PR #95, which needs `main` merged; its self-test passes with B21 in) | — |
+| P6 | **Background-aware palette (main + backup)** — sample the poster region under each badge and pick the palette that contrasts with it. | 4 | 4 | **READY (approved 2026-10-09)** — build the Settings UI on [#134](https://github.com/bpoulliot/xenotag/pull/134) (branch `feat/p6-rebase`, `HOLD:`) before it merges; L 0.12 and the per-drawn-row reading signed off. #95 is closed | — |
 | P7 | ~~Overlay density / simplification — fewer, clearer badges by default.~~ **Redirected 2026-09-23: pills always inside the poster margins, plus a preferred order** — nothing hidden. **Containment measured 2026-09-26:** pills never cross the margin at defaults, but only because the layout hides metadata (1.3% of items). | 4 | 3 | Containment: **SHIPPED 2026-10-06** ([#126](https://github.com/bpoulliot/xenotag/pull/126)) · **RELEASED v1.11.0** (2026-10-07) — (d), 2-row budget, counted `+N`, stack clamped · ordering: **SHIPPED 2026-09-27; LIVE (v1.10.0)** | — |
 | P8 | **Brand assets: icon, wordmark, favicon set** — replace the Metafin-era dragonfish mark everywhere it renders. | 3 | 2 | **SHIPPED 2026-09-23** | — |
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
 | P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | **CLOSED 2026-09-25 — keep the PNGs** | — |
+
+**OPERATOR DECISION 2026-10-09 (second round) — P6 APPROVED as recommended. READY.** The work is the
+rebase held in [#134](https://github.com/bpoulliot/xenotag/pull/134) (branch `feat/p6-rebase`); #95 is
+closed, so do not redo the rebase.
+
+- **Threshold L 0.12 — signed off** (the AAA boundary a single threshold can serve; numbers below).
+- **Decision (1a) under P7's layout — the per-drawn-row reading is confirmed.** Each drawn row decides by
+  the poster under **its own strip**, so a wrap row decides independently of the row above it; a `+N`
+  pill follows the backup of the group it counts; groups that share a main colour share a backup.
+- **Settings UI — to be built ON #134 before it merges:** (a) one checkbox, "adapt badge colours to the
+  poster", **off by default**, with the note that it only matters below 100 % opacity; (b) four backup
+  colour pickers (`backup_{video,audio,sub,rating}_badge_color`) carrying the same contrast warning the
+  main pickers carry; (c) the Preview passes the checkbox and the four backup colours through (the routes
+  already accept `adapt` and `backup_*_color`). #134 then loses its `HOLD:` and merges on green.
 
 **P6 — KEPT 2026-09-23, explicitly as polish.** The operator: *"I still like the p6 idea and
 think there's value to ensuring accessibility while allowing things like opacity and glow.
