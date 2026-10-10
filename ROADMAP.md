@@ -3311,7 +3311,7 @@ webhook resolves the wrong item.)*
 | I11 | **The test client runs on a deprecated transport** — `starlette.testclient` over `httpx` logs `StarletteDeprecationWarning: … install httpx2 instead` | 2 | 1 | **SHIPPED 2026-10-06** (#118) · **RELEASED v1.11.0** (2026-10-07) | — |
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
 | I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure. **Triaged 2026-09-27:** five are false positives (probes committed); #6/#7 → B15, #8 → B16. What remains is dismissing the five on GitHub with the reasons recorded below | 3 | 1 | **DONE 2026-10-07** — #1, #3, #4, #5, #9 dismissed on GitHub as *false positive* with the comments below; #6/#7 fixed by B15, #8 by B16 (verified by `gh api` 2026-10-09) | — |
-| I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **READY** (2026-10-09) — production has run Jellyfin **12.2.0** (`jellyfin/jellyfin:12.2`) since 2026-10-06, so the 2026-10-05 decision can be built: move jellyfin-dev to 12.2 | — |
+| I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **SHIPPED 2026-10-10** — `jellyfin-dev` pinned to `lscr.io/linuxserver/jellyfin:12.2ubu2604-ls53` (confirmed `"Version":"12.2.0"`, matching production); migrated the existing dev database forward in place | — |
 | I15 | **Release image registry (~/docker I59 decision 4)** — stay on ghcr, move to the Gitea registry (`registry.bitmapserv.org`), push to both, or mirror from the host | 2 | 2 | **NEEDS DECISION** (measured 2026-10-10, [`docs/measurements/i59-image-registry.md`](docs/measurements/i59-image-registry.md)); recommendation **(A) stay on ghcr** | — |
 
 **I15 — FILED 2026-10-10 from ~/docker I59 (operator, 2026-10-09: "decision 4 — measure first"). NEEDS
@@ -3375,6 +3375,20 @@ linuxserver image, whose `/config` layout differs from the official image's (`/c
 PUID/PGID) — either pin a linuxserver tag that carries 12.2.0 (check that it exists before pinning) or
 switch to the official image and re-map its mounts. Then confirm `"Version":"12.2.0"` and that the
 seeded Firefly/Serenity still resolve.
+
+**SHIPPED 2026-10-10.** A matching linuxserver tag exists —
+`lscr.io/linuxserver/jellyfin:12.2ubu2604-ls53` was pulled fresh into a disposable tmpfs-config
+container and reported `"Version":"12.2.0"` before anything touched the dev `/config` layout, so
+that tag was pinned rather than switching to the official image: same `/config` layout, no mount
+remap, no PUID/PGID change. `docker-compose.dev.yml`'s `jellyfin-dev.image` line is the only diff.
+Backed up `~/.mf-dev/configs/jellyfin` to `~/.mf-dev/configs/jellyfin.bak-12.1-20261010` (copy, not
+move) before the first start on the new tag. First start on the existing (12.1-migrated) config
+applied two more code migrations (`FixNullEncoderPreset`, `MakeOwnerIdIndexesPartial`) and came up
+`"Version":"12.2.0"`, `StartupWizardCompleted: true` — the existing library survived. Firefly
+(sonarr-dev series 1) and Serenity (radarr-dev movie 1) both still resolve as Jellyfin items at
+their original paths (`/Items?SearchTerm=`, via the stored `metafin` API key — note Jellyfin 12.2
+wants it as `Authorization: MediaBrowser Token="…"`, not the `X-Emby-Token` header B8 used on
+10.11.10/12.1). All dev services stopped after the check; the 12.1 backup is kept.
 
 **Sweep 2026-09-26 — I1–I6.**
 
