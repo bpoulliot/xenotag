@@ -58,9 +58,9 @@ _BADGE_SIZE_PX: dict[str, int] = {"desktop": 56, "tv": 72, "tv_plus": 88}
 # (7:1) at 65% opacity -- and that boundary barely moves with opacity (grey 94
 # at 50%, 98 at 65%, 109 at 80%), which is what lets one threshold serve the
 # whole slider. scripts/measure_adaptive_palette.py re-derives it.
-# PROVISIONAL: measured through B1's instrument at 65% opacity, which the poster
-# path matches since roadmap B21 (#124); the probe's self-test compares the two.
-# Awaiting the operator's sign-off -- do not tune it without one.
+# Measured through B1's instrument at 65% opacity, which the poster path matches
+# since roadmap B21 (#124); the probe's self-test compares the two. Signed off by
+# the operator on 2026-10-09 -- do not tune it without a new decision.
 ADAPT_LUMINANCE_THRESHOLD = 0.12
 
 

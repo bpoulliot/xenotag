@@ -290,10 +290,15 @@ forces no re-tag.
 | `image.audio_badge_color` | string | `"#312c4c"` | Audio badge fill color (hex) |
 | `image.sub_badge_color` | string | `"#50532f"` | Subtitle badge fill color (hex) |
 | `image.rating_badge_color` | string | `"#73485b"` | Rating badge fill color (hex) |
+| `image.adapt_badge_colors` | bool | `false` | Adapt badge colours to the poster: a badge row whose poster region is light draws in the backup colours below instead. Only matters below `badge_opacity` `1.0` — an opaque badge hides the poster. Off, the backup colours are never read. |
+| `image.backup_video_badge_color` | string | `"#0c332d"` | Video backup fill (with `adapt_badge_colors`) |
+| `image.backup_audio_badge_color` | string | `"#120c2a"` | Audio backup fill (with `adapt_badge_colors`) |
+| `image.backup_sub_badge_color` | string | `"#332d0c"` | Subtitle backup fill (with `adapt_badge_colors`) |
+| `image.backup_rating_badge_color` | string | `"#1f0001"` | Rating backup fill (with `adapt_badge_colors`) |
 | `image.badge_palette_version` | int | `2` | Internal: which default palette this config has been migrated to. Leave it alone — it is what stops the migration re-running over a colour you chose. |
 | `image.badge_text_color` | string | `"#ffffff"` | Badge text color (hex) |
 
-The five colour keys accept anything Pillow reads as a plain RGB colour — `#rrggbb`, `#rgb`, a colour name such as `red`, `rgb(255,0,0)` — and store it as `#rrggbb`. A colour with an alpha channel (`#rrggbbaa`, `rgba(…)`) is not accepted, because opacity is `badge_opacity`'s job. An unreadable colour in `config.yml` falls back to that key's default with a warning in the log; saving one from Settings or the raw YAML editor is refused.
+The nine colour keys accept anything Pillow reads as a plain RGB colour — `#rrggbb`, `#rgb`, a colour name such as `red`, `rgb(255,0,0)` — and store it as `#rrggbb`. A colour with an alpha channel (`#rrggbbaa`, `rgba(…)`) is not accepted, because opacity is `badge_opacity`'s job. An unreadable colour in `config.yml` falls back to that key's default with a warning in the log; saving one from Settings or the raw YAML editor is refused.
 
 ### Auth
 

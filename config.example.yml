@@ -73,6 +73,13 @@ image:
   audio_badge_color:  "#312c4c"
   sub_badge_color:    "#50532f"
   rating_badge_color: "#73485b"
+  # Adapt to the poster (off by default; only matters with badge_opacity < 1.0):
+  # a row over a light region draws in these backup fills instead.
+  adapt_badge_colors: false
+  backup_video_badge_color:  "#0c332d"
+  backup_audio_badge_color:  "#120c2a"
+  backup_sub_badge_color:    "#332d0c"
+  backup_rating_badge_color: "#1f0001"
   badge_palette_version: 2   # leave as-is; marks the default-palette migration done
   show_video_badges:  true
   show_audio_badges:  true
