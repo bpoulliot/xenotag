@@ -568,3 +568,13 @@ def test_a_cancelled_pass_leaves_the_alarm_alone(env):
     reconcile.progress.cancel()
     report = reconcile._run_reconcile(AppConfig(), reconcile.MANUAL)
     assert report["outcome"] == "cancelled" and _value("xenotag_reconcile_halted") == 1
+
+
+def test_the_page_has_the_button_and_saves_both_settings():
+    from pathlib import Path
+
+    html = (Path(__file__).resolve().parent.parent / "app" / "web" / "templates" / "index.html").read_text()
+    assert "triggerScan('reconcile')" in html  # -> POST /scan/reconcile, beside the scan buttons
+    assert "reconcile_schedule: document.getElementById('s-reconcile-schedule')" in html
+    assert "reconcile_write_threshold:" in html and 'id="s-reconcile-threshold"' in html
+    assert "s.scan?.reconcile_schedule" in html and "s.scan?.reconcile_write_threshold" in html
