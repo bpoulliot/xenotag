@@ -86,15 +86,17 @@ def _drift_count():
 
 def test_drift_is_warned_once_naming_the_item_and_the_tags(session, tmp_path, caplog):
     _row(session, "a", ROW)
-    # B12's shape plus the *arrs' NFO route: two tags gone, a lowercase variant added.
-    item = _item("a", ["xt-1080p", "xt-H264", "xt-aac", "xt-PG", "luxe", "heist"], "/m/a")
+    # Two tags gone and one never-written tag added, plus the *arrs' NFO route's lowercase
+    # respelling of xt-AAC -- a case-only difference (B12(a)), not reported.
+    item = _item("a", ["xt-1080p", "xt-H264", "xt-aac", "xt-4K", "luxe", "heist"], "/m/a")
     before = _drift_count()
     with caplog.at_level(logging.WARNING, logger="app.pipeline"):
         _process(session, item, tmp_path)
     [line] = _drift_lines(caplog)
     msg = line.getMessage()
     assert "Film a (a)" in msg
-    assert "['xt-aac']" in msg and "['xt-AAC', 'xt-EN']" in msg
+    assert "['xt-4K']" in msg and "['xt-EN', 'xt-PG']" in msg
+    assert "xt-aac" not in msg
     assert "luxe" not in msg and "heist" not in msg
     assert "\n" not in msg
     assert _drift_count() == before + 1
@@ -116,6 +118,29 @@ def test_no_drift_is_silent(session, tmp_path, caplog):
         _process(session, _item("a", list(reversed(ROW)), "/m/a"), tmp_path)
     assert _drift_lines(caplog) == []
     assert _drift_count() == before
+
+
+def test_a_case_only_respelling_is_not_drift(session, tmp_path, caplog):
+    """B12(a): the *arrs' NFO merge respells every tag in lowercase; Jellyfin ignores case."""
+    _row(session, "a", ROW)
+    before = _drift_count()
+    with caplog.at_level(logging.WARNING, logger="app.pipeline"):
+        _process(session, _item("a", [t.lower() for t in ROW], "/m/a"), tmp_path)
+    assert _drift_lines(caplog) == []
+    assert _drift_count() == before
+
+
+def test_a_genuinely_missing_tag_is_still_drift_beside_case_only_ones(session, tmp_path, caplog):
+    """B12(a): a case-only respelling and a real loss together report only the real one."""
+    _row(session, "a", ROW)
+    item = _item("a", [t.lower() for t in ROW if t != "xt-PG"], "/m/a")
+    before = _drift_count()
+    with caplog.at_level(logging.WARNING, logger="app.pipeline"):
+        _process(session, item, tmp_path)
+    [line] = _drift_lines(caplog)
+    msg = line.getMessage()
+    assert "did not write [] and lacks ['xt-PG']" in msg
+    assert _drift_count() == before + 1
 
 
 def test_a_difference_outside_the_managed_prefix_is_not_drift(session, tmp_path, caplog):
@@ -201,3 +226,10 @@ def test_tag_drift_unit():
     assert pipeline._tag_drift(["xt-A"], MediaState(tags_applied="not json"), "xt-") is None
     assert pipeline._tag_drift([], MediaState(tags_applied="[]"), "xt-") is None
     assert pipeline._tag_drift(["xt-A"], MediaState(tags_applied="[]"), "xt-") == (["xt-A"], [])
+
+
+def test_tag_drift_unit_case_insensitive():
+    """B12(a): a case-only respelling is not drift; a real difference beside one still is."""
+    row = MediaState(item_id="jellyfin:x", source="jellyfin", tags_applied=json.dumps(["xt-A", "xt-B"]))
+    assert pipeline._tag_drift(["xt-a", "xt-b"], row, "xt-") is None
+    assert pipeline._tag_drift(["xt-a", "xt-C"], row, "xt-") == (["xt-C"], ["xt-B"])

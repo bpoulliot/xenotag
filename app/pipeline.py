@@ -183,6 +183,11 @@ def _close_clients(jf: JellyfinClient, sonarrs: list[SonarrClient], radarrs: lis
         c.close()
 
 
+def _tags_match_ci(a: list[str], b: list[str]) -> bool:
+    """Equal sets of tags once case is folded (roadmap B12(a)) -- Jellyfin's own ``Tags=`` compare."""
+    return {t.casefold() for t in a} == {t.casefold() for t in b}
+
+
 def _tag_drift(current: list[str], row: MediaState | None, prefix: str) -> tuple[list[str], list[str]] | None:
     """Roadmap U9: managed tags Jellyfin carries that xenotag did not write, and the reverse.
 
@@ -191,6 +196,12 @@ def _tag_drift(current: list[str], row: MediaState | None, prefix: str) -> tuple
     vocabulary change (B9's respelling, a new tag) is not drift: an item nobody
     touched still carries exactly its row's old spelling. No row, or a row with
     nothing recorded, is a first write and returns None; so does no difference.
+
+    The compare is case-insensitive (roadmap B12(a)): the *arrs' NFO merge
+    respells existing tags in lowercase, and Jellyfin itself matches tags
+    without regard to case, so that is not drift. A tag that is genuinely
+    missing or extra is still reported, spelled as Jellyfin and the row
+    actually carry it.
     """
     if row is None or row.tags_applied is None:
         return None
@@ -200,9 +211,13 @@ def _tag_drift(current: list[str], row: MediaState | None, prefix: str) -> tuple
         return None
     had = {t for t in applied if isinstance(t, str) and t.startswith(prefix)}
     has = {t for t in current if t.startswith(prefix)}
-    if had == has:
+    if _tags_match_ci(had, has):
         return None
-    return sorted(has - had), sorted(had - has)
+    had_cf = {t.casefold() for t in had}
+    has_cf = {t.casefold() for t in has}
+    added = sorted(t for t in has if t.casefold() not in had_cf)
+    missing = sorted(t for t in had if t.casefold() not in has_cf)
+    return added, missing
 
 
 def _warn_tag_drift(session: object, jf: JellyfinClient, item: dict, prefix: str) -> None:
@@ -343,6 +358,12 @@ def _record_after_readback(
     that were *read* are recorded, with one WARNING and a count. An item that
     cannot be read, or whose retry raises, is not recorded, so the next scan
     reaches it again.
+
+    "Read back as written" is case-insensitive (roadmap B12(a)): the *arrs'
+    NFO merge respells existing tags in lowercase, and Jellyfin matches tags
+    without regard to case, so a read-back that differs from what was sent
+    only by case is a match, and what was *sent* is recorded, not what was
+    read.
     """
     if not pending:
         return
@@ -366,7 +387,7 @@ def _record_after_readback(
         tags = current.get(p.item.get("Id", ""))
         if tags is None:
             missing(p)
-        elif set(managed(tags)) == set(managed(p.written)):
+        elif _tags_match_ci(managed(tags), managed(p.written)):
             _record(session, p, p.written)
         else:
             undone.append((p, tags))
@@ -401,19 +422,21 @@ def _record_after_readback(
             missing(p)
             continue
         read = managed(tags)
-        wanted = set(managed(p.written))
-        if set(read) == wanted:
+        wanted = managed(p.written)
+        if _tags_match_ci(read, wanted):
             readback.fixed += 1
             metrics.tag_writeback_mismatch(metrics.MISMATCH_FIXED)
             _record(session, p, p.written)
             continue
+        wanted_cf = {t.casefold() for t in wanted}
+        read_cf = {t.casefold() for t in read}
         log.warning(
             "Tag write did not stick: %s (%s) — after one retry Jellyfin lacks %s and has %s not written; "
             "recording what it has (roadmap B17)",
             p.item.get("Name"),
             p.item.get("Id"),
-            sorted(wanted - set(read)),
-            sorted(set(read) - wanted),
+            sorted(t for t in wanted if t.casefold() not in read_cf),
+            sorted(t for t in read if t.casefold() not in wanted_cf),
         )
         readback.unresolved += 1
         metrics.tag_writeback_mismatch(metrics.MISMATCH_UNRESOLVED)
