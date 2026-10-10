@@ -43,7 +43,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B10 | **Setting the tags to top-left drew them over the content rating.** The rating was hardwired to top-left in `render_badge_groups()` and nothing consulted `badge_position`, so the two landed on the same spot — and the README said the rating was always *top-right*. | 4 | 2 | **FIXED 2026-09-25** | — |
 | B11 | **The \*arr dry run predicts writes no scan will make.** `run_arr_dry_run()` computes each owned item's tags from its `state.db` row, but `_run_scan()` skips `no_path`/`no_file`/`probe_failed` items before tagging — so their rows are stale and a live scan writes nothing for them. On 2026-09-26, 9 of sonarr/general's 1,061 "would change" were series whose folders hold **no video file at all**. | 2 | 1 | **FIXED 2026-09-26** | — |
 | B12(a) | **U9's drift check and B17's read-back compare Jellyfin tags case-sensitively; Jellyfin does not.** Split from B12 on 2026-10-09. Since B5 the \*arr NFO merge respells 82% of items in lowercase (`xt-aac` for `xt-AAC` — no loss, Jellyfin's `Tags=` ignores case), so `_tag_drift()` warns on every one at each full scan: scan 158 logged 6,704 drift lines, 6,700 case-only. | 3 | 1 | **SHIPPED 2026-10-10** ([#146](https://github.com/bpoulliot/xenotag/pull/146)), merged NOT released — `_tag_drift()` and B17's read-back now compare casefolded tag sets; a match still records the tags that were sent. The next release's first full scan should log roughly 0 case-only drift lines (scan 158: 6,700) | — |
-| B12(b) | **Jellyfin loses xenotag's tags and nothing notices** (the original B12). A replace-all metadata refresh (~8,000 items on 2026-09-04) or an item re-created by Jellyfin drops the `xt-` tags, and the mtime-driven scan never goes back to an unchanged file. | 3 | 2 | **READY** (decided 2026-10-09, third round): a reconciliation pass on its own schedule `scan.reconcile_schedule`, default daily `0 5 * * *` (after the 03:00 scan), plus a **manual rescan** option; **Jellyfin only** (the \*arrs are not written by it); **mass-write guard** — a per-run write threshold (default 500, setting beside `scan.reconcile_schedule`): past it the pass writes **nothing**, notifies with the count and a sample, and waits for a manual rescan, which bypasses the threshold. Builds after B12(a). Measured 2026-10-07, [docs/measurements/b12-tag-loss.md](docs/measurements/b12-tag-loss.md) | — |
+| B12(b) | **Jellyfin loses xenotag's tags and nothing notices** (the original B12). A replace-all metadata refresh (~8,000 items on 2026-09-04) or an item re-created by Jellyfin drops the `xt-` tags, and the mtime-driven scan never goes back to an unchanged file. | 3 | 2 | **SHIPPED 2026-10-10** ([#147](https://github.com/bpoulliot/xenotag/pull/147)), merged NOT released — a reconciliation pass on `scan.reconcile_schedule` (default `0 5 * * *`) plus **⟲ Tag rescan** (`POST /scan/reconcile`); Jellyfin only; past `scan.reconcile_write_threshold` (default 500) a scheduled pass writes nothing and sets `xenotag_reconcile_halted`, the manual rescan bypasses it. **The release must install the `XenotagReconcileHalted` rule first** — see *B12(b) — SHIPPED* below. Measured 2026-10-07, [docs/measurements/b12-tag-loss.md](docs/measurements/b12-tag-loss.md) | — |
 | B13 | **A cropped 2160p file is tagged `1080p`.** `_detect_resolution()` compares the video WIDTH alone against exact thresholds (`>= 3840` → 4K), so a scope crop (3836×1604) or an open-matte crop (3584×2160) falls to `1080p` — 2 of the 69 films on radarr/4k. The same rule puts 1080-line crops at `720p`: **measured 2026-09-27, 639 of the 1,059 items tagged `720p` are 1080-line or near-1920 sources.** | 4 | 2 | **SHIPPED 2026-10-06** ([#122](https://github.com/bpoulliot/xenotag/pull/122)) · **RELEASED v1.11.0** (2026-10-07) — its first scan was the full re-tag with live \*arr writes (see *Release v1.11.0* below) | — |
 | B14 | **The badge preview shows labels no poster gets.** The Preview page's sample profiles pass audio and subtitle labels language-first (`EN DTS-HD`, `EN PGS`) and a bare rating (`PG-13`) straight to `generate_preview_bytes()`, while a scan builds them codec-first and prefixed (`DTS-HD EN`, `PGS EN JA`, `Rated PG-13`) in `pipeline._make_badge_groups()` — so the preview under-states pill widths and never shows the grouping the README advertises. | 2 | 2 | **SHIPPED 2026-10-06** ([#116](https://github.com/bpoulliot/xenotag/pull/116)) · **RELEASED v1.11.0** (2026-10-07) | — |
 | B15 | **Without bcrypt, the admin password is stored as unsalted SHA-256 — and every existing bcrypt login fails.** `app/auth.py` falls back to `hashlib.sha256` when `import bcrypt` fails (CodeQL #6, #7). Latent: the image pins and imports bcrypt 5.0.0, and prod and dev both hold `$2b$` hashes. | 2 | 1 | **SHIPPED 2026-10-06** ([#115](https://github.com/bpoulliot/xenotag/pull/115)) · **RELEASED v1.11.0** (2026-10-07) | — |
@@ -59,6 +59,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B25 | **An \*arr `api_key_file` can name any file the container can read** (CodeQL #11, `py/path-injection`, `app/config.py:538`). `_apply_arr_key_files()` reads whatever path the row names and sends the contents as that instance's `X-Api-Key`, to a URL the same row sets. Only an admin can set it (config.yml / raw YAML editor). | 2 | 1 | **READY** (operator decided 2026-10-09: allowed roots = `/run/secrets` **only**, option (a)) — fixes CodeQL #11 | — |
 | B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **SHIPPED 2026-10-10** ([#143](https://github.com/bpoulliot/xenotag/pull/143)) · **RELEASED v1.11.1** (2026-10-10) — `CollapseBoxSetItems=false` always sent at all four sites, no setting. The post-release full scan (scan 163) listed **9,467** items, 0 BoxSets, and reached all 1,134 hidden films; its deleted-items report shows **strip 0 objects / 0 tags** on every instance — see *Release v1.11.1* | — |
 | B27 | **A Settings save blanks the session-signing key.** The Settings page sends `auth: {username}` only, and `PUT /api/settings` restores `password_hash` but not `secret_key`, so every structured save writes `auth.secret_key: ""` to `config.yml` and into the running config. Until the next restart, sessions are signed with `":" + password_hash[:16]` (a constant prefix and 9 bcrypt-salt characters) in place of the 256-bit key. Separately, `GET /api/settings` returns `auth.secret_key` to the browser. Found in production on 2026-10-10. | 3 | 1 | **READY** — see *B27* below | — |
+| B28 | **A Settings save resets `scan.max_workers` to 4.** `buildSettings()` builds `scan` from the four fields the page shows (`schedule`, `incremental`, `path_filters`, and since B12(b) the two `reconcile_*` ones) without spreading the loaded `settings.scan`, so a structured save drops any other `scan` key and `ScanConfig` fills its default. B27's class (an object replaced, not merged). Production has `max_workers: 4` (the default), so nothing is lost there today. | 1 | 1 | **READY** — see *B28* below | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -360,6 +361,18 @@ B25 and B26 are taken, so this takes B27.
   (`PUT /config`) is not affected: it writes the submitted text, which carries the key.
 - *Effect of a release:* none on its own. The key regenerated in production at the 2026-10-10
   restart is intact today (64 characters).
+
+**B28 — FILED 2026-10-10 by the B12(b) session (found while adding the `reconcile_*` fields). READY.**
+B27 is taken, so this takes B28.
+
+- *Found.* `buildSettings()` in `app/web/templates/index.html` writes
+  `scan: { schedule, incremental, path_filters, reconcile_schedule, reconcile_write_threshold }`.
+  `tags` and `image` spread `settings.tags` / `settings.image` first, but `scan` does not, so
+  `scan.max_workers` (not on the page) validates to its default 4 on every structured save. Read on
+  production's `config.yml` (grep, 2026-10-10): `max_workers: 4`, so the save has nothing to lose there.
+- *Fix* (no decision needed): spread `...(settings.scan || {})` before the page's fields, as `tags`
+  and `image` do. Test: a structured save keeps a non-default `max_workers`. Not fixed in B12(b)'s PR:
+  it is a separate defect in behaviour, not B12(b)'s.
 
 **B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113)); released in v1.11.0 (2026-10-07).**
 `_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
@@ -1063,6 +1076,122 @@ B12(b) therefore stays **NEEDS DECISION** on questions 2 and 3 only; B12(a) is R
 - **Unchanged:** cadence and manual trigger (second round), managed `xt-` tags only via
   `set_managed_tags()` with B17's read-back, missing tags judged regardless of case. **Still builds
   after B12(a)**, which must land first or with it.
+
+**B12(b) — SHIPPED 2026-10-10 ([#147](https://github.com/bpoulliot/xenotag/pull/147)), merged NOT released.**
+`app/reconcile.py`, tests `tests/test_reconcile.py`.
+
+- *What shipped, as decided:*
+  - It runs on `scan.reconcile_schedule` (default `0 5 * * *`, empty = off) and from a **⟲ Tag rescan**
+    button beside the scan buttons (`POST /scan/reconcile`). Both run the same pass.
+  - It reads every tracked `jellyfin:` row with managed tags by `Ids=` in batches of 100 (`Fields=Tags`).
+  - A candidate is an item where some managed tag in `tags_applied` matches none of Jellyfin's current
+    tags, regardless of case.
+  - Past `scan.reconcile_write_threshold` (default 500) candidates, a **scheduled** pass writes none of
+    them. It logs `Tag reconciliation HALTED` at WARNING with the count and a sample of up to 20 (name,
+    id, missing tags), records the run, and sets `xenotag_reconcile_halted 1`.
+  - The manual rescan bypasses the threshold.
+  - Writes go to Jellyfin only, through `set_managed_tags()` with B17's read-back and retry. No \*arr
+    client is built. Posters are untouched.
+- *The trap, handled:* each batch of candidates is re-read by `Ids=` with the scan's `ITEM_FIELDS`
+  just before its write, so the UpdateRequest never comes from the tags-only read. In the tests, a fake
+  Jellyfin rejects a POST whose non-tag fields differ from the item's, and a self-test shows that the
+  fake rejects a body built from the tags-only read.
+- *Engineering choices made by the queue item (the operator may veto any of them):*
+  - The two setting names, with threshold `>= 1` and the schedule using `scan.schedule`'s cron
+    validator. Both are in Settings beside the scan schedule, and a save reschedules a second job id
+    (`xenotag_tag_reconcile`).
+  - The pass takes the scan lock (`progress.try_start()`). A scheduled run that finds it held logs and
+    skips. The manual route answers 409. Progress shows on `/scan/status`. Any exception releases the
+    lock (B22).
+  - "Expected" = the row's `tags_applied`, managed prefix only. Extra managed tags on Jellyfin are not
+    repaired (U9 logs them). Ids that `Ids=` does not return are skipped and counted (U2's business).
+    The write sends Jellyfin's current managed tags plus the missing ones, so a lowercase respelling
+    and extras stay as they are. The row is not rewritten.
+  - The record is a `scan_runs` row (`scan_type="reconcile"`, no schema change) plus
+    `reconcile-report.json` beside `state.db` (`GET /api/reconcile/report`).
+  - **A pass is not a scan:** `get_last_scan()` and the I5 metrics seed ignore `reconcile` rows, so a
+    daily pass cannot hide a failing scan from `XenotagNoSuccessfulScan`.
+  - Metrics:
+    - `xenotag_reconcile_halted`: 1 after a halt, 0 after a pass that did not halt; a cancelled pass
+      leaves it.
+    - `xenotag_reconcile_candidates`
+    - `xenotag_reconcile_writes_total{result}`: `written` / `readback_fixed` / `unresolved` / `error`.
+
+    Both gauges are seeded at startup from the report.
+  - `scan.path_filters` limits the pass by the row's `file_path`. `jellyfin.library_ids` cannot be
+    applied without a listing, so a row from a library later removed from `library_ids` is still
+    reconciled.
+- *Tests:* 951 → 990 passed (baseline on a `git archive` extract of origin/main). Each new test was
+  checked against its wiring by mutation, and 18 of 18 mutations made a test fail.
+- *Dev end-to-end* (jellyfin-dev **12.1.0**; production is 12.2.0). It ran in a throwaway container of
+  the worktree with no host port and a scratch config with default tags, on three dev films:
+  1. `xt-AAC` was stripped from two films and the third was respelled in lowercase.
+  2. The scheduled run at threshold 1 halted: 2 candidates, 0 writes, tags unchanged.
+  3. The manual route returned 200, and a second POST got 409. It wrote 2 and read back 2. The
+     respelled film was not a candidate.
+  4. Both films had `xt-AAC` back, and no non-tag field changed. The instrument compares every
+     returned field except Tags/Etag/dates and reports differences between two different items.
+  5. The dev items were restored to their original tags.
+- *Release note* (for the release session):
+  - This adds **a new scheduled writer, default ON at 05:00 container time**. Production's `config.yml`
+    has no `reconcile_*` keys, so the defaults apply.
+  - **It needs the alert rule below installed first** (the round-5 release plan).
+  - The first production run should find few candidates after the B26 full scan.
+  - The tag-config hash is unchanged, so the release forces no re-tag.
+- *Proposed host rule* for `monitoring/prometheus/rules/xenotag.yml`. It passed `promtool test rules`
+  with prom/prometheus:latest, and with the expression inverted to `== 0` the test fails:
+
+  ```yaml
+  # Roadmap B12(b): a scheduled tag reconciliation found MORE items missing an
+  # xt- tag than scan.reconcile_write_threshold and wrote NONE of them. A mass
+  # loss is an alarm, not a quiet repair. Stays 1 until a pass that does not halt
+  # (the manual Tag rescan, or a later scheduled pass under the threshold).
+  - alert: XenotagReconcileHalted
+    expr: xenotag_reconcile_halted{job="xenotag"} == 1
+    for: 1m
+    labels:
+      severity: warning
+    annotations:
+      summary: "xenotag's tag reconciliation halted: {{ with query \"xenotag_reconcile_candidates{job='xenotag'}\" }}{{ . | first | value | humanize }}{{ end }} items are missing xt- tags"
+      description: "Nothing was written. The count and a sample are in the `Tag reconciliation HALTED` WARNING (`docker logs xenotag`) and /config/reconcile-report.json. Find what wiped the tags, then run Tag rescan on the dashboard (it bypasses the threshold)."
+  ```
+
+  Its promtool unit test (append to `tests/xenotag.test.yml`):
+
+  ```yaml
+  # --- XenotagReconcileHalted ---------------------------------------------
+  # halted from 10m to 30m (a scheduled pass halted, then the manual rescan ran
+  # clean); `other` is halted but not job=xenotag. Fires from 11m (for: 1m),
+  # resolves when the gauge returns to 0; never fires before the halt.
+  - interval: 1m
+    input_series:
+      - series: 'xenotag_reconcile_halted{job="xenotag", instance="xenotag:7755"}'
+        values: '0x9 1x20 0x30'
+      - series: 'xenotag_reconcile_candidates{job="xenotag", instance="xenotag:7755"}'
+        values: '3x9 8123x50'
+      - series: 'xenotag_reconcile_halted{job="other", instance="elsewhere"}'
+        values: '1x60'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: XenotagReconcileHalted
+        exp_alerts: []
+      - eval_time: 10m   # pending, not firing yet
+        alertname: XenotagReconcileHalted
+        exp_alerts: []
+      - eval_time: 15m
+        alertname: XenotagReconcileHalted
+        exp_alerts:
+          - exp_labels:
+              severity: warning
+              job: xenotag
+              instance: "xenotag:7755"
+            exp_annotations:
+              summary: "xenotag's tag reconciliation halted: 8.123k items are missing xt- tags"
+              description: "Nothing was written. The count and a sample are in the `Tag reconciliation HALTED` WARNING (`docker logs xenotag`) and /config/reconcile-report.json. Find what wiped the tags, then run Tag rescan on the dashboard (it bypasses the threshold)."
+      - eval_time: 45m
+        alertname: XenotagReconcileHalted
+        exp_alerts: []
+  ```
 
 *The filing, as written on 2026-09-26:*
 
