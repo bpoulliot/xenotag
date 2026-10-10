@@ -167,7 +167,8 @@ tag-config hash stayed `f57e91dbac6fbe70`. Nothing was rolled back.
   pass. Per-PR rules: patch/minor pip bumps merge when green on a rebased head with no new warnings; SQLAlchemy
   2.0→2.1 (#105) also needs `python -m app.migrate check` and a clean `scripts/verify_state_db_upgrade.py` run on a
   production copy; action bumps that edit `release.yml`/`docker-publish.yml` (#109, #110) stay open unless every
-  workflow they touch ran green on the PR, so an unverified workflow cannot reach the release.
+  workflow they touch ran green on the PR, so an unverified workflow cannot reach the release. **Triaged 2026-10-10
+  — see I16:** #103–#107 merged, #108 closed by Dependabot, #109/#110 open.
 - **I9 (move the five \*arr keys out of `config.yml`) — an interactive session with the operator, after 1.12.0.**
   Not an overnight item: it touches compose, secret files and `~/docker/SECRETS.md`. Since B25, key files must sit
   under `/run/secrets`.
@@ -3313,6 +3314,7 @@ webhook resolves the wrong item.)*
 | I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure. **Triaged 2026-09-27:** five are false positives (probes committed); #6/#7 → B15, #8 → B16. What remains is dismissing the five on GitHub with the reasons recorded below | 3 | 1 | **DONE 2026-10-07** — #1, #3, #4, #5, #9 dismissed on GitHub as *false positive* with the comments below; #6/#7 fixed by B15, #8 by B16 (verified by `gh api` 2026-10-09) | — |
 | I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **SHIPPED 2026-10-10** — `jellyfin-dev` pinned to `lscr.io/linuxserver/jellyfin:12.2ubu2604-ls53` (confirmed `"Version":"12.2.0"`, matching production); migrated the existing dev database forward in place | — |
 | I15 | **Release image registry (~/docker I59 decision 4)** — stay on ghcr, move to the Gitea registry (`registry.bitmapserv.org`), push to both, or mirror from the host | 2 | 2 | **NEEDS DECISION** (measured 2026-10-10, [`docs/measurements/i59-image-registry.md`](docs/measurements/i59-image-registry.md)); recommendation **(A) stay on ghcr** | — |
+| I16 | **Dependabot backlog** — eight bumps (#103–#110) opened 2026-09-28 sat untriaged behind a moving `main` | 2 | 1 | **DONE 2026-10-10** — 5 pip bumps merged; #108 closed by Dependabot; #109/#110 left open (they edit `docker-publish.yml`, which never runs on a PR) | — |
 
 **I15 — FILED 2026-10-10 from ~/docker I59 (operator, 2026-10-09: "decision 4 — measure first"). NEEDS
 DECISION.** Measured, nothing pushed (evidence and instruments in
@@ -3343,6 +3345,22 @@ write token on GitHub for a copy nobody pulls, and (D) adds a timer, a token and
 for the same unused copy. If the operator later wants every deploy pinned to
 `registry.bitmapserv.org/…@sha256` (I59's shared `release-image.yml`), take (D). It needs no GitHub change
 and cannot fail a release. Set a cleanup rule first (I59 decision 5).
+
+**I16 — Dependabot backlog, triaged 2026-10-10.** Each bump was rebased by Dependabot onto the `main` its
+predecessor moved, then merged one at a time when CI was green on the rebased head. Each was also checked in
+a scratch venv built from that head's own requirements. Baseline (`origin/main` `1adee39`): 1,019 passed,
+0 warnings.
+
+| PR | Bump | Outcome | Evidence |
+|----|------|---------|----------|
+| #103 | pydantic 2.13.4 → 2.13.5 | **merged** | 1,019 passed, 0 warnings; CI 10/10 green on the rebased head |
+| #104 | uvicorn 0.53.0 → 0.54.0 | **merged** | 1,019 passed, 0 warnings; scratch `uvicorn app.main:app` started, `/login` 200; CI green |
+| #107 | starlette 1.6.0 → 1.7.0 | **merged** | FastAPI 0.136.3 declares `starlette>=0.46.0`; 1,019 passed, 0 warnings; I11's `error::…StarletteDeprecationWarning` filter still fails a planted warning and passes without it; CI green |
+| #106 | anyio 4.14.2 → 4.15.1 | **merged after #107** | On starlette 1.6 it added 1 warning (`starlette/testclient.py:53` uses the deprecated `anyio.abc.BlockingPortal` alias). Starlette 1.7 uses `anyio.from_thread.BlockingPortal`. Rebased on #107: 0 warnings; CI green |
+| #105 | SQLAlchemy 2.0.50 → **2.1.4** (the PR opened at 2.1.1) | **merged** | suite with `-W error::DeprecationWarning` 1,019 passed (the flag fails a planted `SADeprecationWarning`); `python -m app.migrate check` green; `verify_state_db_upgrade.py` PASS on a copy of production `state.db` (at 0002: 9,525 rows, 0 differing) and on a pre-I3 production backup (unversioned → stamped 0002: 10,640 rows, 0 differing); CI green |
+| #108 | codeql-action 3 → 4 | **closed by Dependabot, not merged** | Asked to rebase, Dependabot answered "github/codeql-action is up-to-date now" and closed the PR. `main` still pins `@v3`, while upstream has `v4` (v4.38.3) beside v3.38.3. Left closed; Dependabot's next weekly run may reopen the update |
+| #109 | checkout 4 → 7 | **left open** | also edits `docker-publish.yml` and `release.yml`, which run only on a release or a dispatch; **unverified until the next release** |
+| #110 | setup-buildx 3 → 4 | **left open** | also edits `docker-publish.yml`; **unverified until the next release** |
 
 **I14 — FILED 2026-09-27, found while measuring B8. Not fixed here.**
 
