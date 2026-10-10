@@ -3312,6 +3312,37 @@ webhook resolves the wrong item.)*
 | I12 | **`datetime.utcnow()` is deprecated** — `app/state.py` uses it at **7** sites, `last_scanned` among them (Python 3.12 `DeprecationWarning`) | 1 | 1 | **FIXED 2026-09-26** | — |
 | I13 | **Eight CodeQL alerts are open on `main` and nothing tracks them** — three `py/path-injection`, two `py/weak-sensitive-data-hashing`, one each of clear-text logging, cookie injection and stack-trace exposure. **Triaged 2026-09-27:** five are false positives (probes committed); #6/#7 → B15, #8 → B16. What remains is dismissing the five on GitHub with the reasons recorded below | 3 | 1 | **DONE 2026-10-07** — #1, #3, #4, #5, #9 dismissed on GitHub as *false positive* with the comments below; #6/#7 fixed by B15, #8 by B16 (verified by `gh api` 2026-10-09) | — |
 | I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **READY** (2026-10-09) — production has run Jellyfin **12.2.0** (`jellyfin/jellyfin:12.2`) since 2026-10-06, so the 2026-10-05 decision can be built: move jellyfin-dev to 12.2 | — |
+| I15 | **Release image registry (~/docker I59 decision 4)** — stay on ghcr, move to the Gitea registry (`registry.bitmapserv.org`), push to both, or mirror from the host | 2 | 2 | **NEEDS DECISION** (measured 2026-10-10, [`docs/measurements/i59-image-registry.md`](docs/measurements/i59-image-registry.md)); recommendation **(A) stay on ghcr** | — |
+
+**I15 — FILED 2026-10-10 from ~/docker I59 (operator, 2026-10-09: "decision 4 — measure first"). NEEDS
+DECISION.** Measured, nothing pushed (evidence and instruments in
+[`docs/measurements/i59-image-registry.md`](docs/measurements/i59-image-registry.md)):
+
+- **The image:** `1.11.1` is 250.0 MB compressed (amd64), plus 3.9 MB of SBOM and provenance. Its largest
+  layer is **171.5 MB** (ffmpeg via `apt-get`). That layer was rebuilt in 4 of the last 5 releases: 547 MB of
+  new blobs in 5 releases, about 110 MB per release.
+- **Cost today:** a cold ghcr pull on the host takes 7.5–9.2 s (n = 3, digest-verified). `docker-publish`
+  runs take 46–57 s, of which export and push take 7.0–13.8 s.
+- **Gitea 1.27.3 cannot serve an anonymous pull.** `REQUIRE_SIGNIN_VIEW=true` makes `/v2/token` answer
+  `401` to any anonymous scope. There is no `[packages]` config, so defaults apply: no limits and **0 cleanup
+  rules**. Storage is on the root NVMe (501 G free) and is backed up to B2 by restic.
+- **Push path:** `registry.bitmapserv.org` is grey-cloud. It goes straight to SWAG with an unlimited body,
+  so a push from GitHub fits there. `git.bitmapserv.org`, the name Gitea's UI shows for `docker login`, is
+  Cloudflare-proxied, and its 100 MB cap would refuse the 171.5 MB layer.
+
+| Option | What changes | New secret | If Gitea is down at release | Public image |
+|---|---|---|---|---|
+| **(A) ghcr only** | nothing | none | unaffected | ghcr, as today |
+| **(B) Gitea only** | publish login/metadata/permissions, prod compose image line, an authenticated prod pull | `write:package` as a GitHub secret (user-wide scope) + `read:package` on the host | **no image anywhere** | **lost**: breaks the README installs |
+| **(C) both** | +2 steps: login + `buildx imagetools create` copy, `continue-on-error`; about +seconds per run; about 110 MB/release in Gitea | `write:package` as a GitHub secret (user-wide) | warning only; ghcr unaffected | ghcr |
+| **(D) host mirror** | no repo change; a host timer runs `buildx imagetools create` (installed, digest-preserving) | `write:package` on the host | next timer run catches up | ghcr |
+
+**Recommendation: (A).** ghcr must stay public in every option, since this Gitea cannot serve anonymous
+pulls. Production already pulls ghcr in seconds. (B) breaks public installs, (C) puts a user-wide package
+write token on GitHub for a copy nobody pulls, and (D) adds a timer, a token and unbounded registry growth
+for the same unused copy. If the operator later wants every deploy pinned to
+`registry.bitmapserv.org/…@sha256` (I59's shared `release-image.yml`), take (D). It needs no GitHub change
+and cannot fail a release. Set a cleanup rule first (I59 decision 5).
 
 **I14 — FILED 2026-09-27, found while measuring B8. Not fixed here.**
 
