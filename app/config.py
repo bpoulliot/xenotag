@@ -534,12 +534,20 @@ def _key_file(inst: dict) -> str:
 
 def _resolve_key_file_path(label: str, path: str) -> Path:
     """Resolve ``path`` (symlinks and ``..``) and refuse anything that does not
-    resolve under :data:`API_KEY_FILE_ROOT`, before the caller ever opens it."""
-    resolved = Path(path).resolve(strict=False)
-    root = API_KEY_FILE_ROOT.resolve(strict=False)
-    if not resolved.is_relative_to(root):
+    resolve under :data:`API_KEY_FILE_ROOT`, before the caller ever opens it.
+
+    ``os.path.realpath`` + ``str.startswith`` rather than ``Path.resolve`` +
+    ``is_relative_to``: CodeQL's py/path-injection sanitizer recognizes the
+    former pair, not the latter (pathlib's ``.resolve()`` only propagates
+    taint, and ``is_relative_to`` is not a recognized guard) -- same check,
+    expressed so the alert this item exists to fix actually clears.
+    """
+    resolved = os.path.realpath(path)
+    root = os.path.realpath(str(API_KEY_FILE_ROOT))
+    root_prefix = root if root.endswith(os.sep) else root + os.sep
+    if not (resolved == root or resolved.startswith(root_prefix)):
         raise ConfigError(f"{label}: its api_key_file {path} does not resolve under {API_KEY_FILE_ROOT}")
-    return resolved
+    return Path(resolved)
 
 
 def _apply_arr_key_files(data: dict) -> dict:
