@@ -53,7 +53,10 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
           build-args: BUILD_VERSION=${{ steps.ver.outputs.version }}
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # I17: no layer cache. The Dockerfile's `apt-get upgrade` layer is keyed on the
+          # Dockerfile text and the base digest only, so a restored cache kept shipping a
+          # weeks-old curl/librsvg2 after Debian fixed them. A full rebuild is cheap.
+          pull: true
+          no-cache: true
           provenance: true
           sbom: true
