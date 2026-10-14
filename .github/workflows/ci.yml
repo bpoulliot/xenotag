@@ -172,8 +172,11 @@ jobs:
           load: true
           tags: xenotag:ci
           build-args: BUILD_VERSION=ci
-          cache-from: type=gha
-          cache-to: type=gha,mode=max
+          # I17: no layer cache. The Dockerfile's `apt-get upgrade` layer is keyed on the
+          # Dockerfile text and the base digest only, so a restored cache kept shipping a
+          # weeks-old curl/librsvg2 after Debian fixed them. A full rebuild is cheap.
+          pull: true
+          no-cache: true
 
       - name: Scan image for vulnerabilities (Trivy)
         uses: aquasecurity/trivy-action@master

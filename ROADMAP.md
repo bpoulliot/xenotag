@@ -3427,6 +3427,7 @@ webhook resolves the wrong item.)*
 | I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **SHIPPED 2026-10-10** — `jellyfin-dev` pinned to `lscr.io/linuxserver/jellyfin:12.2ubu2604-ls53` (confirmed `"Version":"12.2.0"`, matching production); migrated the existing dev database forward in place | — |
 | I15 | **Release image registry (~/docker I59 decision 4)** — stay on ghcr, move to the Gitea registry (`registry.bitmapserv.org`), push to both, or mirror from the host | 2 | 2 | **NEEDS DECISION** (measured 2026-10-10, [`docs/measurements/i59-image-registry.md`](docs/measurements/i59-image-registry.md)); recommendation **(A) stay on ghcr** | — |
 | I16 | **Dependabot backlog** — eight bumps (#103–#110) opened 2026-09-28 sat untriaged behind a moving `main` | 2 | 1 | **DONE 2026-10-10** — 5 pip bumps merged; #108 closed by Dependabot; #109/#110 left open (they edit `docker-publish.yml`, which never runs on a PR). The 5 bumps are **RELEASED v1.12.0** (2026-10-10); startup log clean | — |
+| I17 | **`docker-build` is red on every PR: Trivy finds 5 HIGH base-image CVEs that a rebuild already fixes.** CI restored a cached `apt-get upgrade` layer (`#11 CACHED`), so the image kept the `curl`/`libcurl4t64` `8.14.1-2+deb13u5` and `librsvg2-2` `2.60.0+dfsg-1` that Debian has since fixed | 4 | 1 | **FIXED 2026-10-14** — both workflows build with `pull: true` and `no-cache: true`; see *I17* below | — |
 
 **I15 — FILED 2026-10-10 from ~/docker I59 (operator, 2026-10-09: "decision 4 — measure first"). NEEDS
 DECISION.** Measured, nothing pushed (evidence and instruments in
@@ -3457,6 +3458,30 @@ write token on GitHub for a copy nobody pulls, and (D) adds a timer, a token and
 for the same unused copy. If the operator later wants every deploy pinned to
 `registry.bitmapserv.org/…@sha256` (I59's shared `release-image.yml`), take (D). It needs no GitHub change
 and cannot fail a release. Set a cleanup rule first (I59 decision 5).
+
+**I17 — `docker-build`'s Trivy step red on every PR since 2026-10-13 (filed by ~/docker I228, fixed 2026-10-14).**
+
+*Evidence.* Run `38558811641` (PR #161, docs only): Trivy on `xenotag:ci (debian 13.7)`, 5 HIGH, all with a fix
+available: `curl` and `libcurl4t64` (CVE-2026-8286, CVE-2026-8927) at `8.14.1-2+deb13u5`, fixed in `…deb13u7`;
+`librsvg2-2` (CVE-2026-96889) at `2.60.0+dfsg-1`, fixed in `…+deb13u1`. The job log shows the Dockerfile's
+`RUN apt-get update && apt-get upgrade -y && …` step as `#11 CACHED` after `importing cache manifest from gha`.
+
+*Measured (2026-10-14).* `docker build --pull --no-cache` of `origin/main` (`1a3ebc7`) on today's
+`python:3.12-slim` (index digest `sha256:a6e34c59…`, **the same digest CI built on**) installs `curl` and
+`libcurl4t64` `8.14.1-2+deb13u7` and `librsvg2-2` `2.60.0+dfsg-1+deb13u1`. Trivy 0.72.0 with CI's flags
+(`--severity CRITICAL,HIGH --ignore-unfixed`) reports debian 13.7: **0**, and no Python package has a finding.
+So the base tag needs no bump and the Dockerfile's `apt-get upgrade` is already right: the stale package set
+came from the GHA layer cache. A cache layer is keyed on the instruction text and the parent layer, never on
+what the Debian mirror holds, so it stays valid, and stale, for as long as the base digest and Dockerfile do.
+
+*Fix.* `ci.yml`'s `docker-build` and `docker-publish.yml` build with `pull: true`, `no-cache: true` and no
+`cache-from`/`cache-to`. `docker-publish.yml` is included because it had the same cache, and a release built
+from a restored `apt` layer would have shipped the stale packages to production. Nothing was suppressed:
+Trivy's `ignore-unfixed`, severity and exit code are as before. Cost: every build re-installs `ffmpeg` and the
+Python dependencies. The image is not large, so this beats keeping a cache that can hide a patched package.
+
+*Not done.* Production still runs the image from before this change; a rebuild needs a release (the
+operator's step), which now publishes uncached.
 
 **I16 — Dependabot backlog, triaged 2026-10-10.** Each bump was rebased by Dependabot onto the `main` its
 predecessor moved, then merged one at a time when CI was green on the rebased head. Each was also checked in
