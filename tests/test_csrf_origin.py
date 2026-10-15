@@ -73,16 +73,39 @@ def _rejected(resp) -> bool:
 # ---------------------------------------------------------------------------
 
 
+def _all_routes(routes):
+    """Every route the app serves, including those of an included router.
+
+    FastAPI 0.143 keeps ``include_router()``'s routes behind one lazy
+    ``_IncludedRouter`` entry in ``app.routes``, which has no ``methods`` or
+    ``path``; ``fastapi.routing.iter_route_contexts()`` expands it. Older
+    FastAPI copied the routes into ``app.routes`` and has no such function.
+    """
+    from fastapi import routing
+
+    expand = getattr(routing, "iter_route_contexts", None)
+    return list(expand(routes)) if expand else list(routes)
+
+
 def test_mutating_routes_are_the_known_set():
     from app.main import app
 
     found = {
         (method, route.path)
-        for route in app.routes
+        for route in _all_routes(app.routes)
         for method in getattr(route, "methods", None) or ()
         if method in CHECKED_METHODS
     }
     assert found == MUTATING_ROUTES
+
+
+def test_route_walk_sees_the_included_router():
+    # Guards the walk itself: if it ever stops expanding the included router,
+    # the set above would shrink to nothing and fail for the wrong reason.
+    from app.main import app
+
+    paths = {getattr(route, "path", None) for route in _all_routes(app.routes)}
+    assert "/api/settings" in paths and "/metrics" in paths
 
 
 # ---------------------------------------------------------------------------
