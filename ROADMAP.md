@@ -5253,7 +5253,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser: **READY** (operator decided 2026-10-14: (c)+(d), cards below 600 px without Source / Audio / Scanned; builds after or with B30) — audited after P6 + B12(b) on 2026-10-10 (see *P4 — post-feature phone-width audit* below); `.health-grid` truncation filed as **P12** — first measured 2026-09-26 | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser **SHIPPED 2026-10-15** ([#171](https://github.com/bpoulliot/xenotag/pull/171), cards below 600 px without Source / Audio / Scanned), merged NOT released — so **P4 is fully shipped**; the `.health-grid` truncation the audit found is filed as **P12**, first measured 2026-09-26 — see *P4 — post-feature phone-width audit* below | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
 | P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
@@ -5567,6 +5567,36 @@ labels say what would make each one startable.
    other than 800 px; browsers other than Chromium. Touch-target size was not assessed. Recorded,
    not judged: the adapt toggle is 36×20 px and the threshold field 19 px tall, under WCAG 2.5.8's
    24 px.
+
+   **P4 media browser — SHIPPED 2026-10-15 ([#171](https://github.com/bpoulliot/xenotag/pull/171)), merged NOT released (queue item 73).** Operator
+   decision (c)+(d). `<table class="media-table">` plus one `@media(max-width:600px)` block in
+   `index.html`: the header and the Source / Audio / Scanned columns (2, 4, 7) are hidden, every
+   other row element is `display:block`, the name is the card's heading, and Video, Rating and Tags
+   carry a `::before` label. No JS change, no new markup beyond the class. The CSS counts columns
+   by position, so `tests/test_media_cards_css.py` pins the header order and the rule.
+   Measured with the audit's own instrument (self-test 16/16 first, both directions), a throwaway
+   container of this branch against one of `origin/main` (`55a4f18`, which already carries B30 and B31),
+   the same synthetic fixture, `--internal` network, Chromium 1.58.0. Page 1, 50 rows, the five
+   newest being production's maxima. Scripts in `~/docker/xenotag/p4-audit-20261010/`; results and
+   screenshots in `~/docker/overnight/projects/xenotag/runs/73-20261015/` (`base/`, `new/`;
+   `new/media-as-is-a-{360,390}-{tail,typical}.png`).
+
+   | Width | before: table px / scrolls | before: median / max row · 50 rows | after: table px / scrolls | after: median / max row · 50 rows |
+   |---|---|---|---|---|
+   | 360 | 517 / yes | 233 / 2,124 · 14,883 px | 278 / **no** | **143 / 435 · 7,854 px** |
+   | 390 | 517 / yes | 233 / 2,124 · 14,883 px | 308 / **no** | **143 / 413 · 7,635 px** |
+   | 768 | 686 / no | 83 / 533 · 4,770 px | 686 / no | 83 / 533 · 4,770 px (equal) |
+   | 1366 | 1,284 / no | 60 / 150 · 3,282 px | 1,284 / no | 60 / 150 · 3,282 px (equal) |
+
+   The shipped CSS reproduces the mock of the table above to the pixel (the mock on the same
+   payload: 360 143 / 435 · 7,854, 390 143 / 413 · 7,635); 50 rows are 53 % of the old height at 360.
+   Every page at every width is clean (`scrollWidth` = viewport, 0
+   offenders, 0 clipped, 0 covered); 0 JS errors at 360 / 390 / 768 / 1366. At 768 and 1366 the
+   whole `Dashboard` media table measures identical to `main`. The audit's own check *"media table
+   scrolls inside its card at 360 (P4a)"* now reads FAIL, which is the defect being gone: the
+   check was P4a's known-state control and is stale; the instrument was not changed. Still not
+   determined: real titles (lengths only), pages 2+, heights other than 800 px, browsers other than
+   Chromium, touch-target size. The health grid is untouched (P12).
  - **P5 — SHIPPED 2026-09-26** (`scripts/generate_readme_images.py`; CI runs its `--check`). README gains (1) overlay examples rendered with `generate_preview_bytes()`
    over the **synthetic** backgrounds in `app/preview_samples.py` — never real posters, which are
    copyrighted art and this repo is public — at the shipped defaults, one per `badge_size`, and
