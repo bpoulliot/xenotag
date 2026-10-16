@@ -29,6 +29,16 @@ class MediaItem(BaseModel):
     tags_applied: list[str]
     image_path: str | None
     last_scanned: str | None
+    # What the media browser's loadMedia() reads (roadmap B30). Pydantic drops a key the model does
+    # not declare, so each of these must be here or the page never receives it. Defaults let a row
+    # from before the columns were probed (NULL / '[]') validate.
+    video_codec: str | None = None
+    hdr_type: str | None = None
+    audio_tracks: list[dict] = []
+    subtitle_tracks: list[dict] = []
+    content_rating: str | None = None
+    field_order: str | None = None
+    file_mtime: float | None = None
 
 
 class ScanRunItem(BaseModel):
