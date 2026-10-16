@@ -1150,6 +1150,22 @@ async function loadHealth() {
   } catch {}
 }
 
+// The Item column's text (roadmap B31). A movie's name is its folder; an episode's parent is its season
+// folder, so `Season N` reads as `Series · SNN` and `Specials` as `Series · Specials`. tests/test_media_row_name.py
+// runs this function under node, so keep it free of DOM access and of anything defined outside it.
+function mediaRowName(item) {
+  if (!item.file_path) return item.item_id;
+  const parts = item.file_path.split('/');
+  const parent = parts.slice(-2, -1)[0];
+  const series = parts.slice(-3, -2)[0];
+  if (parent && series) {
+    const season = parent.match(/^Season (\d+)$/);
+    if (season) return `${series} · S${season[1].padStart(2, '0')}`;
+    if (parent === 'Specials') return `${series} · Specials`;
+  }
+  return parent || parts.pop();
+}
+
 async function loadMedia() {
   const res = document.getElementById('filter-res').value.trim();
   const lang = document.getElementById('filter-lang').value.trim();
@@ -1167,7 +1183,7 @@ async function loadMedia() {
       return;
     }
     tbody.innerHTML = d.items.map(item => {
-      const name = item.file_path ? item.file_path.split('/').slice(-2,-1)[0] || item.file_path.split('/').pop() : item.item_id;
+      const name = mediaRowName(item);
       const resCls = {4: 'res-4K', 10: 'res-1080p', 7: 'res-720p'}[item.resolution?.charAt(0)] ?? '';
       const videoParts = [item.resolution, item.video_codec, item.hdr_type].filter(Boolean);
       const videoCell = videoParts.length
