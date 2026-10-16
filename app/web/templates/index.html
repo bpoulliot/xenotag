@@ -109,6 +109,20 @@
   .badge.res-720p{color:#a8d8ff}
   .badge.tag-dual{color:var(--green);border-color:#2a8a3a;background:#091a0c}
   .badge.tag-multi{color:var(--yellow);border-color:#9e6a03;background:#1a1200}
+  /* P4: below 600 px each media row is a card -- the name as its heading, then Video, Rating and Tags.
+     Source, Audio and Scanned are hidden (columns 2, 4 and 7). Source is `jellyfin` on every row, the
+     xt- tags already carry the audio languages, and Scanned is on the Overview card. */
+  @media(max-width:600px){
+    .media-table thead,.media-table th,.media-table td:nth-child(2),.media-table td:nth-child(4),.media-table td:nth-child(7){display:none}
+    .media-table,.media-table tbody,.media-table tr,.media-table td{display:block}
+    .media-table tr{padding:8px 0;border-bottom:1px solid var(--border)}
+    .media-table td{border:none;padding:2px 0}
+    .media-table td:first-child{font-weight:600;overflow-wrap:anywhere}
+    .media-table td:nth-child(n+2)::before{display:inline-block;min-width:64px;color:var(--muted);font-size:11px;text-transform:uppercase;font-weight:400}
+    .media-table td:nth-child(3)::before{content:'Video'}
+    .media-table td:nth-child(5)::before{content:'Rating'}
+    .media-table td:nth-child(6)::before{content:'Tags'}
+  }
   .filter-row{display:flex;gap:8px;margin-bottom:12px;flex-wrap:wrap}
   input.filter{background:var(--inset);border:1px solid var(--border);border-radius:6px;color:var(--text);padding:4px 10px;font-size:13px}
 
@@ -320,7 +334,7 @@
         <input class="filter" id="filter-lang" placeholder="Language (e.g. JA)" oninput="mediaPage=1;loadMedia()">
       </div>
       <div style="overflow-x:auto">
-        <table>
+        <table class="media-table">
           <thead><tr><th>Item</th><th>Source</th><th>Video</th><th>Audio</th><th>Rating</th><th>Tags</th><th>Scanned</th></tr></thead>
           <tbody id="media-tbody"><tr><td colspan="7" style="color:var(--muted);text-align:center;padding:24px">Loading…</td></tr></tbody>
         </table>
