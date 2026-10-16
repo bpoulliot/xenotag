@@ -56,14 +56,15 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B22 | **An exception that escapes a scan holds the scan lock until restart.** `run_full_scan()` / `run_incremental_scan()` take `progress.try_start()`, and only `_run_scan()`'s own exits call `progress.finish()` — so anything it raises leaves `progress.running` True, and every later scan, scheduled or manual, logs `Scan already in progress, skipping` and does nothing. | 2 | 1 | **SHIPPED 2026-10-06** ([#113](https://github.com/bpoulliot/xenotag/pull/113)) · **RELEASED v1.11.0** (2026-10-07) | — |
 | B23 | **The badge preview ignores the poster destinations.** `preview_image()` builds its groups with the default `TagDestinations`, so a category whose saved `tags.destinations` drops `poster` still shows pills on the Preview page that no scan paints. Latent: production's `config.yml` keeps `poster` in all four lists. | 1 | 1 | **SHIPPED 2026-10-06** ([#129](https://github.com/bpoulliot/xenotag/pull/129)) · **RELEASED v1.11.0** (2026-10-07) — `preview_image()` now builds its `AppConfig` with `tags=get_config().tags`; default (all `poster`) stays byte-identical | — |
 | B24 | **`/health` reports Jellyfin unreachable without ever contacting it — and the container healthcheck only ever reads that answer.** For a caller with no web session `health()` returns early with a *fabricated* verdict, `jellyfin={"ok": False, "status": "unreachable", "message": "Not authenticated"}` (`app/web/routes.py:175-183`), so a perfectly healthy Jellyfin is reported as down; the message describes the **caller's** missing cookie, not the dependency. `docker-compose.yml:30-34` sets the healthcheck to `curl -f http://localhost:7755/health`, which carries no cookie, so it always takes that branch — and because the branch still returns **HTTP 200 with `status: "ok"`**, `curl -f` can never fail on a dependency problem. The one endpoint whose job is to report dependency health is structurally unable to: unauthenticated it invents the answer, and authenticated it hardcodes `status="ok"` (`:195`) whatever `jf.health()` returned. **Measured 2026-10-06** while verifying the Jellyfin 10.11→12.2 upgrade (`~/docker` TODO I62): prod xenotag reported `jellyfin: unreachable / Not authenticated` while its configured API key was byte-identical to Jellyfin's, `jellyfin:8096` answered 200 from inside the container, and tags read back correctly by `Ids=` — it cost real diagnosis time and briefly looked like an upgrade regression. Fix: either exempt `/health` from the session gate (it leaks only up/down, and the port is bound to `127.0.0.1`) or give the probe its own unauthenticated liveness route and keep the authenticated one for the UI; in both cases report an **unknown** dependency as unknown rather than as `unreachable`, and let `status` follow the checks. | 3 | 1 | **SHIPPED 2026-10-07** ([#132](https://github.com/bpoulliot/xenotag/pull/132)) · **RELEASED v1.11.0** (2026-10-07) — exempted from the session gate; unauthenticated callers get `status: "up"` only, authenticated callers keep full detail with `status` computed from the real checks | — |
-| B25 | **An \*arr `api_key_file` can name any file the container can read** (CodeQL #11, `py/path-injection`, `app/config.py:538`). `_apply_arr_key_files()` reads whatever path the row names and sends the contents as that instance's `X-Api-Key`, to a URL the same row sets. Only an admin can set it (config.yml / raw YAML editor). | 2 | 1 | **SHIPPED 2026-10-15 ([#173](https://github.com/bpoulliot/xenotag/pull/173)), merged NOT released** — the `/run/secrets` guard, carried by hand from the closed #148. The PR's `CodeQL` check raised **no** alert, so nothing was dismissed; **#11 is `fixed`** on `main`'s analysis of the merge `d672c2b`. Release note: an `api_key_file` outside `/run/secrets` is a fatal start error. See *B25 — SHIPPED 2026-10-15* below | — |
+| B25 | **An \*arr `api_key_file` can name any file the container can read** (CodeQL #11, `py/path-injection`, `app/config.py:538`). `_apply_arr_key_files()` reads whatever path the row names and sends the contents as that instance's `X-Api-Key`, to a URL the same row sets. Only an admin can set it (config.yml / raw YAML editor). | 2 | 1 | **SHIPPED 2026-10-15 ([#173](https://github.com/bpoulliot/xenotag/pull/173)) · RELEASED v1.13.0 (2026-10-15)** — the `/run/secrets` guard, carried by hand from the closed #148. The PR's `CodeQL` check raised **no** alert, so nothing was dismissed; **#11 is `fixed`** on `main`'s analysis of the merge `d672c2b`. Release note: an `api_key_file` outside `/run/secrets` is a fatal start error. See *B25 — SHIPPED 2026-10-15* below | — |
 | B26 | **On Jellyfin 12.2 the scan never sees a film that sits in a collection.** `JellyfinClient._fetch_items()` (the scan, and B8's folder lookup) and U2's `complete_listing()` ask `/Items?Recursive=true&IncludeItemTypes=Movie,Series` without `CollapseBoxSetItems`. Production Jellyfin 12.2.0 answers with collections collapsed: **8,766 items — 448 BoxSets in place of 1,134 films** — where `CollapseBoxSetItems=false` returns all 9,452 (10.11.10 listed 9,450 on 2026-10-06). The 1,134 films are never re-tagged or re-rendered, the BoxSets become `skip (no_file)` scan errors, and U2 judges the films' folders empty: **switching U2 to `remove` would strip the managed tags of 82 radarr/general objects whose film is live.** | 4 | 1 | **SHIPPED 2026-10-10** ([#143](https://github.com/bpoulliot/xenotag/pull/143)) · **RELEASED v1.11.1** (2026-10-10) — `CollapseBoxSetItems=false` always sent at all four sites, no setting. The post-release full scan (scan 163) listed **9,467** items, 0 BoxSets, and reached all 1,134 hidden films; its deleted-items report shows **strip 0 objects / 0 tags** on every instance — see *Release v1.11.1* | — |
-| B27 | **A Settings save blanks the session-signing key.** The Settings page sends `auth: {username}` only, and `PUT /api/settings` restores `password_hash` but not `secret_key`, so every structured save writes `auth.secret_key: ""` to `config.yml` and into the running config. Until the next restart, sessions are signed with `":" + password_hash[:16]` (a constant prefix and 9 bcrypt-salt characters) in place of the 256-bit key. Separately, `GET /api/settings` returns `auth.secret_key` to the browser. Found in production on 2026-10-10. | 3 | 1 | **SHIPPED 2026-10-15** ([#165](https://github.com/bpoulliot/xenotag/pull/165)), merged NOT released — see *B27* below | — |
-| B28 | **A Settings save resets `scan.max_workers` to 4.** `buildSettings()` builds `scan` from the four fields the page shows (`schedule`, `incremental`, `path_filters`, and since B12(b) the two `reconcile_*` ones) without spreading the loaded `settings.scan`, so a structured save drops any other `scan` key and `ScanConfig` fills its default. B27's class (an object replaced, not merged). Production has `max_workers: 4` (the default), so nothing is lost there today. | 1 | 1 | **SHIPPED 2026-10-15** ([#165](https://github.com/bpoulliot/xenotag/pull/165)), merged NOT released — see *B28* below | — |
-| B29 | **CodeQL #10: the deleted-items report puts an HTTP error's text, URL included, into the admin's browser.** `GET /api/deleted-items/report` returns the stored report, whose `reason` (an aborted pass) and `halted` (a failed strip) are `str(exc)`. CodeQL names three sources, `deleted_items.py` 364/366/539. #135 changed two *other* values, so the alert stayed open. No traceback and no API key ever reaches the response (probed), but a failed HTTP call's message is the full request URL, and **a `user:password@` in a configured Jellyfin or \*arr URL reaches the response verbatim** (and the ntfy, for a halt). Latent: production's 6 URLs carry no userinfo. | 2 | 1 | **SHIPPED 2026-10-15** ([#166](https://github.com/bpoulliot/xenotag/pull/166)), merged NOT released — option (b), built to the spec below; a local CodeQL 2.27.2 run closes #10 and #9's flow (0 results), and **#10 is `fixed` on main's analysis of `1bfeb7d` (2026-10-16T01:31Z)**; #9 stays `dismissed` (its flow is gone too). No dismissal made | — |
-| B30 | **The media browser never shows codec, HDR, audio tracks or rating, because `/media` drops them.** `MediaItem` (`app/web/schemas.py:23`) declares 8 fields, but `get_media_filtered()` returns 15, and Pydantic silently drops the other 7 (`video_codec`, `hdr_type`, `audio_tracks`, `subtitle_tracks`, `content_rating`, `field_order`, `file_mtime`). `loadMedia()` reads four of them. As a result the Video column shows only the resolution, Audio falls back to the language list (never a codec, and never P1's yellow `UND`), and Rating is always `—`. P2 was closed as shipped after reading `index.html`; the response was never checked. Production's index holds 9,453 codecs, 202 HDR types, 9,429 audio-track lists (3,085 with an `UND` track) and 8,090 ratings that the browser cannot show. | 3 | 1 | **SHIPPED 2026-10-15** ([#168](https://github.com/bpoulliot/xenotag/pull/168)), merged NOT released — see *B30* below | — |
-| B31 | **A quarter of the media browser's rows are named `Season 01`.** The Item column shows the file's parent folder (`loadMedia()`), and for an episode that is its season folder. **2,469 of production's 9,463 rows** read `Season NN` or `Specials`; the series name is only in the hover title, which a touch screen cannot show. | 2 | 1 | **SHIPPED 2026-10-15** ([#170](https://github.com/bpoulliot/xenotag/pull/170)), merged NOT released — see *B31* below | — |
-| B32 | **The tag reconciliation restores what a STALE row says, not what xenotag would write today.** B12(b) takes every row's `tags_applied` as the expected tags. A row goes stale in two ways. First, the scan cannot reach the item: its file fails to probe, so the row keeps an old scan's tags, spelled before B9 (`xt-DD+`, `xt-H.264`). Second, a write lands but is not recorded: B17 records nothing when a write times out. Measured on production at the v1.12.0 deploy: **all 6 candidates of the first scheduled pass are stale rows.** For 2 series, Jellyfin carries the correct `xt-1080p` while their rows still say `720p` (pre-B13), so the pass would ADD `xt-720p` beside it. The other 4 rows date from June to August, their files fail to probe, and the pass would write 6 tags each, 3 of them items with retired pre-B9 spellings. | 2 | 2 | **SHIPPED 2026-10-15 ([#169](https://github.com/bpoulliot/xenotag/pull/169)), merged NOT released; clean-up planned, runs after the release** — (a) + (c) as decided; `python -m app.reconcile_cleanup` removes `xt-720p` from 2 series and a retired spelling from 2 (plan and apply command under *B32* below) | — |
+| B27 | **A Settings save blanks the session-signing key.** The Settings page sends `auth: {username}` only, and `PUT /api/settings` restores `password_hash` but not `secret_key`, so every structured save writes `auth.secret_key: ""` to `config.yml` and into the running config. Until the next restart, sessions are signed with `":" + password_hash[:16]` (a constant prefix and 9 bcrypt-salt characters) in place of the 256-bit key. Separately, `GET /api/settings` returns `auth.secret_key` to the browser. Found in production on 2026-10-10. | 3 | 1 | **SHIPPED 2026-10-15** ([#165](https://github.com/bpoulliot/xenotag/pull/165)) · **RELEASED v1.13.0 (2026-10-15)**; proved in production by one structured save (*Release v1.13.0*) — see *B27* below | — |
+| B28 | **A Settings save resets `scan.max_workers` to 4.** `buildSettings()` builds `scan` from the four fields the page shows (`schedule`, `incremental`, `path_filters`, and since B12(b) the two `reconcile_*` ones) without spreading the loaded `settings.scan`, so a structured save drops any other `scan` key and `ScanConfig` fills its default. B27's class (an object replaced, not merged). Production has `max_workers: 4` (the default), so nothing is lost there today. | 1 | 1 | **SHIPPED 2026-10-15** ([#165](https://github.com/bpoulliot/xenotag/pull/165)) · **RELEASED v1.13.0 (2026-10-15)** — see *B28* below | — |
+| B29 | **CodeQL #10: the deleted-items report puts an HTTP error's text, URL included, into the admin's browser.** `GET /api/deleted-items/report` returns the stored report, whose `reason` (an aborted pass) and `halted` (a failed strip) are `str(exc)`. CodeQL names three sources, `deleted_items.py` 364/366/539. #135 changed two *other* values, so the alert stayed open. No traceback and no API key ever reaches the response (probed), but a failed HTTP call's message is the full request URL, and **a `user:password@` in a configured Jellyfin or \*arr URL reaches the response verbatim** (and the ntfy, for a halt). Latent: production's 6 URLs carry no userinfo. | 2 | 1 | **SHIPPED 2026-10-15** ([#166](https://github.com/bpoulliot/xenotag/pull/166)) · **RELEASED v1.13.0 (2026-10-15)** — option (b), built to the spec below; a local CodeQL 2.27.2 run closes #10 and #9's flow (0 results), and **#10 is `fixed` on main's analysis of `1bfeb7d` (2026-10-16T01:31Z)**; #9 stays `dismissed` (its flow is gone too). No dismissal made | — |
+| B30 | **The media browser never shows codec, HDR, audio tracks or rating, because `/media` drops them.** `MediaItem` (`app/web/schemas.py:23`) declares 8 fields, but `get_media_filtered()` returns 15, and Pydantic silently drops the other 7 (`video_codec`, `hdr_type`, `audio_tracks`, `subtitle_tracks`, `content_rating`, `field_order`, `file_mtime`). `loadMedia()` reads four of them. As a result the Video column shows only the resolution, Audio falls back to the language list (never a codec, and never P1's yellow `UND`), and Rating is always `—`. P2 was closed as shipped after reading `index.html`; the response was never checked. Production's index holds 9,453 codecs, 202 HDR types, 9,429 audio-track lists (3,085 with an `UND` track) and 8,090 ratings that the browser cannot show. | 3 | 1 | **SHIPPED 2026-10-15** ([#168](https://github.com/bpoulliot/xenotag/pull/168)) · **RELEASED v1.13.0 (2026-10-15)** — see *B30* below | — |
+| B31 | **A quarter of the media browser's rows are named `Season 01`.** The Item column shows the file's parent folder (`loadMedia()`), and for an episode that is its season folder. **2,469 of production's 9,463 rows** read `Season NN` or `Specials`; the series name is only in the hover title, which a touch screen cannot show. | 2 | 1 | **SHIPPED 2026-10-15** ([#170](https://github.com/bpoulliot/xenotag/pull/170)) · **RELEASED v1.13.0 (2026-10-15)** — see *B31* below | — |
+| B32 | **The tag reconciliation restores what a STALE row says, not what xenotag would write today.** B12(b) takes every row's `tags_applied` as the expected tags. A row goes stale in two ways. First, the scan cannot reach the item: its file fails to probe, so the row keeps an old scan's tags, spelled before B9 (`xt-DD+`, `xt-H.264`). Second, a write lands but is not recorded: B17 records nothing when a write times out. Measured on production at the v1.12.0 deploy: **all 6 candidates of the first scheduled pass are stale rows.** For 2 series, Jellyfin carries the correct `xt-1080p` while their rows still say `720p` (pre-B13), so the pass would ADD `xt-720p` beside it. The other 4 rows date from June to August, their files fail to probe, and the pass would write 6 tags each, 3 of them items with retired pre-B9 spellings. | 2 | 2 | **SHIPPED 2026-10-15 ([#169](https://github.com/bpoulliot/xenotag/pull/169)) · RELEASED v1.13.0 (2026-10-15); clean-up applied 2026-10-15** — (a) + (c) as decided; `python -m app.reconcile_cleanup` removed `xt-720p` from 2 series and a retired spelling from 2. One Piece's row still lists `xt-720p`: its write timed out and landed late, unrecorded (**B33**); harmless under (c). See *B32* below | — |
+| B33 | **The B32 clean-up tool dies on a Jellyfin write timeout, and a write that lands late is never recorded.** `apply()` in `app/reconcile_cleanup.py` calls `set_managed_tags()` with no handler. In the v1.13.0 release's clean-up, One Piece's `POST /Items/{id}` hit httpx's 30 s `ReadTimeout`: the run exited 1 with a traceback, and the items after it in that run were not attempted. The write landed about 2.5 minutes later, but nothing recorded it, so One Piece's `tags_applied` still lists `xt-720p`. | 1 | 1 | **READY** — catch `httpx.TimeoutException` around the write in `apply()`, record nothing (B17's rule), and stop with a message naming the item and saying a dry run after a minute shows whether it landed. Low value: the tool's one job is done, and the stale row is harmless under B32 (c). See *B33* below | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -197,6 +198,60 @@ tag-config hash stayed `f57e91dbac6fbe70`. Nothing was rolled back.
 - Record: `~/docker/xenotag/release-1.12.0-20261010/README.md` (the probes, their outputs, the
   backups and the activation commands).
 
+**Release v1.13.0 — LIVE 2026-10-15 (overnight queue item 75; operator, 2026-10-14: "end with the cve patch,
+release, deploy to prod").** `bump=minor` from `main` `f3a59ac` (CI green: `lint-and-security`, `tests`,
+`docker-build`, `codeql`, `analyze`). Release run `38844321385` → release commit `b1ad79e`, tag `v1.13.0`
+(published 2026-10-16 03:12:18Z). Publish run `38844339007` → `ghcr.io/bpoulliot/xenotag:1.13.0` (= `:1.13` =
+`:latest`), index digest `sha256:ede646e0…`, local id `180d5b378b29`. Deployed 03:18:43Z. No scan, no manual
+reconcile, no compose edit.
+- *What shipped:*
+  - B27 + B28 (#165), B29 (#166), B30 (#168), B32 (#169), B31 (#170), P4 media cards (#171), P12 (#172), B25
+    (#173) and I17 (#162).
+  - I16's second round: FastAPI 0.143.0 (#156, with #163's CSRF test fix), pydantic-settings 2.15.0, pydantic
+    2.14.1, APScheduler 3.11.3, hadolint-action 3.5.0, checkout v7 (#109) and setup-buildx v4 (#110).
+  - `git log v1.12.0..f3a59ac -- app requirements.txt Dockerfile .github` holds nothing else.
+- *No re-tag.* `_tag_config_hash()` for production's `config.yml` is `f57e91dbac6fbe70` on 1.12.0, on `main`'s
+  `app/` and in `app_meta`. The self-test passed, and a wrong expected value fails. No Alembic revision:
+  startup logged `state.db schema: current (revision 0002)`.
+- *Uncached publish (I17).*
+  - The publish log has 0 `CACHED` steps, and buildx ran with `--no-cache --pull`.
+  - The `apt-get … upgrade` step ran (20.3 s) and installed `curl`/`libcurl4t64` `8.14.1-2+deb13u7` and
+    `librsvg2-2` `2.60.0+dfsg-1+deb13u1`. `dpkg-query` in the image reads the same versions; 1.12.0 had
+    `8.14.1-2+deb13u5` and `2.60.0+dfsg-1`.
+  - checkout v7 and setup-buildx v4 ran in both release workflows for the first time and worked.
+- *Trivy before the deploy.* Trivy 0.76.0, the version CI's action resolves to, with CI's flags (`--severity
+  CRITICAL,HIGH --ignore-unfixed --pkg-types os,library`), run on a `docker save` of the pulled image.
+  - 1.13.0: **0**. The positive control, 1.12.0: **7 HIGH** (curl ×3, libcurl4t64 ×3, librsvg2-2 ×1).
+  - The running container's image id, scanned after the deploy: 0.
+  - *Disclosure, without `--ignore-unfixed`:* 1.13.0 still carries 216 HIGH and 1 CRITICAL (libxml2
+    CVE-2026-6653) that Debian has not fixed (`affected`, `fix_deferred`, `will_not_fix`). Every one is also in
+    1.12.0: 1.13.0 is 1.12.0 minus exactly the 7 fixed findings. CI's gate has never counted unfixed findings;
+    nothing was suppressed.
+- *Deploy.*
+  - Clean stop at 03:18:29Z. Backups in `config/`: `state.db.bak-20261015-pre-1.13.0` (9,482 rows, rev 0002,
+    `integrity_check` ok, identical to the stopped file), `config.yml.bak-20261015-pre-1.13.0` (mode 600) and
+    the three report files.
+  - `:1.12.0` (`23d914adb28b`) is still pulled for a back-out.
+  - The container came up healthy with 0 restarts. Its startup log matches 1.12.0's class for class, with 0
+    warnings, and `/health` reports Jellyfin and all five \*arrs healthy.
+- *B27 in production.* One structured `PUT /api/settings` (03:20:31Z) sent exactly what `GET /api/settings` had
+  returned.
+  - The GET carried no `secret_key`, neither the key nor its value, and the PUT returned 200.
+  - A session minted before the save still works. The signing key's hash is unchanged and non-empty on disk, and
+    a session minted from the key on disk works too.
+  - All 44 of the file's key paths kept their value hashes, `scan.max_workers` included. Production's
+    `max_workers` is the default 4, so this cannot tell a reset from a keep; #165's tests are B28's evidence.
+  - **The save added 7 keys at their defaults**, because a structured save writes the whole model:
+    `scan.reconcile_schedule`, `scan.reconcile_write_threshold`, `image.adapt_badge_colors` and the four
+    `image.backup_*_badge_color`. The effective config (loaded and compared field by field) is identical.
+    A rehearsal on a scratch copy predicted exactly this before production was touched.
+  - Consequence: those 7 values are now written in production's file, so a later change to their code defaults
+    will not reach production by itself.
+- *B32's clean-up:* applied after the deploy. See *B32*, *Clean-up applied*, and **B33**, which was filed from it.
+- *Rollback (not taken):* `docker tag ghcr.io/bpoulliot/xenotag:1.12.0 ghcr.io/bpoulliot/xenotag:latest`, then
+  `docker compose up -d --no-deps xenotag`. No schema revision ran, so `state.db` needs no restore.
+- Record: `~/docker/xenotag/release-1.13.0-20261015/README.md`.
+
 **OPERATOR DECISIONS 2026-10-09 (round 5) — release, dependencies, I9, P4, I1, GitHub issues.**
 
 - **Release 1.12.0 — queued for tonight, last in the overnight chain.** A minor release of whatever has landed of
@@ -311,7 +366,7 @@ does not hold. NEEDS DECISION (re-asked).**
   read. Revisit at the next CodeQL major version, or at any change to the key-file path code
   (`_apply_arr_key_files()`, `API_KEY_FILE_ROOT`).
 
-**B25 — SHIPPED 2026-10-15 ([#173](https://github.com/bpoulliot/xenotag/pull/173), merge `d672c2b`), merged NOT released.**
+**B25 — SHIPPED 2026-10-15 ([#173](https://github.com/bpoulliot/xenotag/pull/173), merge `d672c2b`); RELEASED v1.13.0 (2026-10-15).**
 - *Decision carried out:* option (i) of the 2026-10-14 re-ask (land the guard; dismiss the one false-positive
   `py/path-injection` alert on the guarded read if CodeQL raises it). #148 was not revived; its guard was ported by
   hand onto `main`'s `_apply_arr_key_files()` on the new branch `fix/b25-key-file-guard`.
@@ -334,8 +389,9 @@ does not hold. NEEDS DECISION (re-asked).**
   `test_the_allowed_root_is_run_secrets`. Two mutations of the branch were run: replacing the guard with `if False:`
   fails the five refusal tests, and dropping the root prefix's trailing separator fails the sibling test. Suite
   1,058 + 2 skipped → 1,067 + 2 skipped.
-- *Production at the next release:* its `config.yml` now has five `api_key_file` keys, all `''` (a Settings save
-  writes the field). An empty field is skipped before the guard, so the release breaks no live key. I9 is still not
+- *Production at the release (v1.13.0, 2026-10-15):* its `config.yml` has five `api_key_file` keys, all `''` (a
+  Settings save writes the field). An empty field is skipped before the guard, and 1.13.0 started with `No
+  Sonarr/Radarr instance reads its API key from a file`, no error and all five \*arrs healthy. I9 is still not
   wired up: the container mounts no `/run/secrets`.
 - *Revisit record:* no dismissal was needed. Revisit if a later CodeQL major re-raises `py/path-injection` here, and
   at any change to the key-file path code (`_apply_arr_key_files()`, `API_KEY_FILE_ROOT`). A re-raise is a fresh
@@ -438,7 +494,7 @@ the param from each call in turn) turned red only that site's own test(s). Suite
   scan 163 reached all 1,134 films, and its report shows strip 0. See Release v1.11.1. U2 removal
   went live the same day (see *U2, deleted items*).*
 
-**B27 — FILED 2026-10-10 by the v1.11.1 release session (found in production). SHIPPED 2026-10-15 (#165), merged NOT released.**
+**B27 — FILED 2026-10-10 by the v1.11.1 release session (found in production). SHIPPED 2026-10-15 (#165); RELEASED v1.13.0 (2026-10-15).**
 B25 and B26 are taken, so this takes B27.
 
 - *Found.* The backup step stopped and restarted the container (`docker stop`/`start`, 1.11.0).
@@ -470,7 +526,7 @@ B25 and B26 are taken, so this takes B27.
 - *Effect of a release:* none on its own. The key regenerated in production at the 2026-10-10
   restart is intact today (64 characters).
 
-**B28 — FILED 2026-10-10 by the B12(b) session (found while adding the `reconcile_*` fields). SHIPPED 2026-10-15 (#165), merged NOT released.**
+**B28 — FILED 2026-10-10 by the B12(b) session (found while adding the `reconcile_*` fields). SHIPPED 2026-10-15 (#165); RELEASED v1.13.0 (2026-10-15).**
 B27 is taken, so this takes B28.
 
 - *Found.* `buildSettings()` in `app/web/templates/index.html` writes
@@ -482,7 +538,7 @@ B27 is taken, so this takes B28.
   and `image` do. Test: a structured save keeps a non-default `max_workers`. Not fixed in B12(b)'s PR:
   it is a separate defect in behaviour, not B12(b)'s.
 
-**B29 — FILED 2026-10-10 by the CodeQL #10 measurement session (queue item 60). SHIPPED 2026-10-15 (#166), merged NOT released.**
+**B29 — FILED 2026-10-10 by the CodeQL #10 measurement session (queue item 60). SHIPPED 2026-10-15 (#166); RELEASED v1.13.0 (2026-10-15).**
 This was a measurement-only item, so nothing in `app/` changed. Line numbers below are from `main`
 `0b210a3`.
 
@@ -590,7 +646,7 @@ This was a measurement-only item, so nothing in `app/` changed. Line numbers bel
   probe checks decoded strings.
 
 **B30 — FILED 2026-10-10 by the P4 phone-width audit (queue item 65), found when every Rating
-cell read `—`. SHIPPED 2026-10-15 ([#168](https://github.com/bpoulliot/xenotag/pull/168)), merged NOT released.**
+cell read `—`. SHIPPED 2026-10-15 ([#168](https://github.com/bpoulliot/xenotag/pull/168)); RELEASED v1.13.0 (2026-10-15).**
 - *Shipped.* `MediaItem` now declares all 7 dropped fields, not only the four the page reads: `video_codec`,
   `hdr_type`, `content_rating`, `field_order` (`str | None`), `file_mtime` (`float | None`), `audio_tracks` and
   `subtitle_tracks` (`list[dict]`, default empty, so an unprobed row validates). The three extras are safe to
@@ -625,7 +681,7 @@ folder matching `Season \d+` shows the series folder above it and `S` + the two-
 shows `Series · Specials`. Any other path keeps today's rule. Build it in `loadMedia()` with a test over
 invented paths (season folder, `Specials`, a movie folder, a file at the library root); no data change.
 
-**B31 — SHIPPED 2026-10-15 ([#170](https://github.com/bpoulliot/xenotag/pull/170)), merged NOT released.** `mediaRowName()` in `index.html` (one helper, called from
+**B31 — SHIPPED 2026-10-15 ([#170](https://github.com/bpoulliot/xenotag/pull/170)); RELEASED v1.13.0 (2026-10-15).** `mediaRowName()` in `index.html` (one helper, called from
 `loadMedia()`; no data change; the hover title still holds the full path). `Season N` → `Series · SNN`
 (`Season 1` and `Season 01` both give `S01`; `Season 100` gives `S100`); `Specials` → `Series · Specials`;
 everything else, including a Season folder with no series above it and a name that only resembles one
@@ -633,8 +689,8 @@ everything else, including a Season folder with no series above it and a name th
 function out of the template and runs it under node over invented paths (19 cases, plus a self-test that the
 pre-B31 rule fails them); it skips where node is absent and fails if `CI` is set and node is absent. Suite 1056 → 1058.
 
-**B32 — SHIPPED 2026-10-15 ([#169](https://github.com/bpoulliot/xenotag/pull/169)), merged NOT released;
-clean-up planned, runs after the release.**
+**B32 — SHIPPED 2026-10-15 ([#169](https://github.com/bpoulliot/xenotag/pull/169)); RELEASED v1.13.0 (2026-10-15);
+clean-up APPLIED 2026-10-15 (*Clean-up applied*, the last bullet of this block).**
 - *The pass (`app/reconcile.py`).*
   - (a) `_tracked()` skips a row whose newest `scan_errors.last_seen` is later than its `last_scanned`.
     That is B11's rule, now one helper, `pipeline._unreachable()`, which the \*arr dry run uses too.
@@ -703,6 +759,38 @@ clean-up planned, runs after the release.**
   and 6 unreachable ones, including 48 Hours, Hollywood Demons and A Plan to Kill.
 - *Verify afterwards:* `reconcile-report.json` from the next 05:00 pass shows `candidates` 0 and
   `unreachable` ≥ 3. An `Ids=` read shows each series' managed tags equal to the table's "after".
+- *Clean-up applied 2026-10-16 03:21–03:26Z (release item 75), inside the production container on 1.13.0.*
+  - The four-item dry run matched the table item for item: digest `4c9f12e5…` identical, 0 refusals, 1 GET,
+    0 blocked.
+  - **The recorded command was split** so that one item could be written and read back by `Ids=` before the
+    rest. Each run used its own dry-run digest, and each dry run reproduced its rows of the four-item plan.
+  - The runs:
+    - Hollywood Demons alone: written, read back OK.
+    - One Piece, 48 Hours and It's Always Sunny: One Piece's write hit the client's 30 s `ReadTimeout` and the
+      run died with a traceback (**B33**), so the other two were not attempted. One Piece's write landed between
+      03:24:31 and 03:25:02Z; the host load average was 84.
+    - 48 Hours alone, then It's Always Sunny alone: each written and read back OK.
+    - A One Piece dry run afterwards: `to write: 0`.
+
+  | Series | Removed | Managed tags after (`Ids=`) | Row `tags_applied` after |
+  |---|---|---|---|
+  | Hollywood Demons | `xt-H.265` | `xt-1080p` `xt-EN` `xt-AAC` `xt-sub-EN` `xt-TV-14` | the same (recorded) |
+  | One Piece | `xt-720p` | `xt-1080p` `xt-H265` `xt-JA` `xt-Opus` `xt-EN` `xt-dual-audio` `xt-sub-EN` `xt-TV-Y7` | **unchanged**, still `xt-720p` … (the late write was never recorded, B33) |
+  | 48 Hours | `xt-DD+` | `xt-1080p` `xt-AV1` `xt-EN` `xt-sub-EN` `xt-TV-14` | the same (recorded) |
+  | It's Always Sunny in Philadelphia | `xt-720p` | `xt-1080p` `xt-AV1` `xt-EN` `xt-Opus` `xt-TV-MA` | the same (recorded) |
+
+  - Every item's managed tags equal the table's "after". No non-managed tag moved (5, 21, 12 and 16 tags,
+    compared list for list), and `last_scanned` is unchanged on all four rows. Frontline and A Plan to Kill
+    were not touched.
+  - **One Piece's stale row is harmless.** It still expects `xt-720p`, but it carries its other expected tags,
+    so the pass counts it as `partial` and writes nothing. It clears when a scan reaches and records One Piece.
+  - **What the next scheduled pass will do**, measured GET-only on the 1.13.0 image over a `state.db` copy taken
+    after the clean-up: **0 candidates**, 9,476 tracked, 6 unreachable, 1 partial (One Piece), 95 GETs, 0
+    blocked. The self-test passed: stripping every expected tag on 25 items gives +25 candidates, dropping one
+    tag gives +0 candidates and +25 partials, and lowercasing gives +0. 48 Hours and Hollywood Demons are
+    unreachable (skipped by (a)); It's Always Sunny is clean.
+  - Record: `~/docker/xenotag/release-1.13.0-20261015/` (the dry runs, applies, `Ids=` reads before and after,
+    and `reconcile_estimate.py`).
 
 **B32 — FILED 2026-10-10 by the v1.12.0 release session (the B12(b) first-run estimate). NEEDS
 DECISION.** Not fixed: the release session builds nothing.
@@ -763,6 +851,22 @@ Relabelled READY.** (b) is not taken; with (a) the retired spellings are never r
   difference again, and the next 05:00 pass would re-add it. So the clean-up runs **only after the B32
   fix is live in production** (the release), never before. The B32 item builds the fix and the
   clean-up tool, and records the GET-only plan; the release item runs it after the deploy.
+
+**B33 — FILED 2026-10-15 by the v1.13.0 release session (queue item 75), during B32's clean-up. READY, low value.**
+- *Evidence.* The run for One Piece, 48 Hours and It's Always Sunny started at 2026-10-16 03:22:32Z. One
+  Piece's `POST /Items/{id}` raised `httpx.ReadTimeout` out of `set_managed_tags()` → `apply()` → `main()`. The
+  run exited 1 with a traceback, and 48 Hours and It's Always Sunny were not attempted.
+  - An `Ids=` read 45 s later still showed `xt-720p`. Polls every 30 s found it gone between 03:24:31 and
+    03:25:02Z. The host load average was 84.
+  - The tool never reached its record step, so One Piece's `tags_applied` still lists `xt-720p`.
+- *Same cause as B17's timeouts.* The scan's path already handles this: a write that raises is not recorded,
+  and the next scan retries (B17). So did the 2026-10-11 pass, whose One Piece write also timed out and landed.
+- *Fix (READY).* Catch `httpx.TimeoutException` around the write in `apply()`, record nothing, and stop with a
+  message naming the item. The message should say that the write may still land and that a dry run after a
+  minute shows whether it did. A test with a transport that raises `ReadTimeout`.
+- *Impact.* None today: the clean-up is done, and the stale row is a `partial` that B32 (c) leaves alone.
+- *Shares the cause:* none outside xenotag. Inside it, any client that writes a large series to Jellyfin
+  under load: B17 handles it on the scan path; this tool did not.
 
 **B22 — SHIPPED 2026-10-06 ([#113](https://github.com/bpoulliot/xenotag/pull/113)); released in v1.11.0 (2026-10-07).**
 `_run_scan_recorded()`'s `except` now calls `progress.finish(error=str(exc))` and then records the
@@ -3608,7 +3712,7 @@ webhook resolves the wrong item.)*
 | I14 | **jellyfin-dev is not production's Jellyfin.** `docker-compose.dev.yml` pins `lscr.io/linuxserver/jellyfin:latest`, which is **12.1.0**; production runs 10.11.10, and the dev database was migrated to 12.1 on 2026-09-25 (no way back) | 2 | 2 | **SHIPPED 2026-10-10** — `jellyfin-dev` pinned to `lscr.io/linuxserver/jellyfin:12.2ubu2604-ls53` (confirmed `"Version":"12.2.0"`, matching production); migrated the existing dev database forward in place | — |
 | I15 | **Release image registry (~/docker I59 decision 4)** — stay on ghcr, move to the Gitea registry (`registry.bitmapserv.org`), push to both, or mirror from the host | 2 | 2 | **CLOSED 2026-10-14** — operator decided **(A) ghcr only**; nothing changes (measured 2026-10-10, [`docs/measurements/i59-image-registry.md`](docs/measurements/i59-image-registry.md)) | — |
 | I16 | **Dependabot backlog** — eight bumps (#103–#110) opened 2026-09-28 sat untriaged behind a moving `main` | 2 | 1 | **DONE 2026-10-10** — 5 pip bumps merged; #108 closed by Dependabot. The 5 bumps are **RELEASED v1.12.0** (2026-10-10); startup log clean. **Second round 2026-10-14:** #156–#160, #109 and #110 merged, not yet released; see *I16 — second round* | — |
-| I17 | **`docker-build` is red on every PR: Trivy finds 5 HIGH base-image CVEs that a rebuild already fixes.** CI restored a cached `apt-get upgrade` layer (`#11 CACHED`), so the image kept the `curl`/`libcurl4t64` `8.14.1-2+deb13u5` and `librsvg2-2` `2.60.0+dfsg-1` that Debian has since fixed | 4 | 1 | **FIXED 2026-10-14** — both workflows build with `pull: true` and `no-cache: true`; see *I17* below | — |
+| I17 | **`docker-build` is red on every PR: Trivy finds 5 HIGH base-image CVEs that a rebuild already fixes.** CI restored a cached `apt-get upgrade` layer (`#11 CACHED`), so the image kept the `curl`/`libcurl4t64` `8.14.1-2+deb13u5` and `librsvg2-2` `2.60.0+dfsg-1` that Debian has since fixed | 4 | 1 | **FIXED 2026-10-14 · RELEASED v1.13.0 (2026-10-15)** — both workflows build with `pull: true` and `no-cache: true`; the v1.13.0 publish ran uncached (0 `CACHED` steps) and Trivy finds 0 HIGH/CRITICAL in it; see *I17* below | — |
 
 **I15 — FILED 2026-10-10 from ~/docker I59 (operator, 2026-10-09: "decision 4 — measure first"). NEEDS
 DECISION.** Measured, nothing pushed (evidence and instruments in
@@ -3664,8 +3768,10 @@ from a restored `apt` layer would have shipped the stale packages to production.
 Trivy's `ignore-unfixed`, severity and exit code are as before. Cost: every build re-installs `ffmpeg` and the
 Python dependencies. The image is not large, so this beats keeping a cache that can hide a patched package.
 
-*Not done.* Production still runs the image from before this change; a rebuild needs a release (the
-operator's step), which now publishes uncached.
+*Released in v1.13.0 (2026-10-15)*, the first uncached publish (run `38844339007`): 0 `CACHED` steps, the
+`apt-get … upgrade` step ran (20.3 s) and installed `curl`/`libcurl4t64` `8.14.1-2+deb13u7` and `librsvg2-2`
+`2.60.0+dfsg-1+deb13u1`. Trivy 0.76.0 with CI's flags finds 0 in the 1.13.0 image and 7 HIGH in 1.12.0 (the
+positive control). Production runs 1.13.0. See *Release v1.13.0*.
 
 **I16 — Dependabot backlog, triaged 2026-10-10.** Each bump was rebased by Dependabot onto the `main` its
 predecessor moved, then merged one at a time when CI was green on the rebased head. Each was also checked in
@@ -3693,10 +3799,10 @@ onto the `main` its predecessor moved and merged when every check was green on t
 | #159 | APScheduler 3.11.2 → 3.11.3 | merged |
 | #160 | hadolint-action 3.1.0 → 3.5.0 | merged |
 | #156 | FastAPI 0.136.3 → 0.143.0 | merged after #163. FastAPI 0.143 keeps `include_router()`'s routes behind one lazy `_IncludedRouter` entry, so `test_mutating_routes_are_the_known_set` saw no routes at all. #163 walks them with `fastapi.routing.iter_route_contexts()`. The route set is unchanged, and the CSRF middleware keys on the method, not the route table, so this was not a CSRF regression |
-| #109 | checkout 4 → 7 | merged. `ci.yml` exercises it; `release.yml` and `docker-publish.yml` first run it at the next release (`persist-credentials` still defaults to true in v7, which the release's `git push` needs) |
-| #110 | setup-buildx 3 → 4 | merged. `ci.yml`'s `docker-build` exercises it; `docker-publish.yml` first runs it at the next release |
+| #109 | checkout 4 → 7 | merged. `ci.yml` exercises it; `release.yml` and `docker-publish.yml` first ran it in the v1.13.0 release (2026-10-15), and both passed: the Release run pushed its commit and tag (`persist-credentials` still defaults to true in v7), and the publish run built and pushed |
+| #110 | setup-buildx 3 → 4 | merged. `ci.yml`'s `docker-build` exercises it; `docker-publish.yml` first ran it in the v1.13.0 release (2026-10-15) and passed |
 
-None of these is released yet.
+All of them shipped in v1.13.0 (2026-10-15).
 
 **I14 — FILED 2026-09-27, found while measuring B8. Not fixed here.**
 
@@ -4354,7 +4460,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
 | P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | **CLOSED 2026-09-25 — keep the PNGs** | — |
-| P12 | **The Service health tiles cut every instance name at phone width.** `.health-grid` is `repeat(3,1fr)` at every width. At 360 px a tile is 86 px wide and **6 of 6** names are cut (`Je…`, `Son…`, `Rad…`), so three Sonarr instances look alike and the full name is only in a hover title, which a touch screen cannot show. At 390 px **5 of 6** are cut, and `Unreachable` runs 14 px (360) / 4 px (390) past its tile; at 768 and up, 0. Noted under P4a (2026-10-06); measured 2026-10-10 by the P4 audit with production's instance count and name lengths (3 Sonarr, 2 Radarr). | 2 | 1 | **SHIPPED 2026-10-15** ([#172](https://github.com/bpoulliot/xenotag/pull/172)), merged NOT released — 2 columns with wrapping names below 600 px, as the operator decided 2026-10-14; measured numbers in *P12* below | — |
+| P12 | **The Service health tiles cut every instance name at phone width.** `.health-grid` is `repeat(3,1fr)` at every width. At 360 px a tile is 86 px wide and **6 of 6** names are cut (`Je…`, `Son…`, `Rad…`), so three Sonarr instances look alike and the full name is only in a hover title, which a touch screen cannot show. At 390 px **5 of 6** are cut, and `Unreachable` runs 14 px (360) / 4 px (390) past its tile; at 768 and up, 0. Noted under P4a (2026-10-06); measured 2026-10-10 by the P4 audit with production's instance count and name lengths (3 Sonarr, 2 Radarr). | 2 | 1 | **SHIPPED 2026-10-15** ([#172](https://github.com/bpoulliot/xenotag/pull/172)) · **RELEASED v1.13.0 (2026-10-15)** — 2 columns with wrapping names below 600 px, as the operator decided 2026-10-14; measured numbers in *P12* below | — |
 
 **P12 — FILED 2026-10-10 by the P4 phone-width audit (queue item 65). NEEDS DECISION (layout
 pick).** Measured with P4's instrument and fixture (see *P4 — post-feature phone-width audit*):
@@ -4386,7 +4492,7 @@ recommendation as written: under `max-width:600px`, `.health-grid{grid-template-
 and `.health-name{white-space:normal;overflow-wrap:anywhere}`. 768 and up stay unchanged. Verify with P4's
 instrument (0 names cut and 0 message overflow at 360 and 390; 768 and 1366 measured equal to before).
 
-**P12 — SHIPPED 2026-10-15 ([#172](https://github.com/bpoulliot/xenotag/pull/172)), merged NOT released (queue item 74).** Two rules in
+**P12 — SHIPPED 2026-10-15 ([#172](https://github.com/bpoulliot/xenotag/pull/172)); RELEASED v1.13.0 (2026-10-15) (queue item 74).** Two rules in
 `app/web/templates/index.html`, in an `@media(max-width:600px)` block beside `.health-grid`:
 `.health-grid{grid-template-columns:repeat(2,1fr)}` and `.health-name{white-space:normal;overflow-wrap:anywhere}`.
 Measured with P4's audit instrument (`~/docker/xenotag/p4-audit-20261010/`, self-test passing in both directions)
@@ -5303,7 +5409,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser **SHIPPED 2026-10-15** ([#171](https://github.com/bpoulliot/xenotag/pull/171), cards below 600 px without Source / Audio / Scanned), merged NOT released — so **P4 is fully shipped**; the `.health-grid` truncation the audit found is filed as **P12**, first measured 2026-09-26 — see *P4 — post-feature phone-width audit* below | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser **SHIPPED 2026-10-15** ([#171](https://github.com/bpoulliot/xenotag/pull/171), cards below 600 px without Source / Audio / Scanned) · **RELEASED v1.13.0** (2026-10-15) — so **P4 is fully shipped**; the `.health-grid` truncation the audit found is filed as **P12**, first measured 2026-09-26 — see *P4 — post-feature phone-width audit* below | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
 | P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
@@ -5618,7 +5724,7 @@ labels say what would make each one startable.
    not judged: the adapt toggle is 36×20 px and the threshold field 19 px tall, under WCAG 2.5.8's
    24 px.
 
-   **P4 media browser — SHIPPED 2026-10-15 ([#171](https://github.com/bpoulliot/xenotag/pull/171)), merged NOT released (queue item 73).** Operator
+   **P4 media browser — SHIPPED 2026-10-15 ([#171](https://github.com/bpoulliot/xenotag/pull/171)); RELEASED v1.13.0 (2026-10-15) (queue item 73).** Operator
    decision (c)+(d). `<table class="media-table">` plus one `@media(max-width:600px)` block in
    `index.html`: the header and the Source / Audio / Scanned columns (2, 4, 7) are hidden, every
    other row element is `display:block`, the name is the card's heading, and Video, Rating and Tags
