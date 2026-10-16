@@ -737,11 +737,16 @@ def config_as_dict_safe() -> dict:
     ``env_managed_fields`` so the UI can render them read-only. A file-backed
     *arr instance keeps its ``api_key_file`` and has its ``api_key`` blanked;
     the UI renders that row's key read-only.
+
+    ``auth.secret_key`` (the session-signing key) is dropped outright, as
+    ``password_hash`` is: the page never shows it, and a save restores it from
+    the running config (B27).
     """
     d = get_config().model_dump()
-    d.get("auth", {}).pop("password_hash", None)
     for path in _env_overrides:
         _set_nested(d, path, "")
+    d.get("auth", {}).pop("password_hash", None)
+    d.get("auth", {}).pop("secret_key", None)
     for _label, inst in _raw_instances(d):
         if _key_file(inst):
             inst["api_key"] = ""
