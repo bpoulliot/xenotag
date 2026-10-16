@@ -18,14 +18,17 @@ only agree with itself.
   information.
 * ``py/stack-trace-exposure`` #10 (``/api/deleted-items/report``, roadmap B29):
   the stored report's ``reason`` and ``halted`` carry text from the three
-  exceptions CodeQL names (``deleted_items.py`` 364, 366, 539). Measured, not
-  dismissed: no traceback and no API key reaches the response, but an HTTP
-  error's message carries the request URL -- with any ``user:password@`` in it.
+  exceptions CodeQL names (``deleted_items.py`` 364, 366, 539). No traceback and
+  no API key reached the response, but an HTTP error's message carries the
+  request URL -- with any ``user:password@`` in it. Fixed: the report says the
+  exception's type and status, and the log keeps the message. The same line in
+  ``arr_sync.py`` (#9's flow) is fixed and probed here too.
 """
 
 from __future__ import annotations
 
 import http.server
+import logging
 import pathlib
 import re
 import threading
@@ -37,7 +40,9 @@ import pytest
 from fastapi.testclient import TestClient
 
 from app import pipeline
+from app.arr_sync import ArrTagSync
 from app.clients.jellyfin import JellyfinClient
+from app.clients.sonarr import SonarrClient
 from app.config import AppConfig, AuthConfig, JellyfinConfig
 
 # ---------------------------------------------------------------------------
@@ -419,30 +424,48 @@ def test_deleted_items_route_survives_an_unreadable_report_file(deleted_route, m
     assert body["report"] is None and body["error"] is None and _leaks(body) == []
 
 
-# What B29's fix changes. These pin the residual the probe found, so the fix
-# must flip them on purpose: an HTTP error's message is the request URL.
+# What B29's fix closes. An unexpected failure's text is its type (and a failed
+# HTTP call's status), never ``str(exc)``: an httpx error's message is the full
+# request URL, and httpx quotes it with its userinfo. The server log keeps the
+# whole message.
 
 
 @pytest.mark.parametrize("source", ["366", "539"])
-def test_cq10_residual_an_http_error_puts_the_request_url_in_the_report(deleted_route, source):
+def test_cq10_an_http_error_leaves_the_request_url_out_of_the_report(deleted_route, source):
     run, jf, radarr, urls, _ = deleted_route
     urls["jf"], urls["arr"] = "http://jf-internal.example:8096", "http://r0-internal.example:7878"
     body = run(_force(source, jf, radarr))
     text = _fired(source, body["report"])
-    host = "jf-internal.example:8096" if source == "366" else "r0-internal.example:7878"
-    assert "HTTPStatusError" in text and f"for url 'http://{host}/" in text, text
+    assert "HTTPStatusError 500" in text and "see the server log" in text, text  # control: the error was reported
+    assert "internal.example" not in "\n".join(_strings(body)) and "http://" not in text, text
 
 
 @pytest.mark.parametrize("source", ["366", "539"])
-def test_cq10_residual_a_password_in_the_configured_url_reaches_the_response(deleted_route, source):
-    """httpx quotes the URL with its userinfo, so a ``http://user:password@host``
-    Jellyfin or *arr URL puts the password in the report -- and in the ntfy for a halt."""
+def test_cq10_a_password_in_the_configured_url_stays_out_of_the_response(deleted_route, source):
+    """The control is the log: it holds the whole message, userinfo included, so the
+    request really did name the password and only the report was cleaned."""
     run, jf, radarr, urls, _ = deleted_route
     urls["jf"] = f"http://xt:{_URL_PASSWORD}@jf"
     urls["arr"] = f"http://xt:{_URL_PASSWORD}@r0"
-    body = run(_force(source, jf, radarr))
+    logged: list[str] = []
+    handler = _Capture(logged)
+    logging.getLogger("app.deleted_items").addHandler(handler)
+    try:
+        body = run(_force(source, jf, radarr))
+    finally:
+        logging.getLogger("app.deleted_items").removeHandler(handler)
     _fired(source, body["report"])
-    assert _leaks(body) == [_URL_PASSWORD]
+    assert _leaks(body) == []
+    assert any(_URL_PASSWORD in line for line in logged), logged
+
+
+class _Capture(logging.Handler):
+    def __init__(self, sink: list[str]) -> None:
+        super().__init__()
+        self.sink = sink
+
+    def emit(self, record: logging.LogRecord) -> None:
+        self.sink.append(record.getMessage())
 
 
 def test_cq10_source_364_messages_are_built_by_the_pass_not_copied_from_an_error(deleted_route):
@@ -454,3 +477,40 @@ def test_cq10_source_364_messages_are_built_by_the_pass_not_copied_from_an_error
     assert body["report"]["reason"] == "could not read radarr/r0: rows owned there cannot be judged"
     assert body["report"]["instances"]["radarr/r0"]["error"] == "HTTPStatusError"
     assert _leaks(body) == []
+
+
+def test_failure_text_is_the_type_and_a_failed_calls_status():
+    from app.deleted_items import failure_text
+
+    request = httpx.Request("GET", f"http://xt:{_URL_PASSWORD}@host/path")
+    status_error = httpx.HTTPStatusError("boom", request=request, response=httpx.Response(502, request=request))
+    assert failure_text(status_error) == "HTTPStatusError 502"
+    assert failure_text(httpx.ConnectError(f"cannot reach {request.url}")) == "ConnectError"
+    assert failure_text(ValueError(_URL_PASSWORD)) == "ValueError"
+
+
+def test_cq9_an_arr_sync_halt_leaves_the_request_url_out_of_the_report_and_the_ntfy():
+    """Same defect on ``arr_sync.py``'s halt (CodeQL #9's flow): the write's URL, userinfo
+    included, was in ``halted`` and so in the report and the notification."""
+    from tests.test_arr_sync import FakeArr, cfg, jf_series, series
+
+    fake = FakeArr("sonarr", [series(1, "A", 1, "/tv/A")])
+    client = SonarrClient(f"http://xt:{_URL_PASSWORD}@s0", "key", "s0", transport=httpx.MockTransport(fake.handle))
+    sent: list[str] = []
+    sync = ArrTagSync(cfg("live"), [client], [], emit=sent.append)
+    sync.prepare()
+    item = jf_series("a", "A", "/tv/A", Tvdb="1")
+    sync.resolve_all([item])
+    fake.fail_status["POST"] = 503
+    logged: list[str] = []
+    handler = _Capture(logged)
+    logging.getLogger("app.arr_sync").addHandler(handler)
+    try:
+        sync.sync_item(item, {"sonarr": ["xt-1080p"]})
+    finally:
+        logging.getLogger("app.arr_sync").removeHandler(handler)
+    assert sync.halted and "HTTPStatusError" in sync.halted  # control: it halted on the HTTP error
+    assert any(_URL_PASSWORD in line for line in logged), logged  # control: the URL named the password
+    report = sync.report()
+    assert _leaks({"halted": report["halted"], "sent": sent}) == []
+    assert any("HALTED" in line for line in sent)
