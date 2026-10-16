@@ -63,7 +63,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B29 | **CodeQL #10: the deleted-items report puts an HTTP error's text, URL included, into the admin's browser.** `GET /api/deleted-items/report` returns the stored report, whose `reason` (an aborted pass) and `halted` (a failed strip) are `str(exc)`. CodeQL names three sources, `deleted_items.py` 364/366/539. #135 changed two *other* values, so the alert stayed open. No traceback and no API key ever reaches the response (probed), but a failed HTTP call's message is the full request URL, and **a `user:password@` in a configured Jellyfin or \*arr URL reaches the response verbatim** (and the ntfy, for a halt). Latent: production's 6 URLs carry no userinfo. | 2 | 1 | **SHIPPED 2026-10-15** ([#166](https://github.com/bpoulliot/xenotag/pull/166)), merged NOT released — option (b), built to the spec below; a local CodeQL 2.27.2 run closes #10 and #9's flow (0 results), and **#10 is `fixed` on main's analysis of `1bfeb7d` (2026-10-16T01:31Z)**; #9 stays `dismissed` (its flow is gone too). No dismissal made | — |
 | B30 | **The media browser never shows codec, HDR, audio tracks or rating, because `/media` drops them.** `MediaItem` (`app/web/schemas.py:23`) declares 8 fields, but `get_media_filtered()` returns 15, and Pydantic silently drops the other 7 (`video_codec`, `hdr_type`, `audio_tracks`, `subtitle_tracks`, `content_rating`, `field_order`, `file_mtime`). `loadMedia()` reads four of them. As a result the Video column shows only the resolution, Audio falls back to the language list (never a codec, and never P1's yellow `UND`), and Rating is always `—`. P2 was closed as shipped after reading `index.html`; the response was never checked. Production's index holds 9,453 codecs, 202 HDR types, 9,429 audio-track lists (3,085 with an `UND` track) and 8,090 ratings that the browser cannot show. | 3 | 1 | **SHIPPED 2026-10-15** ([#168](https://github.com/bpoulliot/xenotag/pull/168)), merged NOT released — see *B30* below | — |
 | B31 | **A quarter of the media browser's rows are named `Season 01`.** The Item column shows the file's parent folder (`loadMedia()`), and for an episode that is its season folder. **2,469 of production's 9,463 rows** read `Season NN` or `Specials`; the series name is only in the hover title, which a touch screen cannot show. | 2 | 1 | **READY** (operator decided 2026-10-14: option (a), `Series · S01`) — see *B31* below | — |
-| B32 | **The tag reconciliation restores what a STALE row says, not what xenotag would write today.** B12(b) takes every row's `tags_applied` as the expected tags. A row goes stale in two ways. First, the scan cannot reach the item: its file fails to probe, so the row keeps an old scan's tags, spelled before B9 (`xt-DD+`, `xt-H.264`). Second, a write lands but is not recorded: B17 records nothing when a write times out. Measured on production at the v1.12.0 deploy: **all 6 candidates of the first scheduled pass are stale rows.** For 2 series, Jellyfin carries the correct `xt-1080p` while their rows still say `720p` (pre-B13), so the pass would ADD `xt-720p` beside it. The other 4 rows date from June to August, their files fail to probe, and the pass would write 6 tags each, 3 of them items with retired pre-B9 spellings. | 2 | 2 | **READY** (operator decided 2026-10-14: (a) + (c), plus a measured clean-up of what the 2026-10-11 pass wrote) — see *B32* below | — |
+| B32 | **The tag reconciliation restores what a STALE row says, not what xenotag would write today.** B12(b) takes every row's `tags_applied` as the expected tags. A row goes stale in two ways. First, the scan cannot reach the item: its file fails to probe, so the row keeps an old scan's tags, spelled before B9 (`xt-DD+`, `xt-H.264`). Second, a write lands but is not recorded: B17 records nothing when a write times out. Measured on production at the v1.12.0 deploy: **all 6 candidates of the first scheduled pass are stale rows.** For 2 series, Jellyfin carries the correct `xt-1080p` while their rows still say `720p` (pre-B13), so the pass would ADD `xt-720p` beside it. The other 4 rows date from June to August, their files fail to probe, and the pass would write 6 tags each, 3 of them items with retired pre-B9 spellings. | 2 | 2 | **SHIPPED 2026-10-15 ([#169](https://github.com/bpoulliot/xenotag/pull/169)), merged NOT released; clean-up planned, runs after the release** — (a) + (c) as decided; `python -m app.reconcile_cleanup` removes `xt-720p` from 2 series and a retired spelling from 2 (plan and apply command under *B32* below) | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -594,6 +594,77 @@ in P4's card layout, where the name is the card's heading.
 folder matching `Season \d+` shows the series folder above it and `S` + the two-digit season; `Specials`
 shows `Series · Specials`. Any other path keeps today's rule. Build it in `loadMedia()` with a test over
 invented paths (season folder, `Specials`, a movie folder, a file at the library root); no data change.
+
+**B32 — SHIPPED 2026-10-15 ([#169](https://github.com/bpoulliot/xenotag/pull/169)), merged NOT released;
+clean-up planned, runs after the release.**
+- *The pass (`app/reconcile.py`).*
+  - (a) `_tracked()` skips a row whose newest `scan_errors.last_seen` is later than its `last_scanned`.
+    That is B11's rule, now one helper, `pipeline._unreachable()`, which the \*arr dry run uses too.
+  - (c) `plan()` makes an item a candidate only when it carries **none** of its expected managed tags
+    (case-insensitive), and the write phase re-checks with the same rule (`lost_all()`).
+  - The report gains `unreachable` and `partial`.
+  - Tests: a probe-failed row is skipped; a total loss is a candidate; `xt-720p` expected with `xt-1080p`
+    present is not; the 2026-10-10 shape gives 0 (its control: the old rule gives 6); the threshold still
+    halts. 7 of them fail on origin/main. Suite 1033 → 1056.
+- *The clean-up (`python -m app.reconcile_cleanup`).* It is a module, not a `scripts/` file, because the
+  image ships only `app/` and the apply runs inside the production container.
+  - It takes the items by `--item` and removes exactly class (i), a resolution tag that is the row's
+    own and in its `tags_applied` (the only one the pass could have written) while another resolution
+    tag is present, and class (ii), a spelling `tag_label()` would change (B9) or B7's `KH`/`PE`/`ZX`.
+  - The plan refuses (exit 1, nothing written) if an item is not returned, has no row, would still
+    carry two resolution tags, or carries an `mf-` tag, which `set_managed_tags()` would also drop.
+  - A dry run is the default: everything goes through `ReadOnlyTransport`, reads are by `Ids=`, and the
+    index is opened `mode=ro`. Its self-test (the guard's and the classifier's, both ways) must pass
+    before it reports.
+  - `--apply` runs only with `--expect-plan <digest>`, the dry run's sha256 over each item's managed tags
+    and removals, case-folded. So the plan applied is the plan measured, and any change in between
+    refuses. It writes through `set_managed_tags()` and records through `_record_after_readback()`
+    (`_PendingRecord.tags_row` → `state.set_tags_applied()`). Only `tags_applied` changes, so the rows
+    agree with Jellyfin. `last_scanned` is untouched, so B11 still sees the two probe-failed rows as
+    stale. It writes the first item and reads it back before the rest; a write that does not read back
+    stops it. It refuses while a scan run started in the last 6 h is unfinished.
+- *Measured 2026-10-16 01:54–01:57Z, GET-only, production Jellyfin 12.2.0.* The tool ran in a throwaway container of
+  the 1.12.0 image with the branch's `app/`, over a state.db copy taken with `-wal`/`-shm`: 1 GET,
+  0 blocked, 0 refusals, and the six-item digest was identical on two reads.
+  - **The item set is the log's.** The 2026-10-11 05:00 pass logged a timeout for One Piece and 5 `POST
+    /Items/{id}` 204s. Those 6 ids are the release record's 6 series.
+  - **One Piece's timed-out write landed**: `xt-720p` is on it.
+  - **Frontline needs nothing.** Scan 167 (2026-10-12 09:00) reached it and re-wrote its row and its
+    tags, so its `xt-H.264` is gone and the row is reachable again.
+  - **A Plan to Kill needs nothing.** Its row has no retired spelling.
+
+  | Series | Removed (class) | Managed tags after |
+  |---|---|---|
+  | One Piece | `xt-720p` (i) | `xt-1080p` `xt-H265` `xt-JA` `xt-Opus` `xt-EN` `xt-dual-audio` `xt-sub-EN` `xt-TV-Y7` |
+  | It's Always Sunny in Philadelphia | `xt-720p` (i) | `xt-1080p` `xt-AV1` `xt-EN` `xt-Opus` `xt-TV-MA` |
+  | 48 Hours | `xt-DD+` (ii) | `xt-1080p` `xt-AV1` `xt-EN` `xt-sub-EN` `xt-TV-14` |
+  | Hollywood Demons | `xt-H.265` (ii) | `xt-1080p` `xt-EN` `xt-AAC` `xt-sub-EN` `xt-TV-14` |
+  | Frontline | nothing | `xt-aac` `xt-en` `xt-1080p` `xt-h265` `xt-TV-PG` (unchanged) |
+  | A Plan to Kill | nothing | `xt-1080p` `xt-AV1` `xt-EN` `xt-AAC` `xt-sub-EN` `xt-TV-14` (unchanged) |
+
+  The managed tags before are the "after" set plus the removed tag. No non-managed tag is touched.
+  The two probe-failed series keep the rest of their June–August tags; only the two classes were
+  authorised.
+- *The apply, for the release item, inside the production container after the deploy.* The order trap
+  above still holds: never run it on 1.12.0.
+  1. Dry run, which reads production's own `state.db` read-only:
+
+         docker exec xenotag python -m app.reconcile_cleanup --item 1378aebe24bd7d57cefd6f044d23ab9d --item 559e6f60a5d1758f9a1f2ada4da2e05e --item ffe115393f9ed61cb71535aaa43fbf6c --item 9eaf4d31dc3df40a98214add10eb4134
+
+     Expect `self-test … PASS`, the four rows of the table, `refusals: 0`, `blocked 0` and
+     `plan digest: 4c9f12e53c07ff4e0a7d7297222abbe4504fb36f25ca76f69b377be218a04634`.
+  2. Apply, outside 09:00–09:30Z (the incremental scan) and 11:00Z (the pass):
+
+         docker exec xenotag python -m app.reconcile_cleanup --item 1378aebe24bd7d57cefd6f044d23ab9d --item 559e6f60a5d1758f9a1f2ada4da2e05e --item ffe115393f9ed61cb71535aaa43fbf6c --item 9eaf4d31dc3df40a98214add10eb4134 --apply --expect-plan 4c9f12e53c07ff4e0a7d7297222abbe4504fb36f25ca76f69b377be218a04634
+
+     Expect `written: 4`, each with `"read_back": true`.
+  3. If the dry run's digest differs, apply only when its plan is this table minus removals that have
+     since gone, for example after a scan re-wrote One Piece. Then pass the new digest. Anything else
+     (a new removal, a refusal, a different item) is a STOP.
+- *What the fixed pass sees* (the copy above, production's empty `path_filters`): 9,476 tracked rows
+  and 6 unreachable ones, including 48 Hours, Hollywood Demons and A Plan to Kill.
+- *Verify afterwards:* `reconcile-report.json` from the next 05:00 pass shows `candidates` 0 and
+  `unreachable` ≥ 3. An `Ids=` read shows each series' managed tags equal to the table's "after".
 
 **B32 — FILED 2026-10-10 by the v1.12.0 release session (the B12(b) first-run estimate). NEEDS
 DECISION.** Not fixed: the release session builds nothing.
@@ -1366,7 +1437,8 @@ B12(b) therefore stays **NEEDS DECISION** on questions 2 and 3 only; B12(a) is R
     button beside the scan buttons (`POST /scan/reconcile`). Both run the same pass.
   - It reads every tracked `jellyfin:` row with managed tags by `Ids=` in batches of 100 (`Fields=Tags`).
   - A candidate is an item where some managed tag in `tags_applied` matches none of Jellyfin's current
-    tags, regardless of case.
+    tags, regardless of case. *Changed by B32 (#169):* only an item carrying **none** of them, from a row
+    the scan can reach.
   - Past `scan.reconcile_write_threshold` (default 500) candidates, a **scheduled** pass writes none of
     them. It logs `Tag reconciliation HALTED` at WARNING with the count and a sample of up to 20 (name,
     id, missing tags), records the run, and sets `xenotag_reconcile_halted 1`.

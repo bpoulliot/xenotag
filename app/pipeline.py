@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -32,6 +33,7 @@ from .state import (
     get_session,
     read_only_session,
     set_meta,
+    set_tags_applied,
     start_scan_run,
     upsert_media_state,
     upsert_scan_error,
@@ -305,6 +307,9 @@ class _PendingRecord:
     # (the reconciliation pass, B12(b): the row's tags_applied is what it restores).
     record: dict | None
     settled_from: float  # time.monotonic() of the item's last write or refresh
+    # With no ``record``: a row key whose ``tags_applied`` ALONE is set to what reads
+    # back (the B32 clean-up), leaving ``last_scanned`` and the probe's columns alone.
+    tags_row: str | None = None
 
 
 class _Readback:
@@ -348,6 +353,8 @@ def _read_back(jf: JellyfinClient, pending: list[_PendingRecord], readback: _Rea
 def _record(session: object, p: _PendingRecord, tags_applied: list[str]) -> None:
     if p.record is not None:
         upsert_media_state(session, tags_applied=tags_applied, **p.record)
+    elif p.tags_row is not None:
+        set_tags_applied(session, p.tags_row, tags_applied)
 
 
 def _record_after_readback(
@@ -985,6 +992,19 @@ def _unreachable_errors(session: Session) -> dict[str, tuple]:
     return newest
 
 
+def _unreachable(errors: dict[str, tuple], item_id: str, last_scanned: datetime | None) -> tuple | None:
+    """The item's newest scan error if it is newer than its row (B11), else None.
+
+    ``errors`` is ``_unreachable_errors()``; ``item_id`` is Jellyfin's id, without
+    the row's ``jellyfin:`` prefix. Such a row is stale: the *arr dry run counts it
+    as unreachable and the reconciliation pass skips it (B32).
+    """
+    error = errors.get(item_id)
+    if error and (last_scanned is None or error[0] > last_scanned):
+        return error
+    return None
+
+
 arr_dry_run_state: dict = {"running": False, "error": None}
 
 
@@ -1021,8 +1041,8 @@ def run_arr_dry_run(
                 if row is None:
                     sync.note_no_probe(item)
                     continue
-                error = errors.get(item.get("Id", ""))
-                if error and (row.last_scanned is None or error[0] > row.last_scanned):
+                error = _unreachable(errors, item.get("Id", ""), row.last_scanned)
+                if error:
                     sync.note_unreachable(item, error[1])
                     continue
                 audio, subs = _tracks_from_row(row)

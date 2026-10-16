@@ -283,7 +283,7 @@
       <div class="btn-row">
         <button class="btn primary" id="btn-inc" onclick="triggerScan('incremental')">▶ Incremental scan</button>
         <button class="btn" id="btn-full" onclick="triggerScan('full')">⟳ Full rescan</button>
-        <button class="btn" id="btn-reconcile" onclick="triggerScan('reconcile')" title="Re-read every tracked item's Jellyfin tags and put back any xt- tag Jellyfin lost. Jellyfin only; writes past the threshold too (it is the path after a halted scheduled run).">⟲ Tag rescan</button>
+        <button class="btn" id="btn-reconcile" onclick="triggerScan('reconcile')" title="Re-read every tracked item's Jellyfin tags and put back the xt- tags of any item that lost all of them. Jellyfin only; writes past the threshold too (it is the path after a halted scheduled run).">⟲ Tag rescan</button>
         <button class="btn" id="btn-cancel" onclick="cancelScan()" style="display:none;color:var(--red);border-color:var(--red)">✕ Cancel</button>
       </div>
       <div class="progress-wrap" id="progress-wrap" style="display:none">

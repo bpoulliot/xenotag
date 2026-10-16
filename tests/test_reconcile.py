@@ -21,6 +21,7 @@ import json
 import logging
 import time
 import uuid
+from datetime import datetime
 from urllib.parse import parse_qs, urlsplit
 
 import httpx
@@ -184,9 +185,16 @@ def test_plan_a_case_only_difference_is_not_a_candidate():
     assert p.candidates == [] and p.checked == 1
 
 
-def test_plan_a_missing_tag_is_a_candidate_spelled_as_the_row():
+def test_plan_a_total_loss_is_a_candidate_spelled_as_the_row():
+    p = reconcile.plan([("a", WRITTEN)], {"a": {"Id": "a", "Name": "A", "Tags": ["fav", "xt-DTS"]}})
+    assert [(c.item_id, c.name, c.missing) for c in p.candidates] == [("a", "A", tuple(WRITTEN))]
+    assert p.partial == 0
+
+
+def test_plan_a_partial_loss_is_not_a_candidate():
+    """B32 (c): an item still carrying some of its tags is the scan's and U9's, not the pass's."""
     p = reconcile.plan([("a", WRITTEN)], {"a": {"Id": "a", "Name": "A", "Tags": ["xt-1080p", "xt-h264", "fav"]}})
-    assert [(c.item_id, c.name, c.missing) for c in p.candidates] == [("a", "A", ("xt-EN", "xt-AAC"))]
+    assert p.candidates == [] and p.partial == 1 and p.checked == 1
 
 
 def test_plan_extra_managed_tags_are_not_repaired():
@@ -207,11 +215,11 @@ def test_expected_tags_are_the_managed_ones_only():
 
 # ── the threshold ───────────────────────────────────────────────────────────
 def _lost(seed, n: int) -> list[dict]:
-    """n tracked items whose xt-AAC and xt-EN Jellyfin dropped (kept: a user tag and a respelled one)."""
+    """n tracked items that lost every managed tag (kept: a user tag) -- the loss the pass repairs (B32)."""
     items = []
     for item_id in _ids(n):
         seed(item_id, WRITTEN)
-        items.append(_full_item(item_id, ["favourite", "xt-1080p", "xt-h264"]))
+        items.append(_full_item(item_id, ["favourite"]))
     return items
 
 
@@ -222,7 +230,7 @@ def test_n_candidates_on_a_schedule_are_all_written(env):
     report = run(reconcile.SCHEDULED, _cfg(threshold=3))
     assert len(server.writes) == 3 and server.rejected == []
     for item in server.items.values():
-        assert sorted(item["Tags"]) == sorted(["favourite", "xt-1080p", "xt-h264", "xt-EN", "xt-AAC"])
+        assert sorted(item["Tags"]) == sorted(["favourite", *WRITTEN])
     assert report["outcome"] == "written" and report["halted"] is False and report["candidates"] == 3
     assert report["writes"] == {"written": 3, "readback_fixed": 0, "unresolved": 0, "error": 0}
     assert _value("xenotag_reconcile_halted") == 0
@@ -284,12 +292,12 @@ def test_a_missing_tag_is_written_and_read_back(env):
     seed, serve, run, _, maker = env
     [a] = _ids(1)
     seed(a, WRITTEN)
-    server = serve(FakeJellyfin([_full_item(a, ["favourite", "xt-1080p", "xt-h264", "xt-EN", "xt-DTS"])]))
+    server = serve(FakeJellyfin([_full_item(a, ["favourite", "xt-DTS"])]))
     report = run()
     [(item_id, body)] = server.writes
     assert item_id == a
-    # Jellyfin's managed tags as they were (its respelling, the extra), the lost one added; the user tag kept.
-    assert body["Tags"] == ["favourite", "xt-1080p", "xt-h264", "xt-EN", "xt-DTS", "xt-AAC"]
+    # Jellyfin's managed tags as they were (the extra), the lost ones added; the user tag kept.
+    assert body["Tags"] == ["favourite", "xt-DTS", *WRITTEN]
     reads = [q for m, p, q in server.log if m == "GET" and p == "/Items"]
     assert reads[-1]["Ids"] == a and reads[-1]["Fields"] == "Tags"  # the B17 read-back, after the write
     assert report["writes"]["written"] == 1
@@ -306,7 +314,7 @@ def test_a_write_jellyfin_undoes_is_retried_once(env):
     [a, b] = _ids(2)
     seed(a, WRITTEN)
     seed(b, WRITTEN)
-    server = serve(FakeJellyfin([_full_item(a, ["xt-1080p"]), _full_item(b, ["xt-1080p"])], undo={a: 1, b: 2}))
+    server = serve(FakeJellyfin([_full_item(a, []), _full_item(b, [])], undo={a: 1, b: 2}))
     report = run()
     assert len(server.writes) == 4  # each written twice
     assert report["writes"] == {"written": 0, "readback_fixed": 1, "unresolved": 1, "error": 0}
@@ -317,7 +325,7 @@ def test_the_write_posts_the_whole_item_never_a_tags_only_read(env):
     seed, serve, run, _, _ = env
     [a] = _ids(1)
     seed(a, WRITTEN)
-    server = serve(FakeJellyfin([_full_item(a, ["xt-1080p"])]))
+    server = serve(FakeJellyfin([_full_item(a, ["favourite"])]))
     run()
     assert server.rejected == [] and len(server.writes) == 1
     [(_, body)] = server.writes
@@ -344,7 +352,7 @@ def test_a_failed_write_is_counted_as_an_error(env):
     seed, serve, run, _, _ = env
     [a] = _ids(1)
     seed(a, WRITTEN)
-    server = FakeJellyfin([_full_item(a, ["xt-1080p"])])
+    server = FakeJellyfin([_full_item(a, ["favourite"])])
 
     def failing_writes(request):
         return httpx.Response(500) if request.method == "POST" else server(request)
@@ -352,7 +360,7 @@ def test_a_failed_write_is_counted_as_an_error(env):
     serve(failing_writes)
     report = run()
     assert report["writes"] == {"written": 0, "readback_fixed": 0, "unresolved": 0, "error": 1}
-    assert server.items[a]["Tags"] == ["xt-1080p"]
+    assert server.items[a]["Tags"] == ["favourite"]
 
 
 def test_reads_are_batched_by_ids(env):
@@ -578,3 +586,119 @@ def test_the_page_has_the_button_and_saves_both_settings():
     assert "reconcile_schedule: document.getElementById('s-reconcile-schedule')" in html
     assert "reconcile_write_threshold:" in html and 'id="s-reconcile-threshold"' in html
     assert "s.scan?.reconcile_schedule" in html and "s.scan?.reconcile_write_threshold" in html
+
+
+# ── roadmap B32: trust only a row the scan can reach, and repair only a total loss ──
+def _stale(maker, item_id: str, last_scanned: datetime, error_at: datetime | None) -> None:
+    """Age ``item_id``'s row to ``last_scanned``; record a probe failure at ``error_at`` (B11's shape)."""
+    s = maker()
+    try:
+        s.get(state.MediaState, f"jellyfin:{item_id}").last_scanned = last_scanned
+        if error_at is not None:
+            s.add(
+                state.ScanError(
+                    item_id=item_id,
+                    item_name="x",
+                    file_path="/media/x/film.mkv",
+                    error_type="probe_failed",
+                    first_seen=error_at,
+                    last_seen=error_at,
+                )
+            )
+        s.commit()
+    finally:
+        s.close()
+
+
+def test_a_row_the_scan_cannot_reach_is_skipped(env):
+    """B32 (a), B11's rule: the newest scan error is newer than the row, so the row is stale."""
+    seed, serve, run, _, maker = env
+    [failed, fixed] = _ids(2)
+    seed(failed, WRITTEN)
+    seed(fixed, WRITTEN)
+    _stale(maker, failed, datetime(2026, 6, 2, 5, 0), datetime(2026, 10, 10, 17, 31))
+    _stale(maker, fixed, datetime(2026, 10, 12, 9, 1), datetime(2026, 10, 11, 9, 1))  # probed again since
+    server = serve(FakeJellyfin([_full_item(failed, ["favourite"]), _full_item(fixed, ["favourite"])]))
+    report = run()
+    assert [w[0] for w in server.writes] == [fixed]
+    assert report["unreachable"] == 1 and report["tracked"] == 1 and report["candidates"] == 1
+    reads = [q["Ids"] for m, p, q in server.log if m == "GET" and p == "/Items"]
+    assert all(failed not in ids.split(",") for ids in reads)  # never even read
+
+
+def test_a_partial_difference_is_not_written(env):
+    """B32 (c): the row says 720p (pre-B13), Jellyfin carries the scan's 1080p set -- no `xt-720p` beside it."""
+    seed, serve, run, _, _ = env
+    [a] = _ids(1)
+    row = ["xt-720p", "xt-H265", "xt-JA", "xt-EN"]
+    seed(a, row)
+    server = serve(FakeJellyfin([_full_item(a, ["favourite", "xt-1080p", "xt-H265", "xt-JA", "xt-EN"])]))
+    report = run()
+    assert server.writes == [] and report["candidates"] == 0 and report["partial"] == 1
+    assert report["outcome"] == "clean"
+
+
+def test_the_2026_10_10_shape_gives_no_candidate(env):
+    """The first-run estimate's six (invented ids and tags): two partial, four unreachable -> 0 writes."""
+    seed, serve, run, _, maker = env
+    sunny, piece, *failed = _ids(6)
+    seed(sunny, ["xt-720p", "xt-AV1", "xt-EN", "xt-Opus", "xt-TV-MA"])
+    seed(piece, ["xt-720p", "xt-H265", "xt-JA", "xt-Opus", "xt-EN", "xt-dual-audio", "xt-sub-EN", "xt-TV-Y7"])
+    _stale(maker, sunny, datetime(2026, 9, 27, 12, 33), None)
+    _stale(maker, piece, datetime(2026, 9, 27, 12, 7), None)
+    items = [
+        _full_item(sunny, ["kw", "xt-1080p", "xt-AV1", "xt-EN", "xt-Opus", "xt-TV-MA"]),
+        _full_item(piece, ["kw", "xt-1080p", "xt-H265", "xt-JA", "xt-Opus", "xt-EN", "xt-dual-audio", "xt-sub-EN"]),
+    ]
+    for item_id, codec in zip(failed, ["xt-DD+", "xt-H.264", "xt-H.265", "xt-AAC"], strict=True):
+        seed(item_id, ["xt-1080p", codec, "xt-EN", "xt-sub-EN", "xt-TV-14"])
+        _stale(maker, item_id, datetime(2026, 8, 9, 9, 1), datetime(2026, 10, 10, 17, 31))
+        items.append(_full_item(item_id, ["kw"]))  # Jellyfin carries no managed tag
+    # The control: the same rows on the code before B32 -- every one of the six would be written.
+    tracked = [(i, reconcile.expected_tags(json.dumps(t), "xt-")) for i, t in _rows(maker)]
+    current = {i["Id"]: i for i in items}
+    assert sum(bool(reconcile.missing_tags(e, current[i]["Tags"])) for i, e in tracked) == 6
+    server = serve(FakeJellyfin(items))
+    report = run()
+    assert server.writes == [] and report["candidates"] == 0
+    assert (report["unreachable"], report["partial"], report["checked"]) == (4, 2, 2)
+
+
+def _rows(maker) -> list[tuple[str, list[str]]]:
+    s = maker()
+    try:
+        return [
+            (r.item_id.removeprefix("jellyfin:"), json.loads(r.tags_applied)) for r in s.query(state.MediaState).all()
+        ]
+    finally:
+        s.close()
+
+
+def test_the_threshold_still_halts_on_total_losses_beside_skipped_rows(env):
+    seed, serve, run, _, maker = env
+    items = _lost(seed, 3)
+    [failed] = _ids(1)
+    seed(failed, WRITTEN)
+    _stale(maker, failed, datetime(2026, 6, 2, 5, 0), datetime(2026, 10, 10, 17, 31))
+    server = serve(FakeJellyfin([*items, _full_item(failed, [])]))
+    report = run(reconcile.SCHEDULED, _cfg(threshold=2))
+    assert report["halted"] is True and report["candidates"] == 3 and report["unreachable"] == 1
+    assert server.writes == [] and _value("xenotag_reconcile_halted") == 1
+
+
+def test_an_item_restored_between_the_two_reads_is_not_written(env, monkeypatch):
+    """The write phase re-checks with the same rule: one tag back is no longer a total loss."""
+    seed, serve, run, _, _ = env
+    [a] = _ids(1)
+    seed(a, WRITTEN)
+    server = serve(FakeJellyfin([_full_item(a, ["favourite"])]))
+    real = reconcile.plan
+
+    def plan_then_restore(tracked, current):
+        p = real(tracked, current)
+        server.items[a]["Tags"] = ["favourite", "xt-EN"]  # the scan put one back meanwhile
+        return p
+
+    monkeypatch.setattr(reconcile, "plan", plan_then_restore)
+    report = run()
+    assert server.writes == [] and report["candidates"] == 1 and report["already_restored"] == 1

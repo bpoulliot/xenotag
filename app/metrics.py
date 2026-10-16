@@ -67,8 +67,8 @@ than ``scan.reconcile_write_threshold`` and wrote none of them, and 0 after a
 pass that was not halted (a manual one included); a cancelled pass leaves it.
 It is the alert: the host's ``XenotagReconcileHalted`` rule fires on it, and the
 count and a sample are in the WARNING line and ``reconcile-report.json``.
-``reconcile_candidates`` is the last pass's count of items missing a managed
-tag. ``reconcile_writes_total`` counts its writes by ``result``: ``written``
+``reconcile_candidates`` is the last pass's count of items that lost every
+managed tag (B32: a partial difference is the scan's). ``reconcile_writes_total`` counts its writes by ``result``: ``written``
 (read back as written), ``readback_fixed`` (stuck on the one retry),
 ``unresolved`` (still wrong after it) or ``error`` (the write, its re-read or
 its read-back failed). Both gauges are seeded at startup from the stored report.
@@ -191,7 +191,7 @@ reconcile_halted = Gauge(
 )
 reconcile_candidates = Gauge(
     "xenotag_reconcile_candidates",
-    "Items the last tag reconciliation pass found missing a managed Jellyfin tag.",
+    "Items the last tag reconciliation pass found carrying none of their managed Jellyfin tags.",
     registry=REGISTRY,
 )
 reconcile_writes = Counter(
