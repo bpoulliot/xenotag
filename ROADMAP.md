@@ -5253,7 +5253,7 @@ makes the trace easier to verify against — but it is no longer blocking anythi
 
 | ID | Feature | Value | Complexity | Readiness | Issue |
 |----|---------|:-----:|:----------:|-----------|-------|
-| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser **SHIPPED 2026-10-15** (PR_NUM, cards below 600 px without Source / Audio / Scanned), merged NOT released — so **P4 is fully shipped**; the `.health-grid` truncation the audit found is filed as **P12**, first measured 2026-09-26 — see *P4 — post-feature phone-width audit* below | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
+| P4 | Mobile-responsive UI: full breakpoint coverage | 3 | 2 | **SPLIT:** P4a **SHIPPED 2026-10-06** ([#120](https://github.com/bpoulliot/xenotag/pull/120)) · **RELEASED v1.11.0** (2026-10-07) · P4b header **SHIPPED 2026-10-06** ([#128](https://github.com/bpoulliot/xenotag/pull/128)) · **RELEASED v1.11.0** (2026-10-07), media browser **SHIPPED 2026-10-15** ([#171](https://github.com/bpoulliot/xenotag/pull/171), cards below 600 px without Source / Audio / Scanned), merged NOT released — so **P4 is fully shipped**; the `.health-grid` truncation the audit found is filed as **P12**, first measured 2026-09-26 — see *P4 — post-feature phone-width audit* below | [#26](https://github.com/bpoulliot/xenotag/issues/26) |
 | P5 | README sample screenshots and overlay examples | 2 | 1 | **SHIPPED 2026-09-26** | [#23](https://github.com/bpoulliot/xenotag/issues/23) |
 
 ### I — Infrastructure
@@ -5568,7 +5568,7 @@ labels say what would make each one startable.
    not judged: the adapt toggle is 36×20 px and the threshold field 19 px tall, under WCAG 2.5.8's
    24 px.
 
-   **P4 media browser — SHIPPED 2026-10-15 (PR_NUM), merged NOT released (queue item 73).** Operator
+   **P4 media browser — SHIPPED 2026-10-15 ([#171](https://github.com/bpoulliot/xenotag/pull/171)), merged NOT released (queue item 73).** Operator
    decision (c)+(d). `<table class="media-table">` plus one `@media(max-width:600px)` block in
    `index.html`: the header and the Source / Audio / Scanned columns (2, 4, 7) are hidden, every
    other row element is `display:block`, the name is the card's heading, and Video, Rating and Tags
