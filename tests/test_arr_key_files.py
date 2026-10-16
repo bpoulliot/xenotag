@@ -16,12 +16,16 @@ rather than as a value printed anywhere.
 from __future__ import annotations
 
 import asyncio
+import io
 import logging
+import os
+from pathlib import Path
 
 import pytest
 import yaml
 
 from app import auth as _auth
+from app import config as _config
 from app.config import (
     AuthConfig,
     ConfigError,
@@ -58,10 +62,16 @@ ENV_VARS = (
 
 
 @pytest.fixture(autouse=True)
-def _clean_env(monkeypatch):
-    """The ambient environment must not decide the outcome of these tests."""
+def _clean_env(monkeypatch, tmp_path):
+    """The ambient environment must not decide the outcome of these tests.
+
+    B25's allowed root is a module constant, not an env var: point it at this
+    test's own tmp_path so every fixture's key file resolves under it. The
+    root-refusal tests below narrow it again after this fixture has run.
+    """
     for var in ENV_VARS:
         monkeypatch.delenv(var, raising=False)
+    monkeypatch.setattr(_config, "API_KEY_FILE_ROOT", tmp_path, raising=False)
 
 
 @pytest.fixture
@@ -199,6 +209,117 @@ def test_module_state_is_not_sticky_between_loads(cfg_file, tmp_path):
     other.write_text(yaml.dump({"sonarr": {"instances": [{"name": "main", "url": "http://s", "api_key": "k"}]}}))
     load_config(other)
     assert file_backed_instances() == []
+
+
+# ---------------------------------------------------------------------------
+# B25 (CodeQL #11): an api_key_file must resolve under API_KEY_FILE_ROOT before
+# it is ever opened. The root is a module constant (operator decision
+# 2026-10-09: (a), not an environment variable), so each test narrows it with
+# monkeypatch. raising=False keeps these runnable against a tree without the
+# constant, where each refusal test fails on its assertion, not on setup.
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def key_root(tmp_path, monkeypatch):
+    root = tmp_path / "root"
+    root.mkdir()
+    monkeypatch.setattr(_config, "API_KEY_FILE_ROOT", root, raising=False)
+    return root
+
+
+def _one_row(section: str, path) -> dict:
+    return {section: {"instances": [{"name": "x", "url": "http://x", "api_key_file": str(path)}]}}
+
+
+def _record_opens(monkeypatch) -> list:
+    """Shadow ``open`` inside app.config only; record each path and serve a key."""
+    opened = []
+
+    def _fake_open(file, *a, **k):
+        opened.append(os.fspath(file))
+        return io.StringIO("served-by-fake-open")
+
+    monkeypatch.setattr(_config, "open", _fake_open, raising=False)
+    return opened
+
+
+def test_the_allowed_root_is_run_secrets():
+    """The decided root, read from the module itself (the autouse fixture's
+    patch is undone here by reading the source default)."""
+    src = Path(_config.__file__).read_text()
+    assert 'API_KEY_FILE_ROOT = Path("/run/secrets")' in src
+
+
+def test_a_run_secrets_path_passes_the_guard_and_is_read(monkeypatch):
+    """I9's documented location: /run/secrets/<name> is opened, at its resolved path."""
+    monkeypatch.setattr(_config, "API_KEY_FILE_ROOT", Path("/run/secrets"), raising=False)
+    opened = _record_opens(monkeypatch)
+    data = _one_row("sonarr", "/run/secrets/sonarr_4k")
+    _config._apply_arr_key_files(data)
+    assert opened == [os.path.realpath("/run/secrets/sonarr_4k")]
+    assert data["sonarr"]["instances"][0]["api_key"] == "served-by-fake-open"
+
+
+def test_a_file_inside_the_root_still_loads(key_root):
+    (key_root / "sonarr_main").write_text("inside-root-sentinel\n")
+    data = _one_row("sonarr", key_root / "sonarr_main")
+    _config._apply_arr_key_files(data)
+    assert data["sonarr"]["instances"][0]["api_key"] == "inside-root-sentinel"
+
+
+def test_a_dot_dot_that_stays_inside_the_root_still_loads(key_root):
+    (key_root / "sub").mkdir()
+    (key_root / "radarr").write_text("still-inside")
+    data = _one_row("radarr", f"{key_root}/sub/../radarr")
+    _config._apply_arr_key_files(data)
+    assert data["radarr"]["instances"][0]["api_key"] == "still-inside"
+
+
+def test_a_path_outside_the_root_is_refused_and_never_opened(key_root, tmp_path, monkeypatch):
+    outside = tmp_path / "outside"
+    outside.write_text("outside-sentinel")
+    opened = _record_opens(monkeypatch)
+    with pytest.raises(ConfigError, match="does not resolve under"):
+        _config._apply_arr_key_files(_one_row("sonarr", outside))
+    assert opened == []
+
+
+def test_dot_dot_escaping_the_root_is_refused(key_root, tmp_path):
+    (tmp_path / "escaped").write_text("escaped-sentinel")
+    data = _one_row("radarr", f"{key_root}/../escaped")
+    with pytest.raises(ConfigError, match="does not resolve under"):
+        _config._apply_arr_key_files(data)
+    assert "api_key" not in data["radarr"]["instances"][0]
+
+
+def test_a_symlink_inside_the_root_pointing_outside_is_refused(key_root, tmp_path):
+    (tmp_path / "outside-secret").write_text("symlinked-sentinel")
+    (key_root / "sonarr_4k").symlink_to(tmp_path / "outside-secret")
+    data = _one_row("sonarr", key_root / "sonarr_4k")
+    with pytest.raises(ConfigError, match="does not resolve under"):
+        _config._apply_arr_key_files(data)
+    assert "api_key" not in data["sonarr"]["instances"][0]
+
+
+def test_a_sibling_sharing_the_roots_name_prefix_is_refused(key_root, tmp_path):
+    """/x/root-evil/k starts with the string /x/root: the check is per path component."""
+    evil = tmp_path / "root-evil"
+    evil.mkdir()
+    (evil / "k").write_text("prefix-sentinel")
+    data = _one_row("sonarr", evil / "k")
+    with pytest.raises(ConfigError, match="does not resolve under"):
+        _config._apply_arr_key_files(data)
+    assert "api_key" not in data["sonarr"]["instances"][0]
+
+
+def test_an_escape_is_fatal_at_load_config(key_root, tmp_path):
+    """The refusal surfaces from load_config, as a start error, naming the path."""
+    (tmp_path / "outside").write_text("outside-sentinel")
+    cfg = tmp_path / "config.yml"
+    cfg.write_text(yaml.dump(_one_row("sonarr", tmp_path / "outside")))
+    with pytest.raises(ConfigError, match=str(tmp_path / "outside")):
+        load_config(cfg)
 
 
 # ---------------------------------------------------------------------------

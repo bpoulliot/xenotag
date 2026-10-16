@@ -527,6 +527,12 @@ def overridden_fields() -> dict[str, str]:
 # ---------------------------------------------------------------------------
 _ARR_SECTIONS = ("sonarr", "radarr")
 
+# Roadmap B25 (CodeQL #11, py/path-injection): an api_key_file may only resolve
+# under this root. A module constant, not an environment variable -- the
+# operator declined an env-configurable root (2026-10-09), so tests point this
+# at tmp_path by monkeypatching the constant directly.
+API_KEY_FILE_ROOT = Path("/run/secrets")
+
 # (instance label, path) for every file-backed instance, as of the last load or
 # save. Paths are not secrets; the values read from them never go in here.
 _arr_key_files: list[tuple[str, str]] = []
@@ -554,18 +560,27 @@ def _key_file(inst: dict) -> str:
 def _apply_arr_key_files(data: dict) -> dict:
     """
     Read each file-backed instance's key into ``data`` *in place*, and record
-    which instances are file-backed. Raises ConfigError when a named file is
-    unreadable or empty: naming a file is unambiguous intent, and carrying on
-    with a stale key from config.yml is the silent failure I8 exists to prevent.
+    which instances are file-backed. Raises ConfigError when a named file does
+    not resolve under ``API_KEY_FILE_ROOT``, or is unreadable or empty: naming
+    a file is unambiguous intent, and carrying on with a stale key from
+    config.yml is the silent failure I8 exists to prevent.
+
+    The containment check and the read stay in this one function, on the
+    resolved string, so the guard is visible beside the access it protects.
     """
     global _arr_key_files
     found: list[tuple[str, str]] = []
+    root_prefix = os.path.join(os.path.realpath(API_KEY_FILE_ROOT), "")
     for label, inst in _raw_instances(data):
         path = _key_file(inst)
         if not path:
             continue
+        resolved = os.path.realpath(path)
+        if not resolved.startswith(root_prefix):
+            raise ConfigError(f"{label}: its api_key_file {path} does not resolve under {API_KEY_FILE_ROOT}")
         try:
-            value = Path(path).read_text(encoding="utf-8").strip()
+            with open(resolved, encoding="utf-8") as fh:
+                value = fh.read().strip()
         except OSError as exc:
             raise ConfigError(f"{label}: its api_key_file could not be read: {exc}") from exc
         if not value:
