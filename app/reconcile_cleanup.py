@@ -207,6 +207,8 @@ def self_test() -> list[str]:
     check("a resolution the row never wrote", ["xt-1080p", "xt-4K"], set(), True)
     check("a planted legacy tag", ["xt-1080p", "mf-1080p"], set(), True)
     check("no row", ["xt-1080p", "xt-720p"], set(), True, row=None)
+    unwritten = MediaState(item_id="jellyfin:t", resolution="720p", tags_applied=json.dumps(["xt-H265"]))
+    check("the row's resolution, never in its tags", ["xt-1080p", "xt-720p"], set(), True, row=unwritten)
     return failures
 
 
