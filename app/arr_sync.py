@@ -490,7 +490,7 @@ class ArrTagSync:
                 log.error("[%s] %s: tag sync error: %s", owner.client.label, item.get("Name"), exc)
                 if self.live:
                     metrics.arr_write(owner.client.label, metrics.WRITE_ERROR)
-                    self._halt(f"{owner.client.label}: {type(exc).__name__}: {exc}")
+                    self._halt(f"{owner.client.label}: {type(exc).__name__}; see the server log")
 
     def _account(self, plan: TagPlan, st: _InstanceStats, item: dict) -> None:
         st.synced += 1

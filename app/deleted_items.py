@@ -87,7 +87,27 @@ NO_FOLDER = "no_folder"  # the row records no path at all
 
 
 class PassAborted(RuntimeError):
-    """The pass could not establish which items are gone; nothing was changed."""
+    """The pass could not establish which items are gone; nothing was changed.
+
+    ``reason`` is the pass's own message, built from labels, counts and ids -- never another
+    exception's text -- so it is safe to put in the report.
+    """
+
+    def __init__(self, reason: str) -> None:
+        super().__init__(reason)
+        self.reason = reason
+
+
+def failure_text(exc: Exception) -> str:
+    """What an unexpected failure may say in the report and the ntfy: its type, and a failed HTTP
+    call's status.
+
+    Never ``str(exc)``: an httpx error's text is the full request URL, userinfo included. The server
+    log keeps the whole message.
+    """
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"{type(exc).__name__} {exc.response.status_code}"
+    return type(exc).__name__
 
 
 # ---------------------------------------------------------------------------
@@ -362,10 +382,10 @@ class DeletedItemsPass:
                 if self.mode == MODE_REMOVE:
                     self.remove()
         except PassAborted as exc:
-            self._abort(str(exc))
+            self._abort(exc.reason)
         except Exception as exc:  # any other failure: report it, change nothing more
             log.error("Deleted-items pass failed: %s", exc, exc_info=True)
-            self._abort(f"{type(exc).__name__}: {exc}")
+            self._abort(f"{failure_text(exc)}: the pass failed; see the server log")
         return self.report()
 
     def _abort(self, reason: str) -> None:
@@ -539,7 +559,7 @@ class DeletedItemsPass:
             except Exception as exc:
                 self.stats[plan.client.label].write_errors += 1
                 log.error("[%s] strip of object %s failed: %s", plan.client.label, plan.object_id, exc)
-                self._halt(f"{plan.client.label}: {type(exc).__name__}: {exc}")
+                self._halt(f"{plan.client.label}: {failure_text(exc)} on a strip; see the server log")
         if self.halted:
             return  # nothing more changes; every row stays to drive the retry
         doomed = []
