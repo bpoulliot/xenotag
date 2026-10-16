@@ -1776,6 +1776,7 @@ function collectForm() {
     sonarr: { instances: sonarrInstances.map(cleanInstance) },
     radarr: { instances: radarrInstances.map(cleanInstance) },
     scan: {
+      ...(settings.scan || {}),
       schedule: buildCronFromUI(),
       incremental: document.getElementById('s-scan-incremental').checked,
       path_filters: [...pathFilters],

@@ -481,10 +481,12 @@ async def get_settings(request: Request):
 async def save_settings(request: Request):
     _require_user(request)
     body = await request.json()
-    # Preserve the existing password hash — frontend never sends it
+    # Preserve the existing password hash and session-signing key — the frontend
+    # never sends either (B27: without the key, a save blanked it on disk and live)
     cfg = get_config()
     body.setdefault("auth", {})
     body["auth"]["password_hash"] = cfg.auth.password_hash
+    body["auth"]["secret_key"] = cfg.auth.secret_key
     try:
         validated = save_config_from_dict(body)
     except Exception as exc:
