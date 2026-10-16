@@ -23,7 +23,7 @@ def test_media_table_columns_match_the_card_css():
     assert media, "the media-table card rule is gone"
     css = media.group(0)
     # Source, Audio and Scanned are hidden: columns 2, 4 and 7
-    hidden = re.search(r"((?:\.media-table [^,{]+,?)+)\{display:none\}", css).group(1)
+    hidden = css.split("{display:none}")[0].rsplit("\n", 1)[-1]
     assert set(re.findall(r"td:nth-child\((\d+)\)", hidden)) == {"2", "4", "7"}
     # Video, Rating and Tags are labelled: columns 3, 5 and 6
     labels = dict(re.findall(r"td:nth-child\((\d+)\)::before\{content:'(\w+)'\}", css))
