@@ -4324,7 +4324,7 @@ polish with a small speed-up; it is not required to clear the warning, so do not
 | P9 | **UI theme retoken to the brand palette** — Charcoal/Deep Forest/Sage/Warm Gray/Bone, with the accent lightened to clear AA. | 3 | 3 | **SHIPPED 2026-09-24** | — |
 | P10 | **Badge palette under a near-monochrome brand** — four badge categories, one brand green. | 2 | 2 | **SHIPPED 2026-09-24** | — |
 | P11 | **Brand vectors must reproduce the concept art exactly** — the supplied SVGs draw a different shape, and the PNG fallback is clipped. | 3 | 4 | **CLOSED 2026-09-25 — keep the PNGs** | — |
-| P12 | **The Service health tiles cut every instance name at phone width.** `.health-grid` is `repeat(3,1fr)` at every width. At 360 px a tile is 86 px wide and **6 of 6** names are cut (`Je…`, `Son…`, `Rad…`), so three Sonarr instances look alike and the full name is only in a hover title, which a touch screen cannot show. At 390 px **5 of 6** are cut, and `Unreachable` runs 14 px (360) / 4 px (390) past its tile; at 768 and up, 0. Noted under P4a (2026-10-06); measured 2026-10-10 by the P4 audit with production's instance count and name lengths (3 Sonarr, 2 Radarr). | 2 | 1 | **READY** (operator decided 2026-10-14: 2 columns with wrapping names below 600 px) — options and screenshots in *P12* below | — |
+| P12 | **The Service health tiles cut every instance name at phone width.** `.health-grid` is `repeat(3,1fr)` at every width. At 360 px a tile is 86 px wide and **6 of 6** names are cut (`Je…`, `Son…`, `Rad…`), so three Sonarr instances look alike and the full name is only in a hover title, which a touch screen cannot show. At 390 px **5 of 6** are cut, and `Unreachable` runs 14 px (360) / 4 px (390) past its tile; at 768 and up, 0. Noted under P4a (2026-10-06); measured 2026-10-10 by the P4 audit with production's instance count and name lengths (3 Sonarr, 2 Radarr). | 2 | 1 | **SHIPPED 2026-10-15** ([#172](https://github.com/bpoulliot/xenotag/pull/172)), merged NOT released — 2 columns with wrapping names below 600 px, as the operator decided 2026-10-14; measured numbers in *P12* below | — |
 
 **P12 — FILED 2026-10-10 by the P4 phone-width audit (queue item 65). NEEDS DECISION (layout
 pick).** Measured with P4's instrument and fixture (see *P4 — post-feature phone-width audit*):
@@ -4355,6 +4355,26 @@ columns.
 recommendation as written: under `max-width:600px`, `.health-grid{grid-template-columns:repeat(2,1fr)}`
 and `.health-name{white-space:normal;overflow-wrap:anywhere}`. 768 and up stay unchanged. Verify with P4's
 instrument (0 names cut and 0 message overflow at 360 and 390; 768 and 1366 measured equal to before).
+
+**P12 — SHIPPED 2026-10-15 ([#172](https://github.com/bpoulliot/xenotag/pull/172)), merged NOT released (queue item 74).** Two rules in
+`app/web/templates/index.html`, in an `@media(max-width:600px)` block beside `.health-grid`:
+`.health-grid{grid-template-columns:repeat(2,1fr)}` and `.health-name{white-space:normal;overflow-wrap:anywhere}`.
+Measured with P4's audit instrument (`~/docker/xenotag/p4-audit-20261010/`, self-test passing in both directions)
+against images built from `origin/main` (before) and the branch (after), the synthetic fixture rebuilt from
+production's measured shape (6 tiles: Jellyfin, 3 Sonarr, 2 Radarr), both message states (`Unreachable` and the
+longest, `Invalid API key`), the app's own CSS and no injection:
+
+| Width | Before: cols · names cut · message overflow · grid · tile | After |
+|---|---|---|
+| 360 | 3 · **6 / 6** · 6 tiles (`Unreachable`) · 154 px · 86 px | 2 · **0** · 0 · 295 px · 134 px |
+| 390 | 3 · **5 / 6** · 6 tiles · 154 px · 96 px | 2 · **0** · 0 · 295 px · 149 px |
+| 768 | 3 · 0 · 0 · 154 px · 222 px | identical |
+| 1366 | 3 · 0 · 0 · 154 px · 199 px | identical |
+
+`Invalid API key` gives the same after-numbers (the old grid wrapped that message, 220 / 187 px, names still cut).
+No page-level horizontal scroll at any width, 0 JS errors. Suite 1058 passed, 2 skipped; `ruff` and `black` clean.
+The audit's one remaining FAIL, "media table scrolls inside its card at 360 (P4a)", is a stale positive control: it
+fails identically on `main` because P4's media cards (#171) removed that scroll. It is not part of this change.
 
 **P6 — SHIPPED 2026-10-10 ([#134](https://github.com/bpoulliot/xenotag/pull/134)); released in v1.12.0 (2026-10-10), off in production.**
 It changes a poster only for an operator who turns the checkbox on, and only below 100 % opacity; with it

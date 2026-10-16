@@ -97,6 +97,12 @@
   .health-dot.fail{background:var(--red);box-shadow:0 0 6px var(--red)}
   .health-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
   .health-msg{font-size:11px;color:var(--muted);padding-left:22px}
+  /* P12: below 600 px the three-column tiles are 86 px wide and cut every instance name. Two columns, and
+     the name wraps instead of ellipsising. 600 px and up are unchanged. */
+  @media(max-width:600px){
+    .health-grid{grid-template-columns:repeat(2,1fr)}
+    .health-name{white-space:normal;overflow-wrap:anywhere}
+  }
 
   /* ── Media table ── */
   table{width:100%;border-collapse:collapse;font-size:13px}
