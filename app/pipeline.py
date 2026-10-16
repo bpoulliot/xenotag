@@ -9,6 +9,7 @@ import time
 from collections.abc import Callable
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
+from datetime import datetime
 from pathlib import Path
 
 from sqlalchemy.orm import Session
@@ -985,6 +986,19 @@ def _unreachable_errors(session: Session) -> dict[str, tuple]:
     return newest
 
 
+def _unreachable(errors: dict[str, tuple], item_id: str, last_scanned: datetime | None) -> tuple | None:
+    """The item's newest scan error if it is newer than its row (B11), else None.
+
+    ``errors`` is ``_unreachable_errors()``; ``item_id`` is Jellyfin's id, without
+    the row's ``jellyfin:`` prefix. Such a row is stale: the *arr dry run counts it
+    as unreachable and the reconciliation pass skips it (B32).
+    """
+    error = errors.get(item_id)
+    if error and (last_scanned is None or error[0] > last_scanned):
+        return error
+    return None
+
+
 arr_dry_run_state: dict = {"running": False, "error": None}
 
 
@@ -1021,8 +1035,8 @@ def run_arr_dry_run(
                 if row is None:
                     sync.note_no_probe(item)
                     continue
-                error = errors.get(item.get("Id", ""))
-                if error and (row.last_scanned is None or error[0] > row.last_scanned):
+                error = _unreachable(errors, item.get("Id", ""), row.last_scanned)
+                if error:
                     sync.note_unreachable(item, error[1])
                     continue
                 audio, subs = _tracks_from_row(row)

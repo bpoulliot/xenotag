@@ -5,7 +5,7 @@ The scan is mtime-driven, so it never returns to an unchanged file -- and on
 and provider tags, while an item Jellyfin re-creates loses its ``xt-`` tags the
 same way (``docs/measurements/b12-tag-loss.md``). This pass reads every tracked
 item by ``Ids=`` (B18: the recursive listing serves stale tags) and re-writes
-the items missing one of the managed tags their row says xenotag wrote.
+the items that carry NONE of the managed tags their row says xenotag wrote.
 
 Decided by the operator (2026-10-09, three rounds), not engineering choices:
 
@@ -14,6 +14,14 @@ Decided by the operator (2026-10-09, three rounds), not engineering choices:
   tag is missing only if no current tag matches it regardless of case (B12(a)):
   the *arrs' NFO merge respells ``xt-AAC`` as ``xt-aac``, which is not a loss.
   Managed tags Jellyfin carries beyond the row's are left alone (U9 logs them).
+- **Only a total loss, and only from a row the scan can reach** (roadmap B32,
+  2026-10-14). A row goes stale when its file stops probing (it keeps an old
+  scan's tags, in retired spellings) or when a write lands unrecorded (B17), and
+  the first pass restored exactly those: ``xt-720p`` beside ``xt-1080p``, and
+  ``xt-DD+``. So a row whose newest scan error is newer than the row (B11's
+  rule, ``pipeline._unreachable()``) is skipped, and an item is a candidate only
+  when it carries none of its expected managed tags -- the loss B12 measured. A
+  partial difference stays with the scan and U9.
 - **A per-run write threshold** (``scan.reconcile_write_threshold``). When MORE
   items than that need a write, a *scheduled* run writes none of them, logs a
   WARNING with the count and a sample, records it, and sets
@@ -44,7 +52,15 @@ from pathlib import Path
 from . import metrics
 from .clients.jellyfin import TAG_READ_BATCH, JellyfinClient
 from .config import AppConfig
-from .pipeline import _passes_path_filter, _PendingRecord, _Readback, _record_after_readback, progress
+from .pipeline import (
+    _passes_path_filter,
+    _PendingRecord,
+    _Readback,
+    _record_after_readback,
+    _unreachable,
+    _unreachable_errors,
+    progress,
+)
 from .state import RECONCILE_SCAN_TYPE, MediaState, current_db_path, finish_scan_run, get_session, start_scan_run
 
 log = logging.getLogger(__name__)
@@ -59,7 +75,7 @@ _JF_KEY = "jellyfin:"
 
 @dataclass(frozen=True)
 class Candidate:
-    """A tracked item missing at least one managed tag its row says xenotag wrote."""
+    """A tracked item carrying none of the managed tags its row says xenotag wrote."""
 
     item_id: str  # Jellyfin's id, without the row's ``jellyfin:`` prefix
     name: str
@@ -72,6 +88,7 @@ class Plan:
     candidates: list[Candidate] = field(default_factory=list)
     checked: int = 0  # tracked items read back by Ids=
     not_returned: list[str] = field(default_factory=list)  # ids Ids= did not return (U2's business)
+    partial: int = 0  # carry some expected tags, not all: the scan's and U9's (B32)
 
 
 def expected_tags(tags_applied: str | None, prefix: str) -> list[str]:
@@ -91,12 +108,19 @@ def missing_tags(expected: list[str] | tuple[str, ...], current: list[str]) -> l
     return [t for t in expected if t.casefold() not in have]
 
 
+def lost_all(expected: list[str] | tuple[str, ...], current: list[str]) -> bool:
+    """True when ``current`` carries none of ``expected`` (case folded): the loss the pass repairs (B32)."""
+    return bool(expected) and len(missing_tags(expected, current)) == len(expected)
+
+
 def plan(tracked: list[tuple[str, list[str]]], current: dict[str, dict]) -> Plan:
     """Which tracked items need a write. Pure: no I/O.
 
     ``tracked`` is ``(Jellyfin id, expected managed tags)`` per row; ``current``
     is ``{id: item}`` from the ``Ids=`` read. A row whose id was not returned is
-    skipped and counted -- an item Jellyfin no longer has is U2's to remove.
+    skipped and counted -- an item Jellyfin no longer has is U2's to remove. Only
+    an item carrying none of its expected tags is a candidate (B32); one missing
+    some is counted as ``partial`` and left to the scan.
     """
     result = Plan()
     for item_id, expected in tracked:
@@ -105,9 +129,12 @@ def plan(tracked: list[tuple[str, list[str]]], current: dict[str, dict]) -> Plan
             result.not_returned.append(item_id)
             continue
         result.checked += 1
-        missing = missing_tags(expected, item.get("Tags") or [])
-        if missing:
-            result.candidates.append(Candidate(item_id, item.get("Name") or item_id, tuple(expected), tuple(missing)))
+        tags = item.get("Tags") or []
+        if lost_all(expected, tags):
+            name = item.get("Name") or item_id
+            result.candidates.append(Candidate(item_id, name, tuple(expected), tuple(missing_tags(expected, tags))))
+        elif missing_tags(expected, tags):
+            result.partial += 1
     return result
 
 
@@ -115,22 +142,34 @@ def sample(candidates: list[Candidate], size: int = SAMPLE_SIZE) -> list[dict]:
     return [{"item_id": c.item_id, "name": c.name, "missing": list(c.missing)} for c in candidates[:size]]
 
 
-def _tracked(session: object, cfg: AppConfig) -> list[tuple[str, list[str]]]:
-    """Every Jellyfin row with at least one managed tag recorded, inside ``scan.path_filters``."""
+def _tracked(session: object, cfg: AppConfig) -> tuple[list[tuple[str, list[str]]], list[str]]:
+    """Every Jellyfin row with at least one managed tag recorded, inside ``scan.path_filters``.
+
+    Returns ``(tracked, unreachable)``: a row the scan cannot reach -- its newest
+    ``scan_errors`` row is newer than the row, B11's rule -- is stale, so it is
+    left out of ``tracked`` and its id listed in ``unreachable`` (roadmap B32).
+    """
     prefix = cfg.tags.managed_prefix
-    rows = session.query(MediaState.item_id, MediaState.file_path, MediaState.tags_applied).filter(
-        MediaState.source == "jellyfin"
-    )
+    errors = _unreachable_errors(session)
+    rows = session.query(
+        MediaState.item_id, MediaState.file_path, MediaState.tags_applied, MediaState.last_scanned
+    ).filter(MediaState.source == "jellyfin")
     tracked: list[tuple[str, list[str]]] = []
-    for item_id, file_path, tags_applied in rows:
+    unreachable: list[str] = []
+    for item_id, file_path, tags_applied, last_scanned in rows:
         if not item_id or not item_id.startswith(_JF_KEY):
             continue
         if cfg.scan.path_filters and not _passes_path_filter(file_path or "", cfg.scan.path_filters):
             continue
         expected = expected_tags(tags_applied, prefix)
-        if expected:
-            tracked.append((item_id[len(_JF_KEY) :], expected))
-    return tracked
+        if not expected:
+            continue
+        jf_id = item_id[len(_JF_KEY) :]
+        if _unreachable(errors, jf_id, last_scanned):
+            unreachable.append(jf_id)
+            continue
+        tracked.append((jf_id, expected))
+    return tracked, unreachable
 
 
 # ---------------------------------------------------------------------------
@@ -172,7 +211,7 @@ class _Writes:
     readback: _Readback = field(default_factory=_Readback)
     errors: int = 0  # write raised, or the full re-read of its batch failed
     gone: int = 0  # not returned by the full re-read
-    already: int = 0  # restored by someone else between the two reads
+    already: int = 0  # no longer a total loss at the second read (restored by someone else)
 
     def counts(self) -> dict[str, int]:
         rb = self.readback
@@ -211,10 +250,10 @@ def _write(jf: JellyfinClient, session: object, cfg: AppConfig, candidates: list
                 out.gone += 1
                 continue
             tags = item.get("Tags") or []
-            missing = missing_tags(c.expected, tags)
-            if not missing:
+            if not lost_all(c.expected, tags):  # some or all restored since the first read (B32)
                 out.already += 1
                 continue
+            missing = missing_tags(c.expected, tags)
             # Jellyfin's managed tags as they are (respelling and extras untouched), plus the lost ones.
             new = [t for t in tags if t.startswith(prefix)] + missing
             progress.current_item = c.name
@@ -242,8 +281,11 @@ def _run_reconcile(cfg: AppConfig, trigger: str) -> dict:
     session = get_session()
     try:
         run = start_scan_run(session, SCAN_TYPE)
-        tracked = _tracked(session, cfg)
-        progress.emit(f"[xenotag] Reading the current tags of {len(tracked)} tracked item(s) by Ids=…")
+        tracked, unreachable = _tracked(session, cfg)
+        progress.emit(
+            f"[xenotag] Reading the current tags of {len(tracked)} tracked item(s) by Ids= "
+            f"({len(unreachable)} skipped: the scan cannot reach them)…"
+        )
 
         # Read phase: half of the progress bar.
         progress.total = 2 * len(tracked)
@@ -256,7 +298,8 @@ def _run_reconcile(cfg: AppConfig, trigger: str) -> dict:
         p = plan(tracked, current) if not progress.cancelled else Plan()
         n = len(p.candidates)
         progress.emit(
-            f"[xenotag] {n} item(s) missing a managed tag; {len(p.not_returned)} tracked id(s) not returned by Ids="
+            f"[xenotag] {n} item(s) carry none of their managed tags; {p.partial} carry some (left to the scan); "
+            f"{len(p.not_returned)} tracked id(s) not returned by Ids="
         )
 
         halted = trigger == SCHEDULED and n > threshold
@@ -291,7 +334,9 @@ def _run_reconcile(cfg: AppConfig, trigger: str) -> dict:
             "halted": halted,
             "threshold": threshold,
             "tracked": len(tracked),
+            "unreachable": len(unreachable),
             "checked": p.checked,
+            "partial": p.partial,
             "not_returned": len(p.not_returned),
             "candidates": n,
             "writes": counts,
