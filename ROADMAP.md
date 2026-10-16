@@ -61,7 +61,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B27 | **A Settings save blanks the session-signing key.** The Settings page sends `auth: {username}` only, and `PUT /api/settings` restores `password_hash` but not `secret_key`, so every structured save writes `auth.secret_key: ""` to `config.yml` and into the running config. Until the next restart, sessions are signed with `":" + password_hash[:16]` (a constant prefix and 9 bcrypt-salt characters) in place of the 256-bit key. Separately, `GET /api/settings` returns `auth.secret_key` to the browser. Found in production on 2026-10-10. | 3 | 1 | **SHIPPED 2026-10-15** ([#165](https://github.com/bpoulliot/xenotag/pull/165)), merged NOT released — see *B27* below | — |
 | B28 | **A Settings save resets `scan.max_workers` to 4.** `buildSettings()` builds `scan` from the four fields the page shows (`schedule`, `incremental`, `path_filters`, and since B12(b) the two `reconcile_*` ones) without spreading the loaded `settings.scan`, so a structured save drops any other `scan` key and `ScanConfig` fills its default. B27's class (an object replaced, not merged). Production has `max_workers: 4` (the default), so nothing is lost there today. | 1 | 1 | **SHIPPED 2026-10-15** ([#165](https://github.com/bpoulliot/xenotag/pull/165)), merged NOT released — see *B28* below | — |
 | B29 | **CodeQL #10: the deleted-items report puts an HTTP error's text, URL included, into the admin's browser.** `GET /api/deleted-items/report` returns the stored report, whose `reason` (an aborted pass) and `halted` (a failed strip) are `str(exc)`. CodeQL names three sources, `deleted_items.py` 364/366/539. #135 changed two *other* values, so the alert stayed open. No traceback and no API key ever reaches the response (probed), but a failed HTTP call's message is the full request URL, and **a `user:password@` in a configured Jellyfin or \*arr URL reaches the response verbatim** (and the ntfy, for a halt). Latent: production's 6 URLs carry no userinfo. | 2 | 1 | **SHIPPED 2026-10-15** ([#166](https://github.com/bpoulliot/xenotag/pull/166)), merged NOT released — option (b), built to the spec below; a local CodeQL 2.27.2 run closes #10 and #9's flow (0 results), and **#10 is `fixed` on main's analysis of `1bfeb7d` (2026-10-16T01:31Z)**; #9 stays `dismissed` (its flow is gone too). No dismissal made | — |
-| B30 | **The media browser never shows codec, HDR, audio tracks or rating, because `/media` drops them.** `MediaItem` (`app/web/schemas.py:23`) declares 8 fields, but `get_media_filtered()` returns 15, and Pydantic silently drops the other 7 (`video_codec`, `hdr_type`, `audio_tracks`, `subtitle_tracks`, `content_rating`, `field_order`, `file_mtime`). `loadMedia()` reads four of them. As a result the Video column shows only the resolution, Audio falls back to the language list (never a codec, and never P1's yellow `UND`), and Rating is always `—`. P2 was closed as shipped after reading `index.html`; the response was never checked. Production's index holds 9,453 codecs, 202 HDR types, 9,429 audio-track lists (3,085 with an `UND` track) and 8,090 ratings that the browser cannot show. | 3 | 1 | **READY** — see *B30* below | — |
+| B30 | **The media browser never shows codec, HDR, audio tracks or rating, because `/media` drops them.** `MediaItem` (`app/web/schemas.py:23`) declares 8 fields, but `get_media_filtered()` returns 15, and Pydantic silently drops the other 7 (`video_codec`, `hdr_type`, `audio_tracks`, `subtitle_tracks`, `content_rating`, `field_order`, `file_mtime`). `loadMedia()` reads four of them. As a result the Video column shows only the resolution, Audio falls back to the language list (never a codec, and never P1's yellow `UND`), and Rating is always `—`. P2 was closed as shipped after reading `index.html`; the response was never checked. Production's index holds 9,453 codecs, 202 HDR types, 9,429 audio-track lists (3,085 with an `UND` track) and 8,090 ratings that the browser cannot show. | 3 | 1 | **SHIPPED 2026-10-15** ([#168](https://github.com/bpoulliot/xenotag/pull/168)), merged NOT released — see *B30* below | — |
 | B31 | **A quarter of the media browser's rows are named `Season 01`.** The Item column shows the file's parent folder (`loadMedia()`), and for an episode that is its season folder. **2,469 of production's 9,463 rows** read `Season NN` or `Specials`; the series name is only in the hover title, which a touch screen cannot show. | 2 | 1 | **READY** (operator decided 2026-10-14: option (a), `Series · S01`) — see *B31* below | — |
 | B32 | **The tag reconciliation restores what a STALE row says, not what xenotag would write today.** B12(b) takes every row's `tags_applied` as the expected tags. A row goes stale in two ways. First, the scan cannot reach the item: its file fails to probe, so the row keeps an old scan's tags, spelled before B9 (`xt-DD+`, `xt-H.264`). Second, a write lands but is not recorded: B17 records nothing when a write times out. Measured on production at the v1.12.0 deploy: **all 6 candidates of the first scheduled pass are stale rows.** For 2 series, Jellyfin carries the correct `xt-1080p` while their rows still say `720p` (pre-B13), so the pass would ADD `xt-720p` beside it. The other 4 rows date from June to August, their files fail to probe, and the pass would write 6 tags each, 3 of them items with retired pre-B9 spellings. | 2 | 2 | **READY** (operator decided 2026-10-14: (a) + (c), plus a measured clean-up of what the 2026-10-11 pass wrote) — see *B32* below | — |
 
@@ -560,7 +560,14 @@ This was a measurement-only item, so nothing in `app/` changed. Line numbers bel
   probe checks decoded strings.
 
 **B30 — FILED 2026-10-10 by the P4 phone-width audit (queue item 65), found when every Rating
-cell read `—`. READY.**
+cell read `—`. SHIPPED 2026-10-15 ([#168](https://github.com/bpoulliot/xenotag/pull/168)), merged NOT released.**
+- *Shipped.* `MediaItem` now declares all 7 dropped fields, not only the four the page reads: `video_codec`,
+  `hdr_type`, `content_rating`, `field_order` (`str | None`), `file_mtime` (`float | None`), `audio_tracks` and
+  `subtitle_tracks` (`list[dict]`, default empty, so an unprobed row validates). The three extras are safe to
+  send: `subtitle_tracks` holds only `{lang, format, embedded}`, and the other two are a string and a float; none
+  carries a path (`file_path` was already served). P4's cards may read them. `tests/test_media_fields.py`: the
+  route returns the fields, a bare row validates, `MediaItem` declares every key `get_media_filtered()` returns,
+  and the names `loadMedia()` reads are keys the route serves. 5 tests, all fail on `f6ec48e`.
 - *Evidence.* In an image built from `origin/main` `88d52da`, `MediaItem(**row).model_dump()` on a
   `get_media_filtered()` row keeps 8 of its 15 keys. The audit served the same page whole by
   intercepting `/media`: Rating cells showing a value went from 0 to 30 of 50 rows, and Video chips
@@ -2797,7 +2804,7 @@ work; P3 shipped on 2026-05-05. The heading is kept so older references resolve.
 | ID | Feature | Readiness | Issue |
 |----|---------|-----------|-------|
 | P1 | Audio language override (fix UND tracks via ffmpeg metadata) | **CLOSED 2026-09-26** — moved to [Deferred / Out of Scope](#deferred--out-of-scope) | [#21](https://github.com/bpoulliot/xenotag/issues/21) |
-| P2 | Media browser: name column, codec columns | **CLOSED 2026-09-26** (shipped; Rating column kept) | [#10](https://github.com/bpoulliot/xenotag/issues/10) |
+| P2 | Media browser: name column, codec columns | **CLOSED 2026-09-26** (shipped; Rating column kept); the codec / HDR / audio display first worked with [B30] (2026-10-15) | [#10](https://github.com/bpoulliot/xenotag/issues/10) |
 | P3 | Scan history in web UI | **SHIPPED 2026-05-05** (`fc7563d`) | [#9](https://github.com/bpoulliot/xenotag/issues/9) (closed) |
 
 **P1 — NEEDS DECISION (sweep 2026-09-26) → CLOSED by the operator 2026-09-26 (decision at the end of this note), and the size of the problem changes the question.**
@@ -2817,8 +2824,8 @@ write to the media file itself — the project's asymmetry, with the \*arrs' `re
     without a remux (needs `mkvtoolnix` in the image); MKV only, so it reaches 283 of 3,411.
  3. **A per-item override stored by xenotag** — the file is untouched and the *tags* say `EN`;
     needs a new table, so an Alembic revision (I3, SHIPPED 2026-09-26), and it is U9's option 2 in another form.
- 4. **Out of scope** — xenotag reports `UND` (it already does, in yellow, in the media browser — *not in practice:*
-    `/media` drops the tracks, [B30])
+ 4. **Out of scope** — xenotag reports `UND` (it does, in yellow, in the media browser — since [B30] shipped; before
+    that `/media` dropped the tracks)
     and the operator fixes files with their own tools, then rescans.
 
 **Recommendation: 4 now, 3 later if wanted.** A tagger that rewrites 3,000 media files is a
@@ -2832,8 +2839,8 @@ rewriting media files is a different product). **CLOSED.**
 **P2 — NEEDS DECISION (sweep 2026-09-26) → CLOSED (shipped) by the operator 2026-09-26: two of its three asks already shipped.** The media
 browser's `Item` column shows the item's folder name (falling back to the file name, then the
 id), and its `Video` and `Audio` columns show resolution, codec and HDR, and each track's
-language and codec — checked in `index.html`. (*Correction 2026-10-10:* the page code does, but
-`/media` drops those fields, so they never render — [B30].) **What is left is issue #10's third ask, "remove
+language and codec — checked in `index.html`. (*Correction 2026-10-10:* the page code did, but
+`/media` dropped those fields, so they never rendered; fixed by [B30], SHIPPED 2026-10-15.) **What is left is issue #10's third ask, "remove
 the rating column"**, filed when "rating" was read as a review score. U7 (2026-09-23) settled
 that rating here means the certification (`R`, `TV-MA`) — the same value the rating badge draws.
 **Question:** keep the `Rating` column? Options: (a) keep it and close P2 as shipped;
