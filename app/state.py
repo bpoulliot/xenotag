@@ -163,6 +163,20 @@ def upsert_media_state(
     return row
 
 
+def set_tags_applied(session: Session, item_id: str, tags_applied: list[str]) -> bool:
+    """Set one existing row's ``tags_applied`` and nothing else; False if there is no row.
+
+    Unlike ``upsert_media_state()`` this leaves ``last_scanned`` alone, so a row the
+    scan cannot reach stays unreachable to B11's rule (roadmap B32's clean-up).
+    """
+    row = session.get(MediaState, item_id)
+    if row is None:
+        return False
+    row.tags_applied = json.dumps(tags_applied)
+    session.commit()
+    return True
+
+
 def partition_legacy_tags(
     tags: Iterable[str],
     legacy_prefixes: Sequence[str],

@@ -33,6 +33,7 @@ from .state import (
     get_session,
     read_only_session,
     set_meta,
+    set_tags_applied,
     start_scan_run,
     upsert_media_state,
     upsert_scan_error,
@@ -306,6 +307,9 @@ class _PendingRecord:
     # (the reconciliation pass, B12(b): the row's tags_applied is what it restores).
     record: dict | None
     settled_from: float  # time.monotonic() of the item's last write or refresh
+    # With no ``record``: a row key whose ``tags_applied`` ALONE is set to what reads
+    # back (the B32 clean-up), leaving ``last_scanned`` and the probe's columns alone.
+    tags_row: str | None = None
 
 
 class _Readback:
@@ -349,6 +353,8 @@ def _read_back(jf: JellyfinClient, pending: list[_PendingRecord], readback: _Rea
 def _record(session: object, p: _PendingRecord, tags_applied: list[str]) -> None:
     if p.record is not None:
         upsert_media_state(session, tags_applied=tags_applied, **p.record)
+    elif p.tags_row is not None:
+        set_tags_applied(session, p.tags_row, tags_applied)
 
 
 def _record_after_readback(
