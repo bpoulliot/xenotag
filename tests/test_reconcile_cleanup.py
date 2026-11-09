@@ -234,6 +234,72 @@ def test_apply_refuses_while_a_scan_runs(lab):
     assert server.log[-1][0] == "GET" and server.writes == []
 
 
+class _TimesOutOn:
+    """Wraps the fake server: the write to ``item_id`` raises httpx's ReadTimeout (B33)."""
+
+    def __init__(self, server, item_id: str):
+        self.server, self.item_id, self.timed_out = server, item_id, 0
+
+    def __call__(self, request: httpx.Request) -> httpx.Response:
+        if request.method == "POST" and request.url.path == f"/Items/{self.item_id}":
+            self.timed_out += 1
+            raise httpx.ReadTimeout("The read operation timed out", request=request)
+        return self.server(request)
+
+
+def test_apply_stops_on_a_write_timeout_and_records_nothing_for_that_item(lab):
+    """B33: the write times out on the second item. It may still land, so its row stays as it was; the item
+    before it is recorded; the ones after it are never attempted."""
+    server, maker = lab
+    digest = _plan(server, maker).digest()
+    transport = _TimesOutOn(server, SUNNY)
+    s = maker()
+    try:
+        with pytest.raises(reconcile_cleanup.Refused, match="timed out") as err:
+            reconcile_cleanup.apply(
+                JellyfinClient(URL, "k", transport=httpx.MockTransport(transport)), s, AppConfig(), IDS, digest
+            )
+    finally:
+        s.close()
+    assert transport.timed_out == 1
+    message = str(err.value)
+    assert SUNNY in message and f"Film {SUNNY[:6]}" in message  # the item's id and name
+    assert "may still land" in message and "dry run" in message
+    # the timed-out item's row is unchanged
+    assert json.loads(_row(maker, SUNNY).tags_applied) == SIX[1][2]
+    # an item planned after it is not written
+    assert set(_posts(server)) == {PIECE}
+    assert HOURS not in _posts(server) and DEMONS not in _posts(server)
+    # an item written before it is recorded (and Jellyfin carries the write)
+    assert json.loads(_row(maker, PIECE).tags_applied) == [
+        t for t in server.items[PIECE]["Tags"] if t.startswith("xt-")
+    ]
+    assert "xt-720p" not in server.items[PIECE]["Tags"]
+
+
+def test_main_exits_nonzero_naming_the_item_without_a_traceback_on_a_write_timeout(lab, monkeypatch, capsys):
+    server, maker = lab
+    digest = _plan(server, maker).digest()
+    monkeypatch.setattr(
+        reconcile_cleanup,
+        "JellyfinClient",
+        lambda url, key, transport=None: JellyfinClient(
+            URL, "k", transport=httpx.MockTransport(_TimesOutOn(server, SUNNY))
+        ),
+    )
+    monkeypatch.setattr(reconcile_cleanup, "init_db", lambda: None)
+    monkeypatch.setattr(reconcile_cleanup, "get_session", maker)
+    monkeypatch.setattr("app.config.load_config", lambda path=None: AppConfig())
+    argv = [a for i in IDS for a in ("--item", i)] + ["--apply", "--expect-plan", digest]
+    code = reconcile_cleanup.main(argv)
+    out = capsys.readouterr()
+    text = out.out + out.err
+    assert code != 0
+    assert "Traceback" not in text
+    assert SUNNY in text and f"Film {SUNNY[:6]}" in text and "may still land" in text
+    assert set(_posts(server)) == {PIECE}
+
+
 def test_the_cli_will_not_apply_without_a_digest_or_on_a_copy():
     with pytest.raises(SystemExit):
         reconcile_cleanup.main(["--item", PIECE, "--apply"])
