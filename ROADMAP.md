@@ -3713,6 +3713,7 @@ webhook resolves the wrong item.)*
 | I15 | **Release image registry (~/docker I59 decision 4)** — stay on ghcr, move to the Gitea registry (`registry.bitmapserv.org`), push to both, or mirror from the host | 2 | 2 | **CLOSED 2026-10-14** — operator decided **(A) ghcr only**; nothing changes (measured 2026-10-10, [`docs/measurements/i59-image-registry.md`](docs/measurements/i59-image-registry.md)) | — |
 | I16 | **Dependabot backlog** — eight bumps (#103–#110) opened 2026-09-28 sat untriaged behind a moving `main` | 2 | 1 | **DONE 2026-10-10** — 5 pip bumps merged; #108 closed by Dependabot. The 5 bumps are **RELEASED v1.12.0** (2026-10-10); startup log clean. **Second round 2026-10-14:** #156–#160, #109 and #110 merged, not yet released; see *I16 — second round* | — |
 | I17 | **`docker-build` is red on every PR: Trivy finds 5 HIGH base-image CVEs that a rebuild already fixes.** CI restored a cached `apt-get upgrade` layer (`#11 CACHED`), so the image kept the `curl`/`libcurl4t64` `8.14.1-2+deb13u5` and `librsvg2-2` `2.60.0+dfsg-1` that Debian has since fixed | 4 | 1 | **FIXED 2026-10-14 · RELEASED v1.13.0 (2026-10-15)** — both workflows build with `pull: true` and `no-cache: true`; the v1.13.0 publish ran uncached (0 `CACHED` steps) and Trivy finds 0 HIGH/CRITICAL in it; see *I17* below | — |
+| I18 | **Dependabot round 3 — five bumps (#179–#183), and `main` fails its own security scans until the Pillow one lands.** Pillow 12.3.0 has 37 known vulnerabilities (pip-audit) — Trivy: 28, 5 CRITICAL — all fixed in 13.0.0, so `lint-and-security` and `docker-build` fail on every PR cut from `main` (`c04b15f`), #180–#183 included; only #179 (Pillow 13.0.0, a major) is green | 4 | 2 | **READY** — #179 first, with poster renders proved byte-identical under 12.3.0 and 13.0.0 or every difference explained; then #180–#183 rebased and each merged or closed, green on its own head. No release. See *I18* below | — |
 
 **I15 — FILED 2026-10-10 from ~/docker I59 (operator, 2026-10-09: "decision 4 — measure first"). NEEDS
 DECISION.** Measured, nothing pushed (evidence and instruments in
@@ -3803,6 +3804,49 @@ onto the `main` its predecessor moved and merged when every check was green on t
 | #110 | setup-buildx 3 → 4 | merged. `ci.yml`'s `docker-build` exercises it; `docker-publish.yml` first ran it in the v1.13.0 release (2026-10-15) and passed |
 
 All of them shipped in v1.13.0 (2026-10-15).
+
+**I18 — FILED 2026-11-08 (interactive, operator approval). READY.** Dependabot round 3, triaged the way I16 was:
+each PR rebased by Dependabot onto the `main` its predecessor moved, checked in a scratch venv built from that
+head's own `requirements.txt`, and merged one at a time once every required check is green on that head.
+
+| PR | Bump | Head at filing | CI at filing |
+|----|------|----------------|--------------|
+| #179 | Pillow 12.3.0 → **13.0.0** (major) | `b5fe079c` | all green |
+| #180 | alembic 1.20.0 → 1.20.1 | `38e2b753` | `lint-and-security`, `docker-build` red (Pillow) |
+| #181 | FastAPI 0.143.0 → 0.161.1 | `31123ccf` | same |
+| #182 | starlette 1.7.0 → 1.9.0 | `c66d6060` | same |
+| #183 | pydantic-settings 2.15.0 → 2.16.1 | `aae6cfa1` | same |
+
+- *Why #180–#183 are red.* Not their own bump. In #180's CI run (`40346030810`, 2026-10-26) `pip-audit` reports
+  "37 known vulnerabilities in 1 package", every one `pillow 12.3.0`, fixed in 13.0.0, and Trivy reports 28 (23
+  HIGH, 5 CRITICAL), all Pillow. The CVEs were published after #179 opened (2026-10-23), so #179's head is green
+  and every later PR on `c04b15f` is red. **Production v1.13.0 ships Pillow 12.3.0**, and xenotag opens poster
+  images that Jellyfin serves. Until #179 merges, no xenotag PR (B33's included) can go green.
+- *Order.* **#179 first.** Then `@dependabot rebase` each of the others in turn: #180, #183, #182, #181 (the
+  FastAPI jump last, on the starlette it will run with). Check FastAPI 0.161.1's declared `starlette` range
+  against the pinned version before merging either.
+- *#179 — the proof.* Render a fixed set of posters through the poster path (`render_badge_groups()` /
+  `generate_preview_bytes()`, never a live library) in two scratch venvs, 12.3.0 and 13.0.0, and compare.
+  Cover every badge category, 100% and a translucent opacity (B21's composite), the glow (`GaussianBlur`),
+  the `LANCZOS` resize, the bundled-font and `load_default()` paths, and the JPEG/PNG save. Compare the
+  encoded bytes (sha256) AND the decoded pixels. Byte-identical: merge. Any difference: name the operation,
+  the pixel count and the largest channel delta. An encoder-only change (bytes differ, pixels equal) is
+  explained by that. A pixel change inside a pill gets B1's contrast measurement before merging. An
+  unexplained pixel change: stop and report, do not close (closing keeps the CVEs). Also read Pillow 13's
+  removals against what `app/` calls, and run the suite with `-W error::DeprecationWarning`. The instrument
+  goes in `scripts/` so the next Pillow major re-runs it.
+- *#180 alembic.* `python -m app.migrate check` green; `scripts/verify_state_db_upgrade.py` PASS on a COPY of
+  production `state.db`.
+- *#181 FastAPI.* `test_mutating_routes_are_the_known_set` still sees the full route set (I16 round 2's trap);
+  the CSRF tests pass; a scratch `uvicorn app.main:app` starts with no deprecation warning (I10) and `/login`
+  answers 200.
+- *#182 starlette.* I11's `error::…StarletteDeprecationWarning` filter still fails a planted warning and passes
+  without it.
+- *#183 pydantic-settings.* The I8 env-override and config-load tests pass; a production-shaped `config.yml`
+  loads to the same model dump on both versions.
+- *Outcome.* Each PR merged or closed with its reason, every merge green on its own head; a table like I16's
+  with the evidence. **No release**: the release that ships the Pillow fix is the operator's call.
+- *Shares the cause:* every open xenotag PR — `pip-audit` and Trivy fail on any head without Pillow 13.
 
 **I14 — FILED 2026-09-27, found while measuring B8. Not fixed here.**
 
