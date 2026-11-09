@@ -10,7 +10,7 @@ alembic==1.20.1
 APScheduler==3.11.3
 Pillow==13.0.0
 Jinja2==3.1.6
-python-multipart==0.0.32
+python-multipart==0.0.33
 anyio==4.15.1
 bcrypt==5.0.0
 slowapi==0.1.10
