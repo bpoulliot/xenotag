@@ -3818,7 +3818,7 @@ head's own `requirements.txt`, and merged one at a time once every required chec
 | #183 | pydantic-settings 2.15.0 → 2.16.1 | `aae6cfa1` | same |
 
 - *Why #180–#183 are red.* Not their own bump. In #180's CI run (`40346030810`, 2026-10-26) `pip-audit` reports
-  "37 known vulnerabilities in 1 package", every one `pillow 12.3.0`, fixed in 13.0.0, and Trivy reports 28 (23
+  "37 known vulnerabilities in 1 package" (39 on #184's run, 2026-11-08), every one `pillow 12.3.0`, fixed in 13.0.0, and Trivy reports 28 (23
   HIGH, 5 CRITICAL), all Pillow. The CVEs were published after #179 opened (2026-10-23), so #179's head is green
   and every later PR on `c04b15f` is red. **Production v1.13.0 ships Pillow 12.3.0**, and xenotag opens poster
   images that Jellyfin serves. Until #179 merges, no xenotag PR (B33's included) can go green.
