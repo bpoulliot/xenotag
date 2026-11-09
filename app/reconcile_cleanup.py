@@ -52,6 +52,8 @@ from dataclasses import asdict, dataclass, field
 from datetime import timedelta
 from pathlib import Path
 
+import httpx
+
 from .clients.jellyfin import JellyfinClient
 from .clients.readonly import ReadOnlyTransport
 from .config import AppConfig
@@ -245,7 +247,18 @@ def apply(jf: JellyfinClient, session: object, cfg: AppConfig, item_ids: list[st
     for n, p in enumerate(plan.writes):
         item = items[p.item_id]
         readback = _Readback()
-        jf.set_managed_tags(p.item_id, item, prefix, p.after, legacy_prefixes=cfg.tags.legacy_prefixes)
+        try:
+            jf.set_managed_tags(p.item_id, item, prefix, p.after, legacy_prefixes=cfg.tags.legacy_prefixes)
+        except httpx.TimeoutException as exc:
+            # B33. Jellyfin may still apply a write the client gave up on (One Piece's landed 2.5 minutes late
+            # under load), so record NOTHING for this item (B17's rule: the row stays as it was) and attempt no
+            # other item. Refused is what main() turns into a message and a non-zero exit, with no traceback.
+            raise Refused(
+                f"{p.name} ({p.item_id}) timed out ({type(exc).__name__}) on write {n + 1} of {len(plan.writes)}; "
+                f"stopped, {len(plan.writes) - n - 1} not attempted, and nothing recorded for it. "
+                "The write may still land: run the dry run again after a minute to see whether it did. "
+                f"Written and recorded before it: {done}"
+            ) from exc
         pending = _PendingRecord(
             item=item,
             written=p.after,
