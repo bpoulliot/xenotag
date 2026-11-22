@@ -3715,7 +3715,7 @@ webhook resolves the wrong item.)*
 | I17 | **`docker-build` is red on every PR: Trivy finds 5 HIGH base-image CVEs that a rebuild already fixes.** CI restored a cached `apt-get upgrade` layer (`#11 CACHED`), so the image kept the `curl`/`libcurl4t64` `8.14.1-2+deb13u5` and `librsvg2-2` `2.60.0+dfsg-1` that Debian has since fixed | 4 | 1 | **FIXED 2026-10-14 · RELEASED v1.13.0 (2026-10-15)** — both workflows build with `pull: true` and `no-cache: true`; the v1.13.0 publish ran uncached (0 `CACHED` steps) and Trivy finds 0 HIGH/CRITICAL in it; see *I17* below | — |
 | I18 | **Dependabot round 3 — five bumps (#179–#183), and `main` fails its own security scans until the Pillow one lands.** Pillow 12.3.0 has 37 known vulnerabilities (pip-audit) — Trivy: 28, 5 CRITICAL — all fixed in 13.0.0, so `lint-and-security` and `docker-build` fail on every PR cut from `main` (`c04b15f`), #180–#183 included; only #179 (Pillow 13.0.0, a major) is green | 4 | 2 | **DONE 2026-11-08** — all five **merged, NOT released**: #179 (Pillow 13.0.0; 4,560/4,560 render outputs byte-identical to 12.3.0), #180, #183, #182, #181, each green on its own head. `main` passes `pip-audit` and Trivy again; **production v1.13.0 still ships Pillow 12.3.0** until a release, which is the operator's call. See *I18 — outcome* below | — |
 | I19 | **`pydantic-settings` is pinned in `requirements.txt` and imported nowhere** — no `pydantic_settings` import in `app/`, `tests/` or `scripts/` (found in I18 while checking #183); every config model is a plain `BaseModel`, and the env overrides are I8's own code. A dependency nothing uses still costs Dependabot PRs, audit surface and image size | 1 | 1 | **READY** — drop the pin; the suite, `pip check` and a scratch `uvicorn app.main:app` start prove nothing imported it. See *I19* below | — |
-| I20 | **A docs-only PR ran the whole CI** (~/docker I295): every `.md`-only PR waited on the full suite, the probe self-tests and a no-cache image build plus Trivy, and a branch push ran all of it a second time. Nothing checked that two roadmap items do not share an ID | 2 | 2 | **DONE 2026-11-22** — gate [#192](https://github.com/bpoulliot/xenotag/pull/192); docs-lane proof PROOF_PR | — |
+| I20 | **A docs-only PR ran the whole CI** (~/docker I295): every `.md`-only PR waited on the full suite, the probe self-tests and a no-cache image build plus Trivy, and a branch push ran all of it a second time. Nothing checked that two roadmap items do not share an ID | 2 | 2 | **DONE 2026-11-22** — gate [#192](https://github.com/bpoulliot/xenotag/pull/192); docs-lane proof [#193](https://github.com/bpoulliot/xenotag/pull/193) | — |
 
 **I15 — FILED 2026-10-10 from ~/docker I59 (operator, 2026-10-09: "decision 4 — measure first"). NEEDS
 DECISION.** Measured, nothing pushed (evidence and instruments in
@@ -3899,7 +3899,7 @@ a scratch `uvicorn app.main:app` start. Close any open Dependabot PR for it in t
 
 **I20 — FILED 2026-11-22 from ~/docker I295 (operator, 2026-11-21: docs PRs land on their own and right away, so
 CI makes them cheap). DONE 2026-11-22: gate [#192](https://github.com/bpoulliot/xenotag/pull/192), docs-lane proof
-PROOF_PR.**
+[#193](https://github.com/bpoulliot/xenotag/pull/193).**
 * **The gate.** A `changes` job in `ci.yml` runs on `pull_request` only. It calls `scripts/ci_docs_only.py`
   (stdlib, the runner's `python3`), which diffs `base...head` with `--no-renames` and answers `docs_only=true`
   only when every changed file is `.md` and none sits under `app/`, `tests/`, `scripts/` or `.github/`. A git
