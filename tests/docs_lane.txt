@@ -1,0 +1,5 @@
+# The docs-only CI lane (scripts/ci_docs_only.py, roadmap I20) runs these test files with
+# the runner's bare python3 and nothing installed. List every test file that reads Markdown;
+# tests/test_ci_docs_only.py fails when a source file names a Markdown file and is not here.
+tests/test_check_roadmap_numbers.py
+tests/test_ci_docs_only.py
