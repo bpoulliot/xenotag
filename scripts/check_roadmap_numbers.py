@@ -36,7 +36,7 @@ ALLOWED_DUPLICATES: dict[str, str] = {}
 _ROW = re.compile(r"^\|(.*)\|\s*$")
 _SEPARATOR = re.compile(r"^:?-+:?$")
 # Optional bold/strikethrough decoration around the ID, as ROADMAP rows use.
-_ID = re.compile(r"^(?:~~)?(?:\*\*)?([BUIP])0*(\d+)([a-z]|\([a-z0-9]+\))?(?:\*\*)?(?:~~)?$")
+_ID = re.compile(r"^(?:~~)?(?:\*\*)?([BUIP])(\d+)([a-z]|\([a-z0-9]+\))?(?:\*\*)?(?:~~)?$")
 
 
 def _cells(line: str) -> list[str] | None:

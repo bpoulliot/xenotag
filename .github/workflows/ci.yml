@@ -1,105 +1,177 @@
 name: CI
 
 on:
+  # Push runs only for main (roadmap I20): every PR already gets its pull_request
+  # run, and a branch push ran the whole workflow a second time on the same SHA,
+  # which a docs-only PR's push would still do in full.
   push:
-    branches: ["**"]
+    branches: [main]
   pull_request:
     branches: [main]
 
 jobs:
+  # Docs-only PR detector (roadmap I20, ~/docker I295; van1sh's pattern).
+  # pull_request only: a push to main always runs in full. The ruleset requires
+  # lint-and-security, tests and docker-build BY NAME, so skipping those jobs on
+  # a docs-only PR would leave the PR waiting for a status that never arrives
+  # (which is why there is no paths-ignore). Instead each still runs and reports,
+  # with `if: always()`, and only its heavy steps opt out.
+  #
+  # The docs lane is not empty: lint-and-security checks the roadmap's numbers,
+  # and tests runs the test files that read Markdown (tests/docs_lane.txt, kept
+  # whole by tests/test_ci_docs_only.py) with the runner's bare python3. The
+  # detector, scripts/ci_docs_only.py, answers false (the full run) on any
+  # failure and always exits 0; if this job fails or is skipped anyway,
+  # docs_only is empty and every job below runs in full.
+  changes:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    outputs:
+      docs_only: ${{ steps.filter.outputs.docs_only }}
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0  # the PR's base and head commits, not just the merge ref
+
+      - id: filter
+        name: Docs-only detector
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: python3 scripts/ci_docs_only.py "$BASE_SHA" "$HEAD_SHA"
+
   lint-and-security:
+    needs: changes
+    if: always()  # also when changes was skipped (push) or failed: fail open to the full run
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
+      # Both lanes: two roadmap items sharing an ID is a docs-only mistake.
+      # Stdlib, the runner's own python3, nothing installed.
+      - name: Roadmap item IDs are unique
+        run: python3 scripts/check_roadmap_numbers.py ROADMAP.md
+
       - uses: actions/setup-python@v7
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Install lint/security tools
+        if: needs.changes.outputs.docs_only != 'true'
         run: pip install ruff black bandit[toml] pip-audit
 
       - name: Install project dependencies
+        if: needs.changes.outputs.docs_only != 'true'
         run: pip install -r requirements.txt
 
       - name: Lint (ruff)
+        if: needs.changes.outputs.docs_only != 'true'
         run: ruff check app/
 
       - name: Format check (black)
+        if: needs.changes.outputs.docs_only != 'true'
         run: black --check app/
 
       - name: Lint Dockerfile (hadolint)
+        if: needs.changes.outputs.docs_only != 'true'
         uses: hadolint/hadolint-action@v3.5.0
         with:
           dockerfile: Dockerfile
           failure-threshold: error
 
       - name: Security scan — Python code (bandit)
+        if: needs.changes.outputs.docs_only != 'true'
         run: bandit -r app/ -ll --exclude app/static
 
       - name: Security scan — dependencies (pip-audit)
+        if: needs.changes.outputs.docs_only != 'true'
         run: pip-audit -r requirements.txt -r requirements-dev.txt
 
   tests:
+    needs: changes
+    if: always()  # also when changes was skipped (push) or failed: fail open to the full run
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
+      # The docs lane: only the test files that read Markdown, stdlib unittest
+      # on the runner's own python3. An empty list fails rather than passing.
+      - name: Docs lane — Markdown-reading tests (tests/docs_lane.txt)
+        if: needs.changes.outputs.docs_only == 'true'
+        run: |
+          mapfile -t files < <(grep -E '^tests/[^#[:space:]]+\.py$' tests/docs_lane.txt)
+          test "${#files[@]}" -gt 0
+          for f in "${files[@]}"; do python3 "$f" -v; done
+
       - uses: actions/setup-python@v7
+        if: needs.changes.outputs.docs_only != 'true'
         with:
           python-version: "3.12"
           cache: pip
 
       - name: Install project dependencies
+        if: needs.changes.outputs.docs_only != 'true'
         run: pip install -r requirements.txt -r requirements-dev.txt pytest
 
       - name: Tests (pytest)
+        if: needs.changes.outputs.docs_only != 'true'
         run: pytest tests/ -q
 
       # I3: `alembic check` against a database built by the startup path --
       # fails when a model changes with no revision, or the reverse.
       # tests/test_migrations.py proves it fails on a planted drift.
       - name: Schema drift check (alembic check — models match migrations)
+        if: needs.changes.outputs.docs_only != 'true'
         run: python -m app.migrate check
 
       # The I3 acceptance harness (run by hand against a copy of prod state.db);
       # its self-test proves the row comparator catches a planted change.
       - name: State DB upgrade verifier self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/verify_state_db_upgrade.py --self-test
 
       - name: Badge contrast probe self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_badge_contrast.py --self-test
 
       - name: Legacy tag audit probe self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/audit_legacy_tags.py --self-test
 
       # B13: offline fixture pairs only; the live Jellyfin sweep is a manual mode.
       - name: Resolution threshold probe self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_resolution_thresholds.py --self-test
 
       # B8: scores webhook routes against B5's own item_folders()/InstanceIndex,
       # so a fix that moves those helpers breaks this step, not the probe silently.
       - name: Webhook resolution probe self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_webhook_resolution.py --self-test
 
       # B7: labels each index row by the pre-B7 rule and by scanner._lang3_to_lang2()
       # (imported); the self-test plants a rename and an index the old rule can't reproduce.
       - name: Language rename probe self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_language_renames.py --self-test
 
       # B12: plants an NFO-respelled item, a match, an unexplained tag and a wiped
       # item in synthetic databases; each must be classified, and only the first predicted.
       - name: NFO tag drift probe self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_nfo_tag_drift.py --self-test
 
       # Two steps: --self-test proves the probe can still see a planted
       # collision, and the bare run is the B3 acceptance criterion itself --
       # it exits non-zero if any poster width is served another width's tile.
       - name: Pill cache key probe self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_pill_cache_key.py --self-test
 
       - name: Pill cache key sweep (B3 — must find zero collisions)
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_pill_cache_key.py
 
       # Same two-step shape as B3: the self-test proves the probe still sees
@@ -107,15 +179,18 @@ jobs:
       # criterion -- it exits non-zero if any two default badge colours fall
       # below dE 5 under normal or simulated colour-blind vision.
       - name: Palette separation probe self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_palette_separation.py --self-test
 
       - name: Palette separation sweep (B4 — defaults must stay tellable apart)
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_palette_separation.py
 
       # P7: renders through render_badge_groups() and proves the rectangle,
       # text and pixel reads all see a planted overflow and pass a lone pill.
       # The full grid (~8 min) and the state.db census are manual modes.
       - name: Pill containment probe self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_pill_containment.py --self-test
 
       # P6: the self-test's end-to-end check compares render_badge_groups()
@@ -123,19 +198,23 @@ jobs:
       # B21. The bare run is the acceptance criterion for the threshold and
       # the backup palette.
       - name: Adaptive palette probe self-test
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_adaptive_palette.py --self-test
 
       - name: Adaptive palette acceptance (P6 — threshold, backup contrast, separation)
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/measure_adaptive_palette.py
 
       # Catches a hand-edited app/static/ drifting from assets/brand/.
       - name: Brand assets match their sources
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/generate_brand_assets.py --check
 
       # P5: the README's overlay examples are the real render path, so a
       # palette or layout change must regenerate them. Byte comparison is sound
       # only because the render is deterministic (see the script's docstring).
       - name: README overlay examples match the current render
+        if: needs.changes.outputs.docs_only != 'true'
         run: python scripts/generate_readme_images.py --check
 
   codeql:
@@ -158,13 +237,17 @@ jobs:
           category: "/language:python"
 
   docker-build:
+    needs: changes
+    if: always()  # also when changes was skipped (push) or failed: fail open to the full run
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v7
 
       - uses: docker/setup-buildx-action@v4
+        if: needs.changes.outputs.docs_only != 'true'
 
       - name: Build Docker image (no push)
+        if: needs.changes.outputs.docs_only != 'true'
         uses: docker/build-push-action@v6
         with:
           context: .
@@ -179,6 +262,7 @@ jobs:
           no-cache: true
 
       - name: Scan image for vulnerabilities (Trivy)
+        if: needs.changes.outputs.docs_only != 'true'
         uses: aquasecurity/trivy-action@master
         with:
           image-ref: xenotag:ci

@@ -620,10 +620,11 @@ CI runs `python -m app.migrate check`, which fails if the models and the revisio
 
 ## CI/CD
 
-Every push and pull request runs:
+Every pull request to `main`, and every push to `main`, runs:
 
 | Check | Tool |
 |---|---|
+| Roadmap item IDs are unique | `scripts/check_roadmap_numbers.py` |
 | Python lint + format | ruff + black |
 | Python SAST | bandit |
 | Dependency CVE audit | pip-audit |
@@ -632,6 +633,11 @@ Every push and pull request runs:
 | Container CVE scan | Trivy (CRITICAL + HIGH, fixed only) |
 | Deep Python SAST | CodeQL (weekly + on push/PR to main) |
 | PR dependency risk | dependency-review (PRs only) |
+
+A pull request that changes only Markdown outside `app/`, `tests/`, `scripts/` and `.github/` takes a docs lane
+(`scripts/ci_docs_only.py`). The required jobs still run and report, but they run only the roadmap ID check and
+the test files in `tests/docs_lane.txt`. The install, lint, suite, probes, image build and Trivy steps are skipped.
+A push to `main` always runs in full.
 
 Publishing to `ghcr.io/bpoulliot/xenotag` happens automatically on semver tags (`v*.*.*`) via the Release workflow, with SBOM and provenance attestation included.
 

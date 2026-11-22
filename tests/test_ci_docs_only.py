@@ -213,7 +213,11 @@ class Guards(unittest.TestCase):
 
     def test_the_workflow_runs_the_docs_lane_list(self):
         ci = (ROOT / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        for needle in ("tests/docs_lane.txt", "python3 scripts/ci_docs_only.py", "python3 scripts/check_roadmap_numbers.py"):
+        for needle in (
+            "tests/docs_lane.txt",
+            "python3 scripts/ci_docs_only.py",
+            "python3 scripts/check_roadmap_numbers.py",
+        ):
             with self.subTest(needle=needle):
                 self.assertTrue(needle in ci, f"ci.yml does not run {needle}")
 
