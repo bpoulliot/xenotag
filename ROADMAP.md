@@ -64,7 +64,7 @@ is recorded as an *OPERATOR DECISION 2026-09-26* line under the item's sweep not
 | B30 | **The media browser never shows codec, HDR, audio tracks or rating, because `/media` drops them.** `MediaItem` (`app/web/schemas.py:23`) declares 8 fields, but `get_media_filtered()` returns 15, and Pydantic silently drops the other 7 (`video_codec`, `hdr_type`, `audio_tracks`, `subtitle_tracks`, `content_rating`, `field_order`, `file_mtime`). `loadMedia()` reads four of them. As a result the Video column shows only the resolution, Audio falls back to the language list (never a codec, and never P1's yellow `UND`), and Rating is always `—`. P2 was closed as shipped after reading `index.html`; the response was never checked. Production's index holds 9,453 codecs, 202 HDR types, 9,429 audio-track lists (3,085 with an `UND` track) and 8,090 ratings that the browser cannot show. | 3 | 1 | **SHIPPED 2026-10-15** ([#168](https://github.com/bpoulliot/xenotag/pull/168)) · **RELEASED v1.13.0 (2026-10-15)** — see *B30* below | — |
 | B31 | **A quarter of the media browser's rows are named `Season 01`.** The Item column shows the file's parent folder (`loadMedia()`), and for an episode that is its season folder. **2,469 of production's 9,463 rows** read `Season NN` or `Specials`; the series name is only in the hover title, which a touch screen cannot show. | 2 | 1 | **SHIPPED 2026-10-15** ([#170](https://github.com/bpoulliot/xenotag/pull/170)) · **RELEASED v1.13.0 (2026-10-15)** — see *B31* below | — |
 | B32 | **The tag reconciliation restores what a STALE row says, not what xenotag would write today.** B12(b) takes every row's `tags_applied` as the expected tags. A row goes stale in two ways. First, the scan cannot reach the item: its file fails to probe, so the row keeps an old scan's tags, spelled before B9 (`xt-DD+`, `xt-H.264`). Second, a write lands but is not recorded: B17 records nothing when a write times out. Measured on production at the v1.12.0 deploy: **all 6 candidates of the first scheduled pass are stale rows.** For 2 series, Jellyfin carries the correct `xt-1080p` while their rows still say `720p` (pre-B13), so the pass would ADD `xt-720p` beside it. The other 4 rows date from June to August, their files fail to probe, and the pass would write 6 tags each, 3 of them items with retired pre-B9 spellings. | 2 | 2 | **SHIPPED 2026-10-15 ([#169](https://github.com/bpoulliot/xenotag/pull/169)) · RELEASED v1.13.0 (2026-10-15); clean-up applied 2026-10-15** — (a) + (c) as decided; `python -m app.reconcile_cleanup` removed `xt-720p` from 2 series and a retired spelling from 2. One Piece's row still lists `xt-720p`: its write timed out and landed late, unrecorded (**B33**); harmless under (c). See *B32* below | — |
-| B33 | **The B32 clean-up tool dies on a Jellyfin write timeout, and a write that lands late is never recorded.** `apply()` in `app/reconcile_cleanup.py` calls `set_managed_tags()` with no handler. In the v1.13.0 release's clean-up, One Piece's `POST /Items/{id}` hit httpx's 30 s `ReadTimeout`: the run exited 1 with a traceback, and the items after it in that run were not attempted. The write landed about 2.5 minutes later, but nothing recorded it, so One Piece's `tags_applied` still lists `xt-720p`. | 1 | 1 | **SHIPPED 2026-11-08 ([#186](https://github.com/bpoulliot/xenotag/pull/186)), merged NOT released** — `apply()` catches `httpx.TimeoutException` around the write, records nothing for that item (B17's rule), attempts no later item, and stops with a message naming the item that says the write may still land and that a dry run after a minute shows whether it did; `main()` exits 1 with no traceback. Items written before the timeout stay recorded. See *B33* below | — |
+| B33 | **The B32 clean-up tool dies on a Jellyfin write timeout, and a write that lands late is never recorded.** `apply()` in `app/reconcile_cleanup.py` calls `set_managed_tags()` with no handler. In the v1.13.0 release's clean-up, One Piece's `POST /Items/{id}` hit httpx's 30 s `ReadTimeout`: the run exited 1 with a traceback, and the items after it in that run were not attempted. The write landed about 2.5 minutes later, but nothing recorded it, so One Piece's `tags_applied` still lists `xt-720p`. | 1 | 1 | **SHIPPED 2026-11-08 ([#186](https://github.com/bpoulliot/xenotag/pull/186)) · RELEASED v1.13.1 (2026-11-26)** — `apply()` catches `httpx.TimeoutException` around the write, records nothing for that item (B17's rule), attempts no later item, and stops with a message naming the item that says the write may still land and that a dry run after a minute shows whether it did; `main()` exits 1 with no traceback. Items written before the timeout stay recorded. See *B33* below | — |
 
 **Build order and release gate, recorded 2026-10-05.** The READY items with no open NEEDS DECISION
 sequence as B22, B18, B15, B14, B8, I11, P4a; B17 (relabelled READY below) builds after B18, since
@@ -251,6 +251,50 @@ reconcile, no compose edit.
 - *Rollback (not taken):* `docker tag ghcr.io/bpoulliot/xenotag:1.12.0 ghcr.io/bpoulliot/xenotag:latest`, then
   `docker compose up -d --no-deps xenotag`. No schema revision ran, so `state.db` needs no restore.
 - Record: `~/docker/xenotag/release-1.13.0-20261015/README.md`.
+
+**Release v1.13.1 — LIVE 2026-11-26 (overnight queue item 79; operator, 2026-11-26: "ship the Pillow CVE fix + B33 +
+I19; deploy with rollback tag").** `bump=patch` from `main` `75d30ac` (CI green on that SHA: `lint-and-security`,
+`tests`, `docker-build`, `codeql`, `analyze`). Release run `45886948423` → release commit `3116db6` (VERSION only),
+tag `v1.13.1`, published 2026-11-26 19:53:23Z. Publish run `45886977338` → `ghcr.io/bpoulliot/xenotag:1.13.1` (=
+`:1.13` = `:latest`), index digest `sha256:47796521…`, local id `9c3f1e852989`. Deployed 19:57:42Z. No scan, no
+manual reconcile, no compose or `config.yml` edit, no \*arr or Jellyfin write.
+- *What shipped:* I18's five Dependabot bumps — Pillow **13.0.0** (#179), alembic 1.20.1 (#180), pydantic-settings
+  2.16.2 (#183), starlette 1.10.0 (#182), FastAPI 0.162.0 (#181) — then B33 (#186) and I19 (#194), which drops
+  pydantic-settings again. I20 (#192) changed CI only and is not in the image. `git log v1.13.0..75d30ac
+  --first-parent -- app requirements.txt Dockerfile .github` holds nothing else.
+- *No re-tag.* `_tag_config_hash()` for production's `config.yml` is `f57e91dbac6fbe70` on 1.13.0, on `main` and in
+  `app_meta`; a wrong expected value fails. Startup logged `state.db schema: current (revision 0002)`.
+- *Render parity on production's own posters* (Pillow is in the render path). 50 posters of the 9,677 with a clean
+  `.orig`, sampled with seed 79 (40 at random, the 5 widest so the 2:3 padding runs, the 5 with the most pills so
+  the wrap / `+N` path runs; 417×417 to 2000×3000, six media roots), rendered by `apply_overlay()` on scratch copies
+  in `--network none` containers of 1.13.0 and of `main`: **50/50 byte-identical**. Both renders also equal the
+  poster production last painted on disk, 50/50. Controls: a second 1.13.0 render is identical 50/50, and 1.13.0 at
+  65% opacity differs on 50/50.
+- *Uncached publish (I17).* 0 `CACHED` steps, `--no-cache --pull`; the `apt-get … upgrade` step ran (22.2 s) on
+  Debian 13.8.
+- *Trivy before the deploy.* Trivy **0.76.2** (what CI's action resolved on `75d30ac`), CI's flags, on a `docker
+  save` of the pulled image.
+  - 1.13.1: **0**, with `pillow 13.0.0` in the image. The positive control, 1.13.0: **96**. Of those, 66 (65 HIGH
+    + 1 CRITICAL) are Debian packages that Debian has since fixed; the image moved from Debian 13.7 to 13.8. The
+    other 30 are 29 in Pillow 12.3.0 and 1 CRITICAL in certifi. The running container's image id, scanned after the
+    deploy: 0.
+  - *Disclosure, without `--ignore-unfixed`:* 1.13.1 carries **343 HIGH + 10 CRITICAL** that Debian has not fixed
+    (`affected` 81, `fix_deferred` 271, `will_not_fix` 1). The CRITICALs are ffmpeg's CVE-2026-135736 across its 9
+    packages (`fix_deferred`) and libxml2 CVE-2026-6653 (`affected`). Every one is also in 1.13.0, and 1.13.1 is
+    1.13.0 minus exactly the 96 fixed findings. The count is higher than v1.13.0's 216 + 1 because the vulnerability
+    database grew. Nothing was suppressed.
+- *Deploy.* Clean stop at 19:57:28Z. Backups in `config/`: `state.db.bak-20261126-pre-1.13.1` (9,762 rows, rev 0002,
+  `integrity_check` ok, identical to the stopped file), `config.yml.bak-20261126-pre-1.13.1` (mode 600) and the
+  three report files. `:1.13.0` (`180d5b378b29`) is still pulled. The container came up healthy with 0 restarts.
+  Its startup log has the same lines as 1.13.0's, with 0 warnings, and `/health` reports Jellyfin and all five
+  \*arrs healthy. An authenticated Jellyfin read with the configured key returned 200. `config.yml` is unchanged.
+- *Rollback (not taken):* `docker tag ghcr.io/bpoulliot/xenotag:1.13.0 ghcr.io/bpoulliot/xenotag:latest`, then
+  `docker compose up -d --no-deps xenotag`. No schema revision ran, so `state.db` needs no restore.
+- *Still the operator's:* **I1**'s smoke (one browser Settings save through Authentik, then `docker logs xenotag |
+  grep Rejected`) and **I9**'s wiring (the \*arr key files under `/run/secrets`). GitHub: #26 (P4) was closed on
+  2026-10-16. **#36 (U2) is still open** although U2 is done (removal live since 2026-10-10, the re-encode half
+  closed 2026-10-10), so it is proposed for closing. Nothing was closed by this release.
+- Record: `~/docker/xenotag/release-1.13.1-20261126/README.md`.
 
 **OPERATOR DECISIONS 2026-10-09 (round 5) — release, dependencies, I9, P4, I1, GitHub issues.**
 
@@ -852,7 +896,7 @@ Relabelled READY.** (b) is not taken; with (a) the retired spellings are never r
   fix is live in production** (the release), never before. The B32 item builds the fix and the
   clean-up tool, and records the GET-only plan; the release item runs it after the deploy.
 
-**B33 — FILED 2026-10-15 by the v1.13.0 release session (queue item 75), during B32's clean-up. SHIPPED 2026-11-08 ([#186](https://github.com/bpoulliot/xenotag/pull/186)), merged NOT released.**
+**B33 — FILED 2026-10-15 by the v1.13.0 release session (queue item 75), during B32's clean-up. SHIPPED 2026-11-08 ([#186](https://github.com/bpoulliot/xenotag/pull/186)); RELEASED v1.13.1 (2026-11-26).**
 - *Evidence.* The run for One Piece, 48 Hours and It's Always Sunny started at 2026-10-16 03:22:32Z. One
   Piece's `POST /Items/{id}` raised `httpx.ReadTimeout` out of `set_managed_tags()` → `apply()` → `main()`. The
   run exited 1 with a traceback, and 48 Hours and It's Always Sunny were not attempted.
@@ -3713,8 +3757,8 @@ webhook resolves the wrong item.)*
 | I15 | **Release image registry (~/docker I59 decision 4)** — stay on ghcr, move to the Gitea registry (`registry.bitmapserv.org`), push to both, or mirror from the host | 2 | 2 | **CLOSED 2026-10-14** — operator decided **(A) ghcr only**; nothing changes (measured 2026-10-10, [`docs/measurements/i59-image-registry.md`](docs/measurements/i59-image-registry.md)) | — |
 | I16 | **Dependabot backlog** — eight bumps (#103–#110) opened 2026-09-28 sat untriaged behind a moving `main` | 2 | 1 | **DONE 2026-10-10** — 5 pip bumps merged; #108 closed by Dependabot. The 5 bumps are **RELEASED v1.12.0** (2026-10-10); startup log clean. **Second round 2026-10-14:** #156–#160, #109 and #110 merged, not yet released; see *I16 — second round* | — |
 | I17 | **`docker-build` is red on every PR: Trivy finds 5 HIGH base-image CVEs that a rebuild already fixes.** CI restored a cached `apt-get upgrade` layer (`#11 CACHED`), so the image kept the `curl`/`libcurl4t64` `8.14.1-2+deb13u5` and `librsvg2-2` `2.60.0+dfsg-1` that Debian has since fixed | 4 | 1 | **FIXED 2026-10-14 · RELEASED v1.13.0 (2026-10-15)** — both workflows build with `pull: true` and `no-cache: true`; the v1.13.0 publish ran uncached (0 `CACHED` steps) and Trivy finds 0 HIGH/CRITICAL in it; see *I17* below | — |
-| I18 | **Dependabot round 3 — five bumps (#179–#183), and `main` fails its own security scans until the Pillow one lands.** Pillow 12.3.0 has 37 known vulnerabilities (pip-audit) — Trivy: 28, 5 CRITICAL — all fixed in 13.0.0, so `lint-and-security` and `docker-build` fail on every PR cut from `main` (`c04b15f`), #180–#183 included; only #179 (Pillow 13.0.0, a major) is green | 4 | 2 | **DONE 2026-11-08** — all five **merged, NOT released**: #179 (Pillow 13.0.0; 4,560/4,560 render outputs byte-identical to 12.3.0), #180, #183, #182, #181, each green on its own head. `main` passes `pip-audit` and Trivy again; **production v1.13.0 still ships Pillow 12.3.0** until a release, which is the operator's call. See *I18 — outcome* below | — |
-| I19 | **`pydantic-settings` is pinned in `requirements.txt` and imported nowhere** — no `pydantic_settings` import in `app/`, `tests/` or `scripts/` (found in I18 while checking #183); every config model is a plain `BaseModel`, and the env overrides are I8's own code. A dependency nothing uses still costs Dependabot PRs, audit surface and image size | 1 | 1 | **SHIPPED** ([#194](https://github.com/bpoulliot/xenotag/pull/194)) — dropped the pin; the suite, `pip check` and a scratch `uvicorn app.main:app` start prove nothing imported it. See *I19* below | — |
+| I18 | **Dependabot round 3 — five bumps (#179–#183), and `main` fails its own security scans until the Pillow one lands.** Pillow 12.3.0 has 37 known vulnerabilities (pip-audit) — Trivy: 28, 5 CRITICAL — all fixed in 13.0.0, so `lint-and-security` and `docker-build` fail on every PR cut from `main` (`c04b15f`), #180–#183 included; only #179 (Pillow 13.0.0, a major) is green | 4 | 2 | **DONE 2026-11-08 · RELEASED v1.13.1 (2026-11-26)** — all five merged: #179 (Pillow 13.0.0; 4,560/4,560 render outputs byte-identical to 12.3.0), #180, #183, #182, #181, each green on its own head. `main` passes `pip-audit` and Trivy again, and **production runs Pillow 13.0.0 since v1.13.1**: 50 of production's own posters rendered byte-identical on 1.13.0 and 1.13.1, and Trivy finds 0 fixable HIGH/CRITICAL in the image. See *I18 — outcome* below and *Release v1.13.1* | — |
+| I19 | **`pydantic-settings` is pinned in `requirements.txt` and imported nowhere** — no `pydantic_settings` import in `app/`, `tests/` or `scripts/` (found in I18 while checking #183); every config model is a plain `BaseModel`, and the env overrides are I8's own code. A dependency nothing uses still costs Dependabot PRs, audit surface and image size | 1 | 1 | **SHIPPED 2026-11-26** ([#194](https://github.com/bpoulliot/xenotag/pull/194)) · **RELEASED v1.13.1 (2026-11-26)** — dropped the pin; the suite, `pip check` and a scratch `uvicorn app.main:app` start prove nothing imported it. See *I19* below | — |
 | I20 | **A docs-only PR ran the whole CI** (~/docker I295): every `.md`-only PR waited on the full suite, the probe self-tests and a no-cache image build plus Trivy, and a branch push ran all of it a second time. Nothing checked that two roadmap items do not share an ID | 2 | 2 | **DONE 2026-11-22** — gate [#192](https://github.com/bpoulliot/xenotag/pull/192); docs-lane proof [#193](https://github.com/bpoulliot/xenotag/pull/193) | — |
 
 **I15 — FILED 2026-10-10 from ~/docker I59 (operator, 2026-10-09: "decision 4 — measure first"). NEEDS
@@ -3774,7 +3818,7 @@ Python dependencies. The image is not large, so this beats keeping a cache that 
 *Released in v1.13.0 (2026-10-15)*, the first uncached publish (run `38844339007`): 0 `CACHED` steps, the
 `apt-get … upgrade` step ran (20.3 s) and installed `curl`/`libcurl4t64` `8.14.1-2+deb13u7` and `librsvg2-2`
 `2.60.0+dfsg-1+deb13u1`. Trivy 0.76.0 with CI's flags finds 0 in the 1.13.0 image and 7 HIGH in 1.12.0 (the
-positive control). Production runs 1.13.0. See *Release v1.13.0*.
+positive control). It reached production in v1.13.0. See *Release v1.13.0*.
 
 **I16 — Dependabot backlog, triaged 2026-10-10.** Each bump was rebased by Dependabot onto the `main` its
 predecessor moved, then merged one at a time when CI was green on the rebased head. Each was also checked in
@@ -3852,17 +3896,17 @@ head's own `requirements.txt`, and merged one at a time once every required chec
 
 **I18 — outcome, 2026-11-08.** Every PR merged, in the planned order, each pinned to the head SHA every check
 (required and not) was green on; `main` moved after each merge (read by `gh api …/branches/main`). All five are
-**merged, NOT released**. Dependabot's rebases picked up newer releases than at filing for three of them (the
+merged and were **released in v1.13.1 (2026-11-26)**. Dependabot's rebases picked up newer releases than at filing for three of them (the
 Bump column is what merged).
 
 | PR | Bump | Outcome | Merged at head | Evidence |
 |----|------|---------|----------------|----------|
-| #179 | Pillow 12.3.0 → 13.0.0 | merged, NOT released | `b5fe079c` | Render proof below: 4,560/4,560 outputs byte-identical. Pillow 13's removals and deprecations touch nothing `app/` calls (it uses `Image`, `ImageDraw`, `ImageFilter`, `ImageFont` and `ImageColor.getrgb()`; the RGBA `reducing_gap` change needs a `reducing_gap` argument, which no call passes). Suite with `-W error::DeprecationWarning`: 1067 passed, 2 skipped on 12.3.0 and on 13.0.0. `pip-audit` of its requirements on 2026-11-08: no known vulnerabilities |
+| #179 | Pillow 12.3.0 → 13.0.0 | merged · RELEASED v1.13.1 | `b5fe079c` | Render proof below: 4,560/4,560 outputs byte-identical. Pillow 13's removals and deprecations touch nothing `app/` calls (it uses `Image`, `ImageDraw`, `ImageFilter`, `ImageFont` and `ImageColor.getrgb()`; the RGBA `reducing_gap` change needs a `reducing_gap` argument, which no call passes). Suite with `-W error::DeprecationWarning`: 1067 passed, 2 skipped on 12.3.0 and on 13.0.0. `pip-audit` of its requirements on 2026-11-08: no known vulnerabilities |
 | #184 | — (I18's spec, docs) | merged | `09bfa08e` | Updated onto `main` after #179. One CodeQL run failed on a GitHub 504 downloading the CodeQL bundle; the re-run passed |
-| #180 | alembic 1.20.0 → 1.20.1 | merged, NOT released | `0ec18d24` | `python -m app.migrate check`: models match the head. `scripts/verify_state_db_upgrade.py` `--self-test` OK and PASS on a copy of production `state.db` (+ `-wal`/`-shm`): 9,676 rows, 0 differing, revision 0002 → 0002, drifted copy refused. `docker-build` first failed downloading the Trivy binary (GitHub outage, same night); the re-run passed |
-| #183 | pydantic-settings 2.15.0 → **2.16.2** | merged, NOT released | `9aa13749` | 63 config/env tests (I8's included) pass on both versions. The production `config.yml` (a copy) loads to the same model dump on both (sha256 `ca77155f…`, nothing printed). The package is imported nowhere: filed as I19 |
-| #182 | starlette 1.7.0 → **1.10.0** | merged, NOT released | `c6a738ad` | I11's `error::starlette.exceptions.StarletteDeprecationWarning` filter, under the repo's `pyproject.toml`: a planted warning fails and a clean test passes; without the filter both pass. Full suite 1067 passed |
-| #181 | FastAPI 0.143.0 → **0.162.0** | merged, NOT released | `ed949b6e` | Declares `starlette>=0.46.0` (0.161.1 and 0.162.0 alike), so no ordering constraint against #182; `pip check` clean on 0.162.0 + starlette 1.10.0. Dependabot's first rebase raced #182's merge and sat on `e4dbae0` (it would have tested starlette 1.7.0); a second `@dependabot rebase` put it on `main`. `test_mutating_routes_are_the_known_set` and the CSRF tests: 121 passed; suite with `-W error::DeprecationWarning`: 1067 passed. A scratch `uvicorn app.main:app` (scratch `CONFIG_PATH`/`STATE_DB`) reached startup complete with no deprecation line and `/login` answered 200, as it does on 0.143.0 |
+| #180 | alembic 1.20.0 → 1.20.1 | merged · RELEASED v1.13.1 | `0ec18d24` | `python -m app.migrate check`: models match the head. `scripts/verify_state_db_upgrade.py` `--self-test` OK and PASS on a copy of production `state.db` (+ `-wal`/`-shm`): 9,676 rows, 0 differing, revision 0002 → 0002, drifted copy refused. `docker-build` first failed downloading the Trivy binary (GitHub outage, same night); the re-run passed |
+| #183 | pydantic-settings 2.15.0 → **2.16.2** | merged · RELEASED v1.13.1 | `9aa13749` | 63 config/env tests (I8's included) pass on both versions. The production `config.yml` (a copy) loads to the same model dump on both (sha256 `ca77155f…`, nothing printed). The package is imported nowhere: filed as I19 |
+| #182 | starlette 1.7.0 → **1.10.0** | merged · RELEASED v1.13.1 | `c6a738ad` | I11's `error::starlette.exceptions.StarletteDeprecationWarning` filter, under the repo's `pyproject.toml`: a planted warning fails and a clean test passes; without the filter both pass. Full suite 1067 passed |
+| #181 | FastAPI 0.143.0 → **0.162.0** | merged · RELEASED v1.13.1 | `ed949b6e` | Declares `starlette>=0.46.0` (0.161.1 and 0.162.0 alike), so no ordering constraint against #182; `pip check` clean on 0.162.0 + starlette 1.10.0. Dependabot's first rebase raced #182's merge and sat on `e4dbae0` (it would have tested starlette 1.7.0); a second `@dependabot rebase` put it on `main`. `test_mutating_routes_are_the_known_set` and the CSRF tests: 121 passed; suite with `-W error::DeprecationWarning`: 1067 passed. A scratch `uvicorn app.main:app` (scratch `CONFIG_PATH`/`STATE_DB`) reached startup complete with no deprecation line and `/login` answered 200, as it does on 0.143.0 |
 
 *The #179 render proof.* `scripts/measure_pillow_render_identity.py`, run in two scratch venvs built from `main`'s
 and #179's `requirements.txt`, over one fixture set made once (the eight `app.preview_samples` posters, flat white,
@@ -3889,7 +3933,7 @@ bytes differing with pixels equal; and seven variables it claims to cover (font 
 stream set, fixture) each changed the render, with the landscape fixture padded to 2:3. Re-run it for the next
 Pillow major (usage in its docstring; one render takes about three minutes).
 
-**I19 — FILED 2026-11-08, found in I18 while checking #183. SHIPPED 2026-11-26.** `requirements.txt` pins
+**I19 — FILED 2026-11-08, found in I18 while checking #183. SHIPPED 2026-11-26; RELEASED v1.13.1 (2026-11-26).** `requirements.txt` pins
 `pydantic-settings`, and `command grep -rn "pydantic_settings\|pydantic-settings"` over `app/`, `tests/`,
 `scripts/`, `pyproject.toml` and the Dockerfile finds only that pin. The config models are `pydantic.BaseModel`
 and the env/file overrides are I8's own code (`_apply_env_overrides()`, `_apply_arr_key_files()`), so I18 could
